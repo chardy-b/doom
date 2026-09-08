@@ -8,13 +8,14 @@ fi
 mkdir -p evidence/screenshots
 collect_diagnostics() {
   result=$?
-  if ! adb pull /sdcard/Android/data/com.chardyb.doom/files/evidence/. evidence/screenshots/; then
+  if ! adb pull /sdcard/Download/doom-ci-evidence/. evidence/screenshots/; then
     printf '%s\n' 'No app screenshots were available for diagnostics.' >&2
   fi
   exit "$result"
 }
 trap collect_diagnostics EXIT
+adb shell rm -rf /sdcard/Download/doom-ci-evidence
 ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest | tee evidence/instrumentation.log
-adb pull /sdcard/Android/data/com.chardyb.doom/files/evidence/. evidence/screenshots/
+adb pull /sdcard/Download/doom-ci-evidence/. evidence/screenshots/
 cp app/build/outputs/apk/debug/app-debug.apk evidence/doom-diagnostic.apk
 python3 scripts/evidence-manifest.py

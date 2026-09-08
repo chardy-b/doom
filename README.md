@@ -19,7 +19,7 @@ GitHub-hosted CI runs these tasks; Android builds/tests/emulators do not run on 
 :app:connectedDebugAndroidTest
 ```
 
-The package is `com.chardyb.doom`. Instrumented tests capture clearly labelled Doom-owned demo screens under `/sdcard/Android/data/com.chardyb.doom/files/evidence/`. The production observer never takes screenshots. Baseline CI gates the emulator job; artifacts bind the tested source SHA to APK size/checksum and genuine screenshots. Initial bootstrap runs device evidence after baseline on the same PR because no dispatch workflow exists on main yet. No APK/build pass is implied by this document.
+The package is `com.chardyb.doom`. Instrumented tests use a test-only shell capture on the disposable CI emulator to retain clearly labelled Doom-owned demo screens under `/sdcard/Download/doom-ci-evidence/`, outside app-uninstall cleanup. The production observer never takes screenshots and has no storage/capture permissions. Baseline CI gates the emulator job; artifacts bind the tested source SHA to APK size/checksum and genuine screenshots. Initial bootstrap runs device evidence after baseline on the same PR because no dispatch workflow exists on main yet. No APK/build pass is implied by this document.
 
 ## Try the diagnostic
 

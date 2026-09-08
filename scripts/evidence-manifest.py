@@ -15,8 +15,9 @@ def main():
     root = Path("evidence")
     apk = root / "doom-diagnostic.apk"
     screenshots = sorted((root / "screenshots").glob("*.png"))
-    if not apk.is_file() or apk.stat().st_size == 0 or len(screenshots) < 2:
-        raise SystemExit("Missing tested APK or at least two genuine screenshots")
+    expected = {"01-doom-dashboard-demo.png", "02-doom-breathing-demo.png", "03-doom-messages-demo.png", "04-doom-completed-demo.png"}
+    if not apk.is_file() or apk.stat().st_size == 0 or {path.name for path in screenshots} != expected:
+        raise SystemExit("Missing tested APK or exact four genuine diagnostic screenshots")
     for image in screenshots:
         if not image.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
             raise SystemExit(f"Not a PNG screenshot: {image.name}")
