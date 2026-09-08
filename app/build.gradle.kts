@@ -3,8 +3,14 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id(
 android { namespace = "com.chardy.doom"; compileSdk = 35
     defaultConfig { applicationId = "com.chardyb.doom"; minSdk = 26; targetSdk = 35; versionCode = 1; versionName = "0.1-wave0"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     buildFeatures { compose = true }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
+
+kotlin { jvmToolchain(17) }
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
