@@ -32,8 +32,11 @@ class DoomUiTest {
         }
         assertTrue("Doom must be the top-resumed activity before test-only capture", foreground)
         require(name.matches(Regex("[a-z0-9-]+")))
-        val result = device.executeShellCommand("mkdir -p /sdcard/Download/doom-ci-evidence && screencap -p /sdcard/Download/doom-ci-evidence/$name.png && printf captured")
-        assertEquals("captured", result.trim())
+        // UiAutomation uses Runtime.exec, not a shell: no &&, pipes or redirection.
+        device.executeShellCommand("mkdir -p /sdcard/Download/doom-ci-evidence")
+        device.executeShellCommand("screencap -p /sdcard/Download/doom-ci-evidence/$name.png")
+        val bytes = device.executeShellCommand("stat -c %s /sdcard/Download/doom-ci-evidence/$name.png").trim().toLongOrNull()
+        assertTrue("Screenshot must exist and be nonempty", bytes != null && bytes > 0)
     }
 
     @Test fun demoMessagesAreImmediateAndFeedRequiresCompletedPause() {
