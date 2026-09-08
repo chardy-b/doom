@@ -1,0 +1,120 @@
+name: Android diagnostic CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doom-android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  baseline:
+    name: Android baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - name: Verify candidate
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Install compile SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Tests, lint and diagnostic APK
+        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Upload diagnostic APK (not real-Instagram validation)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: doom-diagnostic-apk-${{ env.CANDIDATE_SHA }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload baseline reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: doom-baseline-reports-${{ env.CANDIDATE_SHA }}
+          path: app/build/reports/
+          if-no-files-found: warn
+          retention-days: 7
+
+  device:
+    name: Diagnostic emulator evidence
+    needs: baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - name: Initialize provenance before emulator provisioning
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -p evidence
+          printf 'candidate=%s\nworkflow_ref=%s\nrun_id=%s\nevidence_kind=doom-demo-only-not-instagram\n' "$CANDIDATE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" > evidence/context.txt
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Enable KVM
+        run: |
+          sudo chgrp "$(id -gn)" /dev/kvm
+          sudo chmod 660 /dev/kvm
+      - name: Run instrumented diagnostic journeys on API 35
+        id: emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash scripts/ci-device.sh
+      - name: Record emulator outcome even on provisioning failure
+        if: always()
+        env:
+          EMULATOR_OUTCOME: ${{ steps.emulator.outcome }}
+        run: printf 'emulator_outcome=%s\n' "$EMULATOR_OUTCOME" >> evidence/context.txt
+      - name: Upload exact tested diagnostic and screen evidence
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: doom-device-evidence-${{ env.CANDIDATE_SHA }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload device diagnostics and test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: doom-device-diagnostics-${{ env.CANDIDATE_SHA }}
+          path: |
+            evidence/context.txt
+            evidence/instrumentation.log
+            evidence/screenshots/
+            app/build/reports/androidTests/
+          if-no-files-found: error
+          retention-days: 7
