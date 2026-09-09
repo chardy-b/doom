@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -112,18 +113,36 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
                         !Observation.connected -> "Observation off · service disconnected"
                         else -> "Observer connected · mapping unverified"
                     }, color = Paper, fontSize = 18.sp)
-                    Text("Optional accessibility access can expose screen content to an app. Doom only counts up to 128 structural nodes, resource-ID presence and clickable controls from Instagram. It never reads message text or descriptions, stores nodes, takes screenshots, or sends data. Only your consent is saved; counts stay in memory.", color = Paper)
+                    Text("SEPARABILITY RESEARCH ONLY", color = Jade)
+                    Text("Counts overlapped on Pixel 11 Pro / Android 17 / Instagram 445.0.0.45.83.", color = Paper)
+                    Text("Optional accessibility access can expose screen content to an app. Doom visits at most 128 Instagram nodes through depth 8. It immediately hashes resource-ID/class presence, clickable state, depth and bounded child count. It never reads text or descriptions, retains identifier values or nodes, takes screenshots, logs or sends samples. Only consent is saved; one opaque current sample and up to four tester-labeled baselines stay in process memory.", color = Paper)
+                    Text("Clear removes every sample and label; a later Instagram event may provide a new sample. Revocation, stop, service disconnect/interruption and process death remove all samples and labels. Returning here keeps the last sample for labeling; it may be stale or bounded.", color = Paper)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = Observation.consent, onCheckedChange = { Observation.accept(context, it) }, modifier = Modifier.semantics { contentDescription = "Consent to local structural counts" })
-                        Text("Allow local structural counts", color = Paper, modifier = Modifier.weight(1f))
+                        Checkbox(checked = Observation.consent, onCheckedChange = { Observation.accept(context, it) }, modifier = Modifier.semantics { contentDescription = "Consent to local structural fingerprints" })
+                        Text("Allow local structural fingerprints", color = Paper, modifier = Modifier.weight(1f))
                     }
                     Action("OPEN ACCESSIBILITY SETTINGS", enabled = Observation.consent) {
                         context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     }
-                    val counts = Observation.counts
-                    Text(if (counts == null) "No observation. Open Instagram after enabling the observer, then return here."
-                        else "Last in-memory sample: ${counts.nodes} nodes · ${counts.resourceIds} with IDs · ${counts.clickable} clickable${if (counts.truncated) " · bounded sample" else ""}. This does not identify Feed or DMs.", color = Paper)
-                    Action("CLEAR COUNTS") { Observation.clear() }
+                    val samples = Observation.samples
+                    val current = samples.current
+                    Text(if (current == null) "No observation. Open Instagram after enabling the observer, then return here."
+                        else "Opaque fingerprint: ${current.opaque}", color = Paper, fontFamily = FontFamily.Monospace)
+                    Text("Similarity is structural overlap, not a prediction or protection. Labels are yours; no thresholds or live gate.", color = Paper)
+                    Text("Scores use weighted Jaccard overlap of hashed feature counts, rounded to one decimal. Identical samples score 100%; disjoint samples score 0%. This does not establish a screen's identity.", color = Paper)
+                    SampleLabel.entries.forEach { label ->
+                        val baseline = samples.baselines[label]
+                        Text("${label.title}: " + when {
+                            baseline == null -> "not labeled"
+                            current == null -> "labeled · no current sample"
+                            else -> String.format(Locale.ROOT, "%.1f%% similarity", current.similarity(baseline) * 100)
+                        }, color = Paper)
+                        Action("LABEL ${label.title.uppercase(Locale.ROOT)}",
+                            enabled = current != null && Observation.consent && Observation.connected) {
+                            Observation.label(label)
+                        }
+                    }
+                    Action("CLEAR SAMPLES & LABELS") { Observation.clear() }
                     Action("STOP OBSERVATION") { Observation.accept(context, false) }
                 }
             }
