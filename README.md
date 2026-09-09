@@ -6,7 +6,7 @@ Native Kotlin/Compose diagnostic for WIL-149. This increment is deliberately bou
 
 - **Live Instagram:** observation-only and fail-open. With consent and an enabled service, it counts at most 128 nodes (depth at most 8), resource-ID presence and clickable controls from the current Instagram tree. It never reads node text/content descriptions or retains nodes/IDs. Only one count snapshot stays in memory; only consent persists. Counts do not classify Feed/DMs. Clear counts or stop observation from the dashboard.
 - **Real capability report:** blocked pending a consenting device, Instagram version/account, and redacted DM-safe capability matrix. Fixture/demo evidence cannot satisfy this gate.
-- **Demo:** a real five-second gate inside Doom, with immediate simulated messages/leave and cancellation on background/lock. The public APK has no fixture impersonation, overlay, Instagram navigation, live blocking or session allowances. An isolated cross-app fixture and actual accessibility-overlay proof remain unimplemented portions of WIL-149.
+- **Demo:** a real five-second gate inside Doom, with immediate simulated messages/leave and cancellation on background/lock. The user-facing APK has no fixture impersonation, overlay, Instagram navigation, live blocking or session allowances. Separate `:fixtureapp` and `:fixturegate` test-only APKs exercise a real accessibility overlay against original fake screens; they are not dependencies of `:app`. See [fixture scope and CI evidence](docs/FIXTURE.md). Their source is not a CI pass or proof of Instagram support.
 
 ## Build and test (CI only)
 

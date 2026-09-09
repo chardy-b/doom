@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TEST FIXTURE — surfaces</string>
+    <string name="feed">TEST FIXTURE — Feed</string>
+    <string name="dm">TEST FIXTURE — DM</string>
+    <string name="unknown">TEST FIXTURE — Unknown</string>
+    <string name="feed_action">Fixture feed</string>
+    <string name="dm_action">Fixture messages</string>
+    <string name="unknown_action">Fixture unknown</string>
+    <string name="notice">TEST FIXTURE only. Original static content. No accounts or network. Back opens Unknown.</string>
+    <item name="fixture_feed_marker" type="id" />
+    <item name="fixture_dm_marker" type="id" />
+    <item name="fixture_unknown_marker" type="id" />
+    <item name="fixture_dm_button" type="id" />
+    <item name="fixture_feed_button" type="id" />
+    <item name="fixture_unknown_button" type="id" />
+</resources>

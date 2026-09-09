@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TEST FIXTURE — gate</string>
+    <string name="service_description">TEST FIXTURE only. With consent, reads fixed fixture resource IDs and places a five-second system accessibility overlay over the separate TEST FIXTURE surfaces app. Messages bypass the wait. Outside that app, only window metadata is checked. Only consent is stored. No Instagram support, observed-content storage, or network.</string>
+    <string name="consent">I consent to the TEST FIXTURE accessibility overlay</string>
+    <string name="settings">Open accessibility settings</string>
+    <string name="clear">Disable and clear TEST FIXTURE consent</string>
+    <string name="gate">TEST FIXTURE — five-second gate</string>
+    <string name="messages">Fixture messages</string>
+    <string name="leave">Leave</string>
+    <string name="waiting">TEST FIXTURE: pause for five seconds. Messages are immediate. Back opens Unknown.</string>
+    <string name="connected">TEST FIXTURE — service connected</string>
+    <string name="disconnected">TEST FIXTURE — service disconnected</string>
+    <item name="fixture_gate_marker" type="id" />
+    <item name="fixture_escape" type="id" />
+    <item name="fixture_leave" type="id" />
+    <item name="fixture_consent" type="id" />
+    <item name="fixture_connection" type="id" />
+</resources>

@@ -122,3 +122,57 @@ jobs:
             app/build/reports/androidTests/
           if-no-files-found: error
           retention-days: 7
+
+  fixture:
+    name: Cross-app fixture evidence
+    needs: baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - name: Initialize fixture provenance
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -p evidence
+          printf 'candidate=%s\nevent_sha=%s\nrun_id=%s\nscope=original-test-apks-not-instagram\n' "$CANDIDATE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" > evidence/fixture-context.txt
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - name: Enable runner-group KVM access
+        run: |
+          sudo chgrp "$(id -gn)" /dev/kvm
+          sudo chmod 660 /dev/kvm
+      - name: Exercise real fixture accessibility overlay
+        id: fixture
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash scripts/ci-fixture.sh
+      - name: Record fixture outcome
+        if: always()
+        env:
+          FIXTURE_OUTCOME: ${{ steps.fixture.outcome }}
+        run: printf 'fixture_outcome=%s\n' "$FIXTURE_OUTCOME" >> evidence/fixture-context.txt
+      - name: Preserve actual fixture evidence and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: doom-fixture-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            evidence/fixture-context.txt
+            fixture-evidence/
+          if-no-files-found: error
+          retention-days: 14
