@@ -2,6 +2,7 @@ package com.chardyb.doom.fixturegate
 
 import android.app.UiAutomation
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.ComponentName
 import android.content.Context
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -119,7 +120,20 @@ class CrossAppFixtureTest {
     private fun visible(text: String, timeout: Long = 3_000) {
         assertTrue("Missing $text", device.wait(Until.hasObject(By.text(text)), timeout))
     }
-    private fun click(text: String) { visible(text); requireNotNull(device.findObject(By.text(text))).click() }
+    private fun clickResource(pkg: String, id: String) {
+        val selector = By.res(pkg, id)
+        assertTrue("Missing $pkg:id/$id", device.wait(Until.hasObject(selector), 3_000))
+        requireNotNull(device.findObject(selector)).click()
+    }
+    private fun homePackage(): String {
+        // Resolve as the CI shell: launcherPackageName selected Settings in the failing run.
+        val result = shell("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME")
+        val component = requireNotNull(ComponentName.unflattenFromString(result.lineSequence().last())) {
+            "Disposable emulator must have a resolved Home activity"
+        }
+        require(component.packageName !in setOf("android", "com.android.settings", GATE, TARGET))
+        return component.packageName
+    }
     private fun noOverlay() {
         assertTrue("Overlay did not disappear", device.wait(Until.gone(By.res(GATE, "fixture_gate_marker")), 2_000))
         val deadline = SystemClock.elapsedRealtime() + 2_000
@@ -178,7 +192,7 @@ class CrossAppFixtureTest {
         assertTrue("DM escape exceeded 2 seconds: $elapsed ms", elapsed < 2_000)
         noOverlay()
         capture("02-dm-escape", TARGET, "TEST FIXTURE — DM")
-        click("Fixture unknown")
+        clickResource(TARGET, "fixture_unknown_button")
         noOverlay()
         capture("03-unknown", TARGET, "TEST FIXTURE — Unknown")
     }
@@ -197,9 +211,9 @@ class CrossAppFixtureTest {
         capture("04-completed-feed", TARGET, "TEST FIXTURE — Feed")
         SystemClock.sleep(600) // cover multiple watchdog ticks and overlay removal events
         noOverlay()
-        click("Fixture messages")
+        clickResource(TARGET, "fixture_dm_button")
         visible("TEST FIXTURE — DM")
-        click("Fixture feed")
+        clickResource(TARGET, "fixture_feed_button")
         gate()
         capture("05-new-session", TARGET, "TEST FIXTURE — five-second gate")
     }
@@ -211,7 +225,7 @@ class CrossAppFixtureTest {
         visible("TEST FIXTURE — Unknown")
         noOverlay()
         capture("06-back-unknown", TARGET, "TEST FIXTURE — Unknown")
-        click("Fixture feed")
+        clickResource(TARGET, "fixture_feed_button")
         gate()
         launch(SETTINGS_COMPONENT)
         foreground("com.android.settings")
@@ -233,6 +247,7 @@ class CrossAppFixtureTest {
     }
 
     @Test fun backgroundAndLockCancelStaleCompletion() {
+        val launcher = homePackage()
         launch(TARGET_COMPONENT)
         gate()
         device.pressHome()
@@ -256,7 +271,8 @@ class CrossAppFixtureTest {
         capture("11-lock-return", TARGET, "TEST FIXTURE — five-second gate")
         requireNotNull(device.findObject(By.res(GATE, "fixture_leave"))).click()
         noOverlay()
-        assertTrue(device.wait(Until.hasObject(By.pkg(device.launcherPackageName).depth(0)), 3_000))
+        assertTrue(device.wait(Until.hasObject(By.pkg(launcher).depth(0)), 3_000))
+        foreground(launcher)
         launch(GATE_COMPONENT)
         capture("12-leave-home", GATE, "TEST FIXTURE — service connected")
     }
@@ -265,7 +281,7 @@ class CrossAppFixtureTest {
         launch(TARGET_COMPONENT)
         gate()
         launch(GATE_COMPONENT)
-        click("Disable and clear TEST FIXTURE consent")
+        clickResource(GATE, "fixture_clear_consent")
         visible("TEST FIXTURE — service disconnected")
         noOverlay()
         // Test-only attempted activation without consent must self-disable.

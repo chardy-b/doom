@@ -47,6 +47,7 @@ class ConsentActivity : Activity() {
         layout.addView(consent)
         layout.addView(settings)
         layout.addView(Button(this).apply {
+            id = R.id.fixture_clear_consent
             setText(R.string.clear)
             setOnClickListener {
                 preferences.edit().clear().apply()

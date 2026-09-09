@@ -15,5 +15,6 @@
     <item name="fixture_escape" type="id" />
     <item name="fixture_leave" type="id" />
     <item name="fixture_consent" type="id" />
+    <item name="fixture_clear_consent" type="id" />
     <item name="fixture_connection" type="id" />
 </resources>

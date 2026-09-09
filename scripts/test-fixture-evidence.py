@@ -227,7 +227,7 @@ class FixtureCleanupSourceTest(unittest.TestCase):
     def setUp(self):
         source = (REPO / "fixturegate/src/androidTest/java/com/chardyb/doom/fixturegate/CrossAppFixtureTest.kt").read_text()
         self.methods = dict(re.findall(
-            r"^    (?:@\w+ )?(?:private )?fun (\w+)\([^\n]*\) \{\n(.*?)^    \}",
+            r"^    (?:@\w+ )?(?:private )?fun (\w+)\([^\n]*\)(?:: \w+)? \{\n(.*?)^    \}",
             source, re.MULTILINE | re.DOTALL,
         ))
 
@@ -239,14 +239,58 @@ class FixtureCleanupSourceTest(unittest.TestCase):
                 continue
             visited.add(name)
             body = self.methods[name]
-            self.assertNotRegex(body, r"\b(?:launch|click|visible)\s*\(|\b(?:device|By|Until)\.", name)
+            self.assertNotRegex(body, r"\b(?:launch|click|clickResource|visible)\s*\(|\b(?:device|By|Until)\.", name)
             calls = set(re.findall(r"\b(\w+)\s*\(", body))
             pending.extend(calls.intersection(self.methods).difference(visited))
 
     def test_consent_revocation_still_uses_visible_clear_consent_button(self):
         body = self.methods["consentRevocationDisablesConnectionAndPreventsReactivation"]
-        self.assertIn('click("Disable and clear TEST FIXTURE consent")', body)
+        self.assertIn('launch(GATE_COMPONENT)', body)
+        self.assertIn('clickResource(GATE, "fixture_clear_consent")', body)
         self.assertNotIn("clearFixtureConsent(", body)
+        self.assertNotIn("getSharedPreferences(", body)
+
+    def test_button_interactions_use_declared_resource_ids_and_keep_wait(self):
+        body = self.methods["clickResource"]
+        self.assertIn("By.res(pkg, id)", body)
+        self.assertIn("device.wait(Until.hasObject(selector), 3_000)", body)
+        self.assertIn("requireNotNull(device.findObject(selector)).click()", body)
+        self.assertNotIn("By.text", body)
+        self.assertNotIn("click", self.methods)
+        for package, module in [("TARGET", "fixtureapp"), ("GATE", "fixturegate")]:
+            resources = ET.parse(REPO / module / "src/main/res/values/strings.xml").getroot()
+            ids = {item.get("name") for item in resources.findall("item") if item.get("type") == "id"}
+            calls = re.findall(r'clickResource\(' + package + r', "([^"]+)"\)', "\n".join(self.methods.values()))
+            self.assertTrue(calls)
+            self.assertTrue(set(calls) <= ids)
+        consent = (REPO / "fixturegate/src/main/java/com/chardyb/doom/fixturegate/ConsentActivity.kt").read_text()
+        self.assertRegex(consent, r"id = R.id.fixture_clear_consent\s+setText\(R.string.clear\)\s+setOnClickListener")
+
+    def test_leave_still_requires_home_ui_and_resumed_package(self):
+        resolution = self.methods["homePackage"]
+        self.assertIn("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME", resolution)
+        self.assertIn("requireNotNull(ComponentName.unflattenFromString", resolution)
+        body = self.methods["backgroundAndLockCancelStaleCompletion"]
+        self.assertNotIn("device.launcherPackageName", body)
+        after_leave = body.split('By.res(GATE, "fixture_leave")', 1)[1]
+        expected = [".click()", "noOverlay()",
+                    "assertTrue(device.wait(Until.hasObject(By.pkg(launcher).depth(0)), 3_000))",
+                    "foreground(launcher)", "launch(GATE_COMPONENT)", 'capture("12-leave-home"']
+        positions = [after_leave.index(item) for item in expected]
+        self.assertEqual(sorted(positions), positions)
+        self.assertNotIn("pressHome", after_leave)
+
+    def test_leave_removes_obstruction_before_home_and_fails_open(self):
+        source = (REPO / "fixturegate/src/main/java/com/chardyb/doom/fixturegate/FixtureGateService.kt").read_text()
+        body = source.split("    private fun leave() {", 1)[1].split('\n    @Suppress', 1)[0]
+        expected = ["policy.beginNavigation()", "cancelCallback()", "removeOverlay()",
+                    "performGlobalAction(GLOBAL_ACTION_HOME)", "if (!homeRequested)",
+                    "startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)",
+                    "Intent.FLAG_ACTIVITY_NEW_TASK"]
+        positions = [body.index(item) for item in expected]
+        self.assertEqual(sorted(positions), positions)
+        self.assertEqual(2, body.count("catch (_: RuntimeException)"))
+        self.assertNotRegex(body, r"\b(?:stopGate|showOverlay|postDelayed|complete)\(")
 
 
 class FixtureEvidenceTest(unittest.TestCase):

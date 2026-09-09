@@ -193,10 +193,7 @@ class FixtureGateService : AccessibilityService() {
         })
         panel.addView(Button(this).apply {
             id = R.id.fixture_leave; setText(R.string.leave)
-            setOnClickListener {
-                policy.beginNavigation(); cancelCallback(); removeOverlay()
-                performGlobalAction(GLOBAL_ACTION_HOME)
-            }
+            setOnClickListener { leave() }
         })
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
@@ -206,6 +203,22 @@ class FixtureGateService : AccessibilityService() {
         ).apply { title = "TEST FIXTURE accessibility overlay" }
         return try { manager.addView(panel, params); overlay = panel; true }
         catch (_: RuntimeException) { false }
+    }
+
+    private fun leave() {
+        policy.beginNavigation()
+        cancelCallback()
+        removeOverlay()
+        val homeRequested = try { performGlobalAction(GLOBAL_ACTION_HOME) }
+        catch (_: RuntimeException) { false }
+        if (!homeRequested) {
+            try {
+                startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (_: RuntimeException) {
+                // Keep navigation suppression and the window removed if Home is unavailable.
+            }
+        }
     }
 
     @Suppress("DEPRECATION")
