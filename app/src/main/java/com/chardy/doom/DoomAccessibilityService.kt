@@ -43,32 +43,39 @@ class DoomAccessibilityService : AccessibilityService() {
         val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
         queue.add(root to 0)
         try {
-            // Non-Instagram events are ignored above, preserving normal return-to-Doom labeling.
+            // Non-Instagram events are ignored above, preserving normal return-to-Doom review.
             // A delayed Instagram event can see another app's root: invalidate the stale current sample.
             if (root.packageName?.toString() != "com.instagram.android") {
                 Observation.record(null)
                 return
             }
-            val builder = StructuralFingerprint.Builder()
+            val builder = SanitizedStructuralReport.Builder()
             var nodes = 0
-            while (queue.isNotEmpty() && nodes < StructuralFingerprint.MAX_NODES) {
+            while (queue.isNotEmpty() && nodes < SanitizedStructuralReport.MAX_NODES) {
                 val (node, depth) = queue.removeFirst()
                 try {
+                    nodes++ // Skipped foreign nodes still consume the traversal budget.
+                    if (node.packageName?.toString() != "com.instagram.android") {
+                        builder.markTruncated()
+                        continue
+                    }
                     val children = node.childCount
-                    // Presence only: values never enter the hasher, vector, UI, or application state.
-                    // Never access node text/contentDescription. Hash this feature before continuing.
-                    builder.add(depth, node.viewIdResourceName != null, node.className != null, node.isClickable, children)
-                    nodes++
-                    if (depth < StructuralFingerprint.MAX_DEPTH) {
-                        val limit = minOf(children, StructuralFingerprint.MAX_NODES - nodes - queue.size)
+                    // Only these metadata getters are allowed. Sanitize before retaining any value.
+                    builder.add(depth, node.viewIdResourceName, node.className, children,
+                        node.isClickable, node.isScrollable, node.isEditable, node.isSelected, node.isChecked)
+                    if (depth < SanitizedStructuralReport.MAX_DEPTH) {
+                        val limit = minOf(children, SanitizedStructuralReport.MAX_NODES - nodes - queue.size)
+                        if (limit < children) builder.markTruncated()
                         repeat(limit.coerceAtLeast(0)) { index ->
-                            node.getChild(index)?.let { queue.add(it to depth + 1) }
+                            val child = node.getChild(index)
+                            if (child == null) builder.markTruncated() else queue.add(child to depth + 1)
                         }
                     }
                 } finally {
                     node.recycle()
                 }
             }
+            if (queue.isNotEmpty()) builder.markTruncated()
             Observation.record(builder.build())
         } finally {
             while (queue.isNotEmpty()) queue.removeFirst().first.recycle()

@@ -31,7 +31,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,36 +112,34 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
                         !Observation.connected -> "Observation off · service disconnected"
                         else -> "Observer connected · mapping unverified"
                     }, color = Paper, fontSize = 18.sp)
-                    Text("SEPARABILITY RESEARCH ONLY", color = Jade)
-                    Text("Counts overlapped on Pixel 11 Pro / Android 17 / Instagram 445.0.0.45.83.", color = Paper)
-                    Text("Optional accessibility access can expose screen content to an app. Doom visits at most 128 Instagram nodes through depth 8. It immediately hashes resource-ID/class presence, clickable state, depth and bounded child count. It never reads text or descriptions, retains identifier values or nodes, takes screenshots, logs or sends samples. Only consent is saved; one opaque current sample and up to four tester-labeled baselines stay in process memory.", color = Paper)
-                    Text("Clear removes every sample and label; a later Instagram event may provide a new sample. Revocation, stop, service disconnect/interruption and process death remove all samples and labels. Returning here keeps the last sample for labeling; it may be stale or bounded.", color = Paper)
+                    Text("SANITIZED STRUCTURAL REPORT", color = Jade)
+                    Text("Structure changes with scrolling and content. This report does not identify a screen or provide prediction, blocking or protection.", color = Paper)
+                    Text("Optional accessibility access can expose screen content to an app. With fresh consent, Doom observes Instagram only: at most 128 nodes through depth 8. It keeps only sanitized static Instagram resource names from compile-time resource tables, normalized safe class names, depth, child count capped at 16, and clickable/scrollable/editable/selected/checked booleans in sorted aggregate rows. Previously unknown resource names are admitted only as exact com.instagram.android:id/ names: 1–64 lowercase ASCII letters/digits/underscores, starting with a letter, at most 96 raw characters. Invalid IDs and unknown classes are omitted. Reports have at most 64 unique tokens and 8,192 ASCII characters/UTF-8 bytes; omitted structure is marked truncated.", color = Paper)
+                    Text("Reports expose static resource names, never UI text/content/account values. No text, descriptions, hints, errors, pane or tooltip titles, bounds, screenshots, notification or account content, node/window IDs, raw trees or actions are collected. Only consent is saved. One report stays in process memory; no file persistence, logging, network or automatic export.", color = Paper)
+                    Text("Clear removes the report and reveal/copy state; a later Instagram event may create a new hidden report. Revocation, observer stop, disconnect, interruption, reconnect and process death clear that state too. Returning to Doom preserves the latest valid report, which may be stale or truncated. A delayed Instagram event with a wrong or missing root invalidates it.", color = Paper)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = Observation.consent, onCheckedChange = { Observation.accept(context, it) }, modifier = Modifier.semantics { contentDescription = "Consent to local structural fingerprints" })
-                        Text("Allow local structural fingerprints", color = Paper, modifier = Modifier.weight(1f))
+                        Checkbox(checked = Observation.consent, onCheckedChange = { Observation.accept(context, it) }, modifier = Modifier.semantics { contentDescription = "Consent to sanitized structural report" })
+                        Text("Allow sanitized structural report", color = Paper, modifier = Modifier.weight(1f))
                     }
                     Action("OPEN ACCESSIBILITY SETTINGS", enabled = Observation.consent) {
                         context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     }
-                    val samples = Observation.samples
-                    val current = samples.current
-                    Text(if (current == null) "No observation. Open Instagram after enabling the observer, then return here."
-                        else "Opaque fingerprint: ${current.opaque}", color = Paper, fontFamily = FontFamily.Monospace)
-                    Text("Similarity is structural overlap, not a prediction or protection. Labels are yours; no thresholds or live gate.", color = Paper)
-                    Text("Scores use weighted Jaccard overlap of hashed feature counts, rounded to one decimal. Identical samples score 100%; disjoint samples score 0%. This does not establish a screen's identity.", color = Paper)
-                    SampleLabel.entries.forEach { label ->
-                        val baseline = samples.baselines[label]
-                        Text("${label.title}: " + when {
-                            baseline == null -> "not labeled"
-                            current == null -> "labeled · no current sample"
-                            else -> String.format(Locale.ROOT, "%.1f%% similarity", current.similarity(baseline) * 100)
-                        }, color = Paper)
-                        Action("LABEL ${label.title.uppercase(Locale.ROOT)}",
-                            enabled = current != null && Observation.consent && Observation.connected) {
-                            Observation.label(label)
-                        }
+                    val report = Observation.report
+                    Text(when {
+                        report == null -> "No report. Open Instagram yourself after enabling the observer, then return here."
+                        report.truncated -> "Report available · truncated"
+                        else -> "Report available · bounded traversal complete"
+                    }, color = Paper)
+                    Action("REVEAL LOCAL REPORT", enabled = Observation.canReveal) { Observation.revealReport() }
+                    if (Observation.canReveal && Observation.revealed && report != null) {
+                        Text(report.text, color = Paper, fontFamily = FontFamily.Monospace)
                     }
-                    Action("CLEAR SAMPLES & LABELS") { Observation.clear() }
+                    Text("Copy leaves Doom process memory and enters the system clipboard. Review the revealed report before copying; upload privately, then clear the clipboard. Clearing or stopping Doom cannot recall copies outside the app.", color = Paper)
+                    Action("COPY REVIEWED REPORT", enabled = Observation.canCopy) { Observation.copyReport(context) }
+                    if (Observation.copied) {
+                        Text("Copied to system clipboard. Upload privately, then clear the clipboard.", color = Paper)
+                    }
+                    Action("CLEAR REPORT") { Observation.clear() }
                     Action("STOP OBSERVATION") { Observation.accept(context, false) }
                 }
             }

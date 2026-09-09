@@ -1,5 +1,7 @@
 package com.chardy.doom
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.view.accessibility.AccessibilityEvent
@@ -12,25 +14,46 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
-/** Synthetic structures only. These tests never open or capture Instagram. */
+/** Synthetic structures only. No Instagram launch, real samples, or diagnostic screenshots. */
 class StructuralDiagnosticUiTest {
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
+    private val clipboard get() = requireNotNull(rule.activity.getSystemService(ClipboardManager::class.java))
 
-    @Before fun reset() = rule.runOnIdle { Observation.accept(rule.activity, false) }
-    @After fun cleanup() = rule.runOnIdle { Observation.accept(rule.activity, false) }
+    @Before fun reset() = rule.runOnIdle {
+        Observation.accept(rule.activity, false)
+        clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
+    }
+    @After fun cleanup() = rule.runOnIdle {
+        Observation.accept(rule.activity, false)
+        clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
+    }
 
     private fun tap(text: String) = rule.onNodeWithText(text).performScrollTo().performClick()
     private fun shown(text: String) = rule.onNodeWithText(text).performScrollTo().assertIsDisplayed()
+    private fun sample(depth: Int = 0) = SanitizedStructuralReport.Builder().apply {
+        add(depth, "com.instagram.android:id/feed_tab", "android.widget.TextView", 0,
+            false, false, false, false, false)
+    }.build()!!
     private fun seed(depth: Int = 0) = rule.runOnIdle {
         Observation.accept(rule.activity, true)
         Observation.connected = true
-        Observation.record(StructuralFingerprint.Builder().apply {
-            add(depth, true, true, false, 0)
-        }.build())
+        Observation.record(sample(depth))
     }
     private fun assertEmpty() = rule.runOnIdle {
-        assertNull(Observation.samples.current)
-        assertTrue(Observation.samples.baselines.isEmpty())
+        assertNull(Observation.report)
+        assertFalse(Observation.revealed)
+        assertFalse(Observation.copied)
+        assertFalse(Observation.canReveal)
+        assertFalse(Observation.canCopy)
+    }
+    private fun assertActionsDisabled() {
+        rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().assertIsNotEnabled()
+        rule.onNodeWithText("COPY REVIEWED REPORT").performScrollTo().assertIsNotEnabled()
+    }
+    private fun revealAndCopy() {
+        tap("REVEAL LOCAL REPORT")
+        tap("COPY REVIEWED REPORT")
+        rule.runOnIdle { assertTrue(Observation.revealed); assertTrue(Observation.copied) }
     }
 
     @Suppress("DEPRECATION")
@@ -39,192 +62,213 @@ class StructuralDiagnosticUiTest {
         try {
             event.packageName = packageName
             service.onAccessibilityEvent(event)
-        } finally {
-            event.recycle()
-        }
+        } finally { event.recycle() }
     }
 
     @Suppress("DEPRECATION")
     private fun collectSyntheticRoot(service: DoomAccessibilityService, packageName: String?) {
-        val root = AccessibilityNodeInfo.obtain().apply { this.packageName = packageName }
-        // Exercise the delayed-event collection boundary without reading a real active window.
-        // The collector owns and recycles this synthetic node, including on mismatch.
+        val root = AccessibilityNodeInfo.obtain().apply {
+            this.packageName = packageName
+            viewIdResourceName = "com.instagram.android:id/feed_tab"
+            className = "android.widget.TextView"
+            text = "SECRET_MESSAGE"
+            contentDescription = "SECRET_ACCOUNT"
+            hintText = "SECRET_HINT"
+            error = "SECRET_ERROR"
+        }
+        // Collector owns/recycles this node, including on mismatched roots.
         DoomAccessibilityService::class.java.getDeclaredMethod("collect", AccessibilityNodeInfo::class.java)
             .apply { isAccessible = true }.invoke(service, root)
     }
 
-    @Test fun doomEventsPreserveLabelableSampleButDelayedInstagramRootMismatchInvalidatesIt() {
-        val service = DoomAccessibilityService()
-        seed()
-        tap("LABEL FEED")
-        val first = rule.runOnIdle { Observation.samples.current }
-        rule.runOnIdle {
-            sendEvent(service, rule.activity.packageName)
-            assertSame(first, Observation.samples.current)
-        }
-        tap("LABEL INBOX")
-        rule.runOnIdle { assertSame(first, Observation.samples.baselines[SampleLabel.INBOX]) }
-
-        // A queued Instagram event can arrive after Doom becomes the active root.
-        // Missing package metadata must invalidate the current sample in the same way.
-        listOf(rule.activity.packageName, null).forEach { packageName ->
-            seed(1)
-            rule.runOnIdle {
-                collectSyntheticRoot(service, packageName)
-                assertNull(Observation.samples.current)
-                SampleLabel.entries.forEach { Observation.label(it) }
-                assertEquals(2, Observation.samples.baselines.size)
-                assertSame(first, Observation.samples.baselines[SampleLabel.FEED])
-                assertSame(first, Observation.samples.baselines[SampleLabel.INBOX])
-                assertTrue(Observation.connected)
-            }
-            shown("Feed: labeled · no current sample")
-            SampleLabel.entries.forEach {
-                rule.onNodeWithText("LABEL ${it.title.uppercase()}").performScrollTo().assertIsNotEnabled()
-            }
-        }
-        rule.runOnIdle { collectSyntheticRoot(service, "com.instagram.android") }
-        tap("LABEL THREAD")
-        rule.runOnIdle {
-            assertNotNull(Observation.samples.current)
-            assertSame(Observation.samples.current, Observation.samples.baselines[SampleLabel.THREAD])
-            assertSame(first, Observation.samples.baselines[SampleLabel.FEED])
-        }
-    }
-
-    @Test fun disclosureAndLabelsNeverClaimProtectionOrPrediction() {
+    @Test fun disclosureAndControlsNeverClaimScreenIdentityOrProtection() {
         shown("INSTAGRAM · NOT PROTECTED")
-        shown("SEPARABILITY RESEARCH ONLY")
-        rule.onNodeWithText("Counts overlapped on Pixel 11 Pro / Android 17 / Instagram 445.0.0.45.83.")
-            .performScrollTo().assertIsDisplayed()
-        shown("Similarity is structural overlap, not a prediction or protection. Labels are yours; no thresholds or live gate.")
+        shown("SANITIZED STRUCTURAL REPORT")
+        shown("Structure changes with scrolling and content. This report does not identify a screen or provide prediction, blocking or protection.")
+        shown("Copy leaves Doom process memory and enters the system clipboard. Review the revealed report before copying; upload privately, then clear the clipboard. Clearing or stopping Doom cannot recall copies outside the app.")
         rule.onNodeWithText("OPEN ACCESSIBILITY SETTINGS").performScrollTo().assertIsNotEnabled()
-        SampleLabel.entries.forEach {
-            rule.onNodeWithText("LABEL ${it.title.uppercase()}").performScrollTo().assertIsNotEnabled()
-        }
+        assertActionsDisabled()
         seed()
         shown("Observer connected · mapping unverified")
         shown("INSTAGRAM · NOT PROTECTED")
         rule.onNodeWithText("INSTAGRAM · PROTECTED").assertDoesNotExist()
+        rule.onNodeWithText("LABEL FEED").assertDoesNotExist()
+        rule.onNodeWithText("similarity", substring = true).assertDoesNotExist()
     }
 
-    @Test fun explicitLabelsCompareReplaceAndClearEverySample() {
+    @Test fun reportIsHiddenUntilExplicitRevealAndOnlyExplicitCopyChangesClipboard() {
         seed()
-        val first = rule.runOnIdle { Observation.samples.current!!.opaque }
-        shown("Opaque fingerprint: $first")
-        SampleLabel.entries.forEach {
-            shown("${it.title}: not labeled")
-            tap("LABEL ${it.title.uppercase()}")
-            shown("${it.title}: 100.0% similarity")
+        val first = rule.runOnIdle { Observation.report!!.text }
+        rule.onNodeWithText(first).assertDoesNotExist()
+        rule.onNodeWithText("COPY REVIEWED REPORT").performScrollTo().assertIsNotEnabled()
+        rule.runOnIdle {
+            Observation.copyReport(rule.activity)
+            assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
         }
+        tap("REVEAL LOCAL REPORT")
+        shown(first)
+        rule.runOnIdle { assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString()) }
+        tap("COPY REVIEWED REPORT")
+        rule.runOnIdle { assertEquals(first, clipboard.primaryClip!!.getItemAt(0).text.toString()) }
+        shown("Copied to system clipboard. Upload privately, then clear the clipboard.")
         seed(1)
-        SampleLabel.entries.forEach { shown("${it.title}: 0.0% similarity") }
-        tap("LABEL FEED")
-        shown("Feed: 100.0% similarity")
-        shown("Inbox: 0.0% similarity")
-        tap("CLEAR SAMPLES & LABELS")
+        rule.runOnIdle { assertFalse(Observation.revealed); assertFalse(Observation.copied) }
+        rule.onNodeWithText(first).assertDoesNotExist()
+        rule.onNodeWithText("COPY REVIEWED REPORT").performScrollTo().assertIsNotEnabled()
+        tap("CLEAR REPORT")
         assertEmpty()
-        SampleLabel.entries.forEach {
-            shown("${it.title}: not labeled")
-            rule.onNodeWithText("LABEL ${it.title.uppercase()}").performScrollTo().assertIsNotEnabled()
-        }
-        // Consent remains on; only a later observed event may supply a fresh sample.
+        assertActionsDisabled()
         rule.runOnIdle { assertTrue(Observation.consent) }
     }
 
-    @Test fun revocationAndStopClearCurrentAndAllLabels() {
+    @Test fun doomEventsPreserveReportButWrongOrMissingRootInvalidatesAllReportState() {
+        val service = DoomAccessibilityService()
         seed()
-        SampleLabel.entries.forEach { tap("LABEL ${it.title.uppercase()}") }
-        rule.onNodeWithContentDescription("Consent to local structural fingerprints")
+        revealAndCopy()
+        val first = rule.runOnIdle { Observation.report }
+        rule.runOnIdle {
+            sendEvent(service, rule.activity.packageName)
+            service.onAccessibilityEvent(null)
+            assertSame(first, Observation.report)
+            assertTrue(Observation.revealed)
+            assertTrue(Observation.copied)
+        }
+        listOf(rule.activity.packageName, null).forEach { packageName ->
+            seed(1)
+            revealAndCopy()
+            rule.runOnIdle { collectSyntheticRoot(service, packageName) }
+            assertEmpty()
+            assertActionsDisabled()
+            rule.runOnIdle { assertTrue(Observation.connected) }
+        }
+        rule.runOnIdle {
+            collectSyntheticRoot(service, "com.instagram.android")
+            assertNotNull(Observation.report)
+            assertFalse(Observation.report!!.text.contains("SECRET"))
+            assertFalse(Observation.revealed)
+            assertFalse(Observation.copied)
+        }
+    }
+
+    @Test fun delayedInstagramEventWithNullActiveRootInvalidatesReport() {
+        seed()
+        revealAndCopy()
+        // An unbound service has no active root; use the real event entry point.
+        rule.runOnIdle { sendEvent(DoomAccessibilityService(), "com.instagram.android") }
+        assertEmpty()
+        assertActionsDisabled()
+    }
+
+    @Test fun revokeAndStopClearCurrentRevealAndCopyState() {
+        seed()
+        revealAndCopy()
+        rule.onNodeWithContentDescription("Consent to sanitized structural report")
             .performScrollTo().performClick()
         assertEmpty()
         rule.runOnIdle { assertFalse(Observation.connected); assertFalse(Observation.consent) }
         seed()
-        tap("LABEL THREAD")
+        revealAndCopy()
         tap("STOP OBSERVATION")
         assertEmpty()
         shown("Observation off · consent required")
     }
 
-    @Test fun oldConsentDoesNotAuthorizeSamplesAndStoppedCallbacksCannotRestoreThem() {
+    @Test fun bothOldConsentKeysCannotAuthorizeAndInvalidCopyNeverTouchesClipboard() {
         rule.runOnIdle {
             rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
-                .clear().putBoolean("accepted", true).commit()
+                .clear().putBoolean("accepted", true).putBoolean("structural_fingerprints_v1", true).commit()
             Observation.load(rule.activity)
             assertFalse(Observation.consent)
-            val sample = StructuralFingerprint.Builder().apply { add(0, true, true, false, 0) }.build()
             Observation.connected = true
-            Observation.record(sample)
-            Observation.label(SampleLabel.FEED)
-            assertNull(Observation.samples.current)
-            assertTrue(Observation.samples.baselines.isEmpty())
+            Observation.record(sample())
+            Observation.revealReport()
+            Observation.copyReport(rule.activity)
+            assertNull(Observation.report)
+            assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
             Observation.accept(rule.activity, true)
+            Observation.record(sample())
+            Observation.revealReport()
             DoomAccessibilityService.disableObservation()
-            Observation.record(sample)
-            Observation.label(SampleLabel.FEED)
+            Observation.record(sample())
+            Observation.revealReport()
+            Observation.copyReport(rule.activity)
+            assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
         }
         assertEmpty()
         shown("Observation off · service disconnected")
     }
 
-    @Test fun serviceInterruptionDisconnectAndDestructionClearEverything() {
+    @Test fun interruptionDisconnectAndDestructionClearEverythingAndRejectDelayedCallbacks() {
         val service = DoomAccessibilityService()
         val endings: List<() -> Unit> = listOf(
-            { service.onInterrupt() },
-            { service.onUnbind(null) },
-            { service.onDestroy() },
-            { DoomAccessibilityService.disableObservation() }
-        )
+            { service.onInterrupt() }, { service.onUnbind(null) },
+            { service.onDestroy() }, { DoomAccessibilityService.disableObservation() })
         endings.forEach { end ->
             seed()
-            SampleLabel.entries.forEach { tap("LABEL ${it.title.uppercase()}") }
+            revealAndCopy()
             rule.runOnIdle {
-                val sample = Observation.samples.current
                 end()
                 assertFalse(Observation.connected)
                 assertTrue(Observation.consent)
-                // Both a queued callback and direct recording must stay inert after disconnection.
+                clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
                 sendEvent(service, "com.instagram.android")
-                Observation.record(sample)
-                Observation.label(SampleLabel.FEED)
+                Observation.record(sample())
+                Observation.revealReport()
+                Observation.copyReport(rule.activity)
+                assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
             }
             assertEmpty()
+            assertActionsDisabled()
             shown("Observation off · service disconnected")
-            SampleLabel.entries.forEach {
-                rule.onNodeWithText("LABEL ${it.title.uppercase()}").performScrollTo().assertIsNotEnabled()
-            }
         }
     }
 
-    @Test fun interruptedObserverCanRecordOnlyAfterServiceConnectionCallback() {
+    @Test fun connectionAlwaysClearsStateAndInterruptedObserverRequiresConnectionCallback() {
         val service = DoomAccessibilityService()
         rule.runOnIdle {
-            // Supply only a Context for the real connection callback's consent load; no OS binding.
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
         }
+        fun connect() {
+            // onServiceConnected is protected: invoke the real callback through test-only reflection.
+            DoomAccessibilityService::class.java.getDeclaredMethod("onServiceConnected")
+                .apply { isAccessible = true }.invoke(service)
+        }
         try {
             seed()
-            tap("LABEL FEED")
+            revealAndCopy()
+            rule.runOnIdle { connect(); assertTrue(Observation.connected) }
+            assertEmpty()
+            seed()
+            revealAndCopy()
             rule.runOnIdle {
-                val sample = Observation.samples.current
                 service.onInterrupt()
-                assertFalse(Observation.connected)
-                Observation.record(sample)
-                assertNull(Observation.samples.current)
-                service.onServiceConnected()
+                Observation.record(sample())
+                assertNull(Observation.report)
+                connect()
                 assertTrue(Observation.connected)
-                assertNull(Observation.samples.current)
-                assertTrue(Observation.samples.baselines.isEmpty())
+                assertNull(Observation.report)
+                assertFalse(Observation.revealed)
+                assertFalse(Observation.copied)
                 collectSyntheticRoot(service, "com.instagram.android")
-                assertNotNull(Observation.samples.current)
-                assertTrue(Observation.samples.baselines.isEmpty())
+                assertNotNull(Observation.report)
+                assertFalse(Observation.revealed)
+                assertFalse(Observation.copied)
             }
             shown("Observer connected · mapping unverified")
-            tap("LABEL FEED")
-            shown("Feed: 100.0% similarity")
-        } finally {
-            rule.runOnIdle { service.onDestroy() }
+        } finally { rule.runOnIdle { service.onDestroy() } }
+    }
+
+    @Test fun onlyConsentIsPersistedAndLoadingWithoutConsentClearsMemory() {
+        seed()
+        revealAndCopy()
+        rule.runOnIdle {
+            val prefs = rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
+            assertEquals(mapOf("sanitized_structural_report_v1" to true), prefs.all)
+            prefs.edit().clear().commit()
+            Observation.load(rule.activity)
         }
+        assertEmpty()
+        assertActionsDisabled()
     }
 }
