@@ -14,25 +14,29 @@ if [[ -n "$(git status --porcelain)" ]]; then
   printf '%s\n' 'Exact-SHA fixture evidence requires a clean checkout.' >&2
   exit 2
 fi
-# Validate the disposable target before enabling any failure-time diagnostic collection.
-adb wait-for-device
-[[ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" == "35" ]]
-[[ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" == "1" ]]
 out="fixture-evidence/${sha}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 # A fresh artifact directory and device directory prevent stale evidence reuse.
 [[ ! -e "$out" ]]
 mkdir -p "$out/screenshots" "$out/apks" "$out/reports" "$out/diagnostics"
 export FIXTURE_SHA="$sha" FIXTURE_OUT="$out" FIXTURE_PHASE=prepare
+device_ready=0
 collect() {
   result=$?
   trap - EXIT
   set +e
   collection=0
-  adb pull /sdcard/Download/doom-fixture-evidence/. "$out/screenshots/" > "$out/diagnostics/pull.log" 2>&1 || collection=1
-  adb shell dumpsys accessibility > "$out/diagnostics/accessibility.txt" 2>&1 || collection=1
-  adb shell dumpsys window windows > "$out/diagnostics/windows.txt" 2>&1 || collection=1
-  adb shell dumpsys activity activities > "$out/diagnostics/activities.txt" 2>&1 || collection=1
-  adb logcat -d -s AndroidRuntime:E > "$out/diagnostics/crashes.txt" 2>&1 || collection=1
+  # Until readiness and evidence directory preparation succeed, keep host status only:
+  # further adb calls could outlive the readiness deadline or pull stale files.
+  if (( device_ready )); then
+    adb pull /sdcard/Download/doom-fixture-evidence/. "$out/screenshots/" > "$out/diagnostics/pull.log" 2>&1 || collection=1
+    adb shell dumpsys accessibility > "$out/diagnostics/accessibility.txt" 2>&1 || collection=1
+    adb shell dumpsys window windows > "$out/diagnostics/windows.txt" 2>&1 || collection=1
+    adb shell dumpsys activity activities > "$out/diagnostics/activities.txt" 2>&1 || collection=1
+    adb logcat -d -s AndroidRuntime:E > "$out/diagnostics/crashes.txt" 2>&1 || collection=1
+  else
+    printf '%s\n' 'Device collection skipped: readiness or evidence directory preparation failed; see readiness.log and CI output.' > "$out/diagnostics/pull.log"
+    collection=1
+  fi
   for module in fixtureapp fixturegate; do
     apk="$module/build/outputs/apk/debug/$module-debug.apk"
     if [[ -s "$apk" ]]; then cp "$apk" "$out/apks/$module-debug-$sha.apk" || collection=1
@@ -145,8 +149,10 @@ sys.exit(bool(errors))
   exit "$validation"
 }
 trap collect EXIT
+python3 scripts/fixture-readiness.py | tee "$out/diagnostics/readiness.log"
 adb shell rm -rf /sdcard/Download/doom-fixture-evidence
 adb shell mkdir -p /sdcard/Download/doom-fixture-evidence
+device_ready=1
 FIXTURE_PHASE=build
 ./gradlew --no-daemon --stacktrace :fixtureapp:assembleDebug :fixturegate:assembleDebug :fixturegate:testDebugUnitTest :fixturegate:lintDebug | tee "$out/build.log"
 FIXTURE_PHASE=install
