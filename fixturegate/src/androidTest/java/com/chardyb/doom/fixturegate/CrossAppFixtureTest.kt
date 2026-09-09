@@ -2,10 +2,13 @@ package com.chardyb.doom.fixturegate
 
 import android.app.UiAutomation
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Context
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
@@ -14,6 +17,7 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.FutureTask
 
 /** Disposable emulator only. Tests interact through real UI, system settings and windows. */
 class CrossAppFixtureTest {
@@ -43,6 +47,9 @@ class CrossAppFixtureTest {
         oldEnabled = shell("settings get secure accessibility_enabled")
         require(oldServices.matches(Regex("[A-Za-z0-9_./:$-]*")))
         require(oldEnabled in setOf("0", "1", "null"))
+        require(oldServices.split(':').none { it.startsWith("$GATE/") }) {
+            "Disposable emulator must start with the fixture service disabled"
+        }
         initialized = true
         shell("settings put secure enabled_accessibility_services null")
         shell("settings put secure accessibility_enabled 0")
@@ -61,15 +68,46 @@ class CrossAppFixtureTest {
 
     @After fun tearDown() {
         if (!initialized) return
-        shell("input keyevent KEYCODE_WAKEUP")
-        shell("wm dismiss-keyguard")
-        if (oldServices == "null" || oldServices.isEmpty()) shell("settings delete secure enabled_accessibility_services")
-        else shell("settings put secure enabled_accessibility_services $oldServices")
-        if (oldEnabled == "null") shell("settings delete secure accessibility_enabled")
-        else shell("settings put secure accessibility_enabled $oldEnabled")
-        launch(GATE_COMPONENT)
-        click("Disable and clear TEST FIXTURE consent")
-        device.pressHome()
+        try {
+            clearFixtureConsent()
+        } finally {
+            // Attempt both restorations even when cleanup or the first restoration fails.
+            try {
+                restoreSecureSetting("enabled_accessibility_services", oldServices)
+            } finally {
+                restoreSecureSetting("accessibility_enabled", oldEnabled)
+            }
+        }
+    }
+
+    private fun clearFixtureConsent() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        assertEquals("Cleanup must target only the fixture gate", GATE, context.packageName)
+        val preferences = context.getSharedPreferences(ConsentActivity.CONSENT_FILE, Context.MODE_PRIVATE)
+        // pm clear/force-stop would kill this instrumentation's target process.
+        // Finish stale checkbox state and deliver consent listeners on the main thread
+        // before restoring settings, so disableSelf() cannot undo that restoration.
+        val cleanup = FutureTask {
+            val monitor = ActivityLifecycleMonitorRegistry.getInstance()
+            Stage.values().filter { it != Stage.DESTROYED }
+                .flatMap { monitor.getActivitiesInStage(it) }
+                .filterIsInstance<ConsentActivity>()
+                .forEach { it.finish() }
+            preferences.edit().clear().commit()
+        }
+        // FutureTask propagates failures back to JUnit instead of crashing the main thread.
+        instrumentation.runOnMainSync(cleanup)
+        assertTrue("Fixture consent cleanup must persist", cleanup.get())
+        assertTrue("Fixture consent preferences must be empty", preferences.all.isEmpty())
+    }
+
+    private fun restoreSecureSetting(key: String, value: String) {
+        require(key in setOf("enabled_accessibility_services", "accessibility_enabled"))
+        val expected = if (value.isEmpty()) "null" else value
+        if (expected == "null") shell("settings delete secure $key")
+        else shell("settings put secure $key $expected")
+        assertEquals("Failed to restore $key", expected, shell("settings get secure $key"))
     }
 
     private fun launch(component: String) {
