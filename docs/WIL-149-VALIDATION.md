@@ -1,6 +1,6 @@
-# WIL-149 sanitized structural report validation
+# WIL-149 sanitized structural report and shadow-classifier validation
 
-Working-tree implementation based on clean HEAD `c02dc72042b0009d04f0533ec70a102aa9905fa2`. Changes are uncommitted. No Gradle, Android, adb, credential access, network operation, commit, push or Linear update was performed. One writer; no delegated agents.
+Working-tree implementation based on current base HEAD `1f1b0e8`. Changes are uncommitted. No Gradle, Android, adb, credential access, network operation, commit, push or Linear update was performed. This incremental classifier repair was implemented by delegated Luna work and reviewed by the controller and Sol repair review; earlier historical evidence below is preserved.
 
 ## Exact changed files
 
@@ -13,6 +13,8 @@ Working-tree implementation based on clean HEAD `c02dc72042b0009d04f0533ec70a102
 | `app/src/main/java/com/chardy/doom/MainActivity.kt` | Replace old diagnostic controls with disclosure, local reveal, reviewed copy and clear. |
 | `app/src/main/res/values/strings.xml` | Replace accessibility-service disclosure. |
 | `app/src/test/java/com/chardy/doom/SanitizedStructuralReportTest.kt` | New sanitizer, hostile-input, aggregation, immutability and boundary tests. |
+| `app/src/main/java/com/chardy/doom/InstagramSurfaceShadowClassifier.kt` | Pure deterministic, non-blocking surface prediction with messaging precedence and fail-open ambiguity handling. |
+| `app/src/test/java/com/chardy/doom/InstagramSurfaceShadowClassifierTest.kt` | Focused classifier tests for positives, messaging precedence, truncation and mixed ambiguity. |
 | `app/src/test/java/com/chardy/doom/StructuralFingerprintTest.kt` | Delete tests for the removed feature. |
 | `app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt` | Replace old-feature tests with report disclosure/gating/clipboard/lifecycle tests; invoke protected connection callback through test-only reflection. |
 | `scripts/test-structural-lifecycle.py` | Preserve lifecycle guards for the replacement; add privacy, copy, traversal, consent, process-start, manifest and protected-callback guards. |
@@ -29,7 +31,8 @@ Boundary coverage includes 63/64/65 combined resource/class tokens below the byt
 
 | Executed check | Result |
 | --- | --- |
-| Direct host `K2JVMCompiler` + `org.junit.runner.JUnitCore` | PASS, 16 pure JVM tests; report source and test compiled together. No Gradle invocation or Android classes. |
+| Direct host `K2JVMCompiler` + `org.junit.runner.JUnitCore` | PASS, 8 classifier tests; report and classifier sources/tests compiled together. No Gradle invocation or Android classes. |
+| Direct host combined report + classifier `K2JVMCompiler` + `org.junit.runner.JUnitCore` | PASS, 24 pure JVM tests. No Gradle invocation or Android classes. |
 | `python3 scripts/test-structural-lifecycle.py` | PASS, 14 tests. Source guards, not Android execution. |
 | `python3 scripts/test-fixture-evidence.py` | PASS, 21 tests. Existing suite unchanged. |
 | `bash -n scripts/ci-device.sh scripts/ci-fixture.sh` | PASS, both scripts. Syntax only; scripts were not executed. |
@@ -43,6 +46,8 @@ Protected paths checked: `app/src/main/AndroidManifest.xml`, `app/src/main/res/x
 The direct JVM check used existing cached Kotlin 1.9.23 compiler/stdlib/reflect/script-runtime jars, Trove, JetBrains annotations, JUnit 4.13.2 and Hamcrest 1.3, loaded with `java -cp`. Although stored under a cached Gradle distribution directory, only the Kotlin compiler main class and JUnit runner were invoked. Compiler arguments were `-no-stdlib -no-reflect -classpath <jars> -d <temporary-directory>` followed by the report and test paths. JUnit ran `com.chardy.doom.SanitizedStructuralReportTest`; compiled output was removed afterward. No dependencies were downloaded.
 
 ## Pending CI and real-device validation
+
+The classifier is a diagnostic prediction only. It does not block, overlay, protect, navigate, persist, or capture content. Messaging/calls/system/unknown/ambiguous inputs must remain fail-open; device and CI evidence cannot turn this shadow result into a safety guarantee.
 
 - The pure report Kotlin/JVM tests passed on the host as described above. Android compilation, lint, APK assembly and all instrumentation remain CI-only; no Android build or runtime pass is claimed.
 - CI must run `:app:testDebugUnitTest`, `:app:lintDebug`, `:app:assembleDebug` and `:app:connectedDebugAndroidTest`. The existing fixture jobs and exact-four demo screenshot/checksum/source-SHA contracts remain intact.

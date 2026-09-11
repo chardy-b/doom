@@ -47,7 +47,17 @@ internal object StructuralSanitizer {
 }
 
 /** One immutable ASCII report. No raw tree, UI content, history or hashes. */
-class SanitizedStructuralReport private constructor(val text: String, val truncated: Boolean) {
+internal data class ShadowClassificationInput(
+    val resourceIds: Set<String>,
+    val selectedResourceIds: Set<String>,
+    val scrollableResourceIds: Set<String>,
+    val truncated: Boolean
+)
+
+class SanitizedStructuralReport private constructor(
+    val text: String, val truncated: Boolean,
+    internal val shadowInput: ShadowClassificationInput
+) {
     private data class Row(
         val id: String?, val klass: String?, val depth: Int, val children: Int,
         val clickable: Boolean, val scrollable: Boolean, val editable: Boolean,
@@ -104,7 +114,16 @@ class SanitizedStructuralReport private constructor(val text: String, val trunca
                 body.append(line)
             }
             // Every emitted character is ASCII: the UTF-8 byte and character caps are identical.
-            return SanitizedStructuralReport(header(omitted) + body, omitted)
+            val admittedRows = rows.keys.filter { row ->
+                (row.id == null || row.id in admitted) && (row.klass == null || row.klass in admitted)
+            }
+            return SanitizedStructuralReport(header(omitted) + body, omitted,
+                ShadowClassificationInput(
+                    admittedRows.mapNotNull { it.id }.toSet(),
+                    admittedRows.filter { it.selected }.mapNotNull { it.id }.toSet(),
+                    admittedRows.filter { it.scrollable }.mapNotNull { it.id }.toSet(),
+                    omitted
+                ))
         }
     }
 

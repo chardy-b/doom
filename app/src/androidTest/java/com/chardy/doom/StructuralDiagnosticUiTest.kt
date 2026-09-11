@@ -101,10 +101,12 @@ class StructuralDiagnosticUiTest {
             .apply { isAccessible = true }.invoke(service, root)
     }
 
-    @Test fun disclosureAndControlsNeverClaimScreenIdentityOrProtection() {
+    @Test fun disclosureAndControlsNeverClaimProtectionOrAuthorizeActions() {
         shown("INSTAGRAM · NOT PROTECTED")
         shown("SANITIZED STRUCTURAL REPORT")
-        shown("Structure changes with scrolling and content. This report does not identify a screen or provide prediction, blocking or protection.")
+        shown("Structure changes with scrolling and content. The sanitized report is separate from a diagnostic shadow prediction; neither blocks, protects, or authorizes actions.")
+        shown("Shadow prediction: UNKNOWN")
+        shown("Diagnostic only — never authorizes a gate or protection.")
         shown("Copy leaves Doom process memory and enters the system clipboard. Review the revealed report before copying; upload privately, then clear the clipboard. Clearing or stopping Doom cannot recall copies outside the app.")
         rule.onNodeWithText("OPEN ACCESSIBILITY SETTINGS").performScrollTo().assertIsNotEnabled()
         assertActionsDisabled()

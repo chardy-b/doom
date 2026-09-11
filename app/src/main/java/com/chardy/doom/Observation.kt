@@ -23,6 +23,8 @@ object Observation {
         private set
     val canReveal get() = consent && connected && report != null
     val canCopy get() = canReveal && revealed
+    val shadowPrediction: InstagramSurface
+        get() = InstagramSurfaceShadowClassifier.classify(report)
 
     fun load(context: Context) {
         consent = context.getSharedPreferences("consent", Context.MODE_PRIVATE).getBoolean(CONSENT_KEY, false)
