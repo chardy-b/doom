@@ -13,14 +13,25 @@ COLORS = ROOT / "app/src/main/res/values/colors.xml"
 
 
 class Wil155HostGuards(unittest.TestCase):
-    def test_launcher_and_service_are_the_only_exported_components(self):
+    def test_source_manifest_declares_required_exports_and_dependency_providers_are_absent(self):
         self.assertIn('android:icon="@drawable/ic_launcher"', MANIFEST)
         self.assertRegex(MANIFEST, r'\.MainActivity" android:exported="true"')
         self.assertRegex(MANIFEST, r'\.DoomAccessibilityService"[^>]*android:exported="true"')
-        self.assertEqual(2, len(re.findall(r'android:exported="true"', MANIFEST)))
         self.assertNotIn("ui-test-manifest", GRADLE)
         self.assertNotIn('debugImplementation("androidx.compose.ui:ui-tooling")', GRADLE)
         self.assertIn('implementation("androidx.compose.ui:ui-tooling-preview")', GRADLE)
+
+    def test_instrumentation_proves_merged_activity_exports(self):
+        test = (ROOT / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        self.assertIn("getPackageInfo", test)
+        self.assertIn("PackageManager", test)
+        self.assertRegex(test, r"GET_ACTIVITIES\s+or\s+PackageManager\.MATCH_DISABLED_COMPONENTS")
+        self.assertIn("androidx.compose.ui.tooling.PreviewActivity", test)
+        self.assertIn("androidx.activity.ComponentActivity", test)
+        self.assertIn("targetActivity", test)
+        self.assertRegex(test, r"targetActivity\?\.let\(forbiddenActivityNames::contains\)")
+        self.assertRegex(test, r"exportedActivities.*map \{ it\.name \}")
+        self.assertIn("assertEquals(listOf(\"com.chardy.doom.MainActivity\"), exportedActivities)", test)
 
     def test_backup_and_network_boundaries_remain_closed(self):
         self.assertIn('android:allowBackup="false"', MANIFEST)

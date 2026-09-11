@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.PackageManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.ui.test.*
@@ -18,6 +19,25 @@ import org.junit.Test
 class StructuralDiagnosticUiTest {
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
     private val clipboard get() = requireNotNull(rule.activity.getSystemService(ClipboardManager::class.java))
+
+    @Test fun mergedPackageManagerActivitiesContainOnlyMainActivityAsExportedActivity() {
+        val packageInfo = rule.activity.packageManager.getPackageInfo(
+            rule.activity.packageName,
+            PackageManager.GET_ACTIVITIES or PackageManager.MATCH_DISABLED_COMPONENTS
+        )
+        val activities = packageInfo.activities.orEmpty().toList()
+        val forbiddenActivityNames = setOf(
+            "androidx.compose.ui.tooling.PreviewActivity",
+            "androidx.activity.ComponentActivity"
+        )
+        activities.forEach { activity ->
+            assertFalse(forbiddenActivityNames.contains(activity.name))
+            assertFalse(activity.targetActivity?.let(forbiddenActivityNames::contains) == true)
+        }
+
+        val exportedActivities = activities.filter { it.exported }.map { it.name }
+        assertEquals(listOf("com.chardy.doom.MainActivity"), exportedActivities)
+    }
 
     @Before fun reset() = rule.runOnIdle {
         Observation.accept(rule.activity, false)
