@@ -18,8 +18,11 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertNotIn("Observation.clear", guard)
         self.assertGreater(body.index("rootInActiveWindow"), body.index("return"))
 
-    def test_delayed_instagram_event_with_mismatched_root_invalidates_current_and_recycles(self):
+    def test_delayed_instagram_event_with_doom_root_preserves_current_and_recycles(self):
         body = SERVICE.split("private fun collect", 1)[1].split("override fun onInterrupt", 1)[0]
+        self.assertIn("applicationContext.packageName", body)
+        self.assertNotIn("BuildConfig.APPLICATION_ID", body)
+        self.assertNotIn('== "com.chardy.doom"', body)
         self.assertRegex(body, r'if \(root.packageName\?\.toString\(\) != "com.instagram.android"\)\s*\{\s*'
                               r'Observation.record\(null\)\s*;?\s*return\s*\}')
         self.assertLess(body.index("queue.add(root to 0)"), body.index("try {"))
@@ -27,6 +30,16 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertRegex(body, r'finally \{\s*while \(queue.isNotEmpty\(\)\) '
                               r'queue.removeFirst\(\).first.recycle\(\)\s*\}')
         self.assertNotIn("Observation.clear()", body)
+
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        preservation = tests.split("@Test fun doomEventsPreserveReportButForeignOrMissingRootInvalidatesAllReportState", 1)[1].split("@Test", 1)[0]
+        self.assertIn('getDeclaredMethod("attachBaseContext", Context::class.java)', preservation)
+        self.assertIn('invoke(service, rule.activity.applicationContext)', preservation)
+        self.assertIn('collectSyntheticRoot(service, rule.activity.packageName)', preservation)
+        self.assertNotIn('sendEvent(service, rule.activity.packageName)', preservation)
+        self.assertIn('listOf("com.example.foreign", null)', tests)
+        self.assertIn("rule.activity.packageName", tests)
+        self.assertNotIn('listOf(rule.activity.packageName, null)', tests)
 
     def test_interrupt_marks_disconnected_and_clears_before_any_later_record(self):
         self.assertRegex(SERVICE, r'override fun onInterrupt\(\)\s*\{\s*'

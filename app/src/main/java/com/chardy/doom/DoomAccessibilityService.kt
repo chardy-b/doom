@@ -43,8 +43,10 @@ class DoomAccessibilityService : AccessibilityService() {
         val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
         queue.add(root to 0)
         try {
-            // Non-Instagram events are ignored above, preserving normal return-to-Doom review.
-            // A delayed Instagram event can see another app's root: invalidate the stale current sample.
+            // A delayed Instagram event can arrive after Doom is foreground again. Preserve
+            // the valid report; a Doom root cannot be an Instagram sample.
+            if (root.packageName?.toString() == applicationContext.packageName) return
+            // Any other foreign root is unavailable, never a valid Instagram sample.
             if (root.packageName?.toString() != "com.instagram.android") {
                 Observation.record(null)
                 return

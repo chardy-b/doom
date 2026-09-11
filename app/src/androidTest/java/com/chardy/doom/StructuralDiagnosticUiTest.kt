@@ -121,19 +121,22 @@ class StructuralDiagnosticUiTest {
         rule.runOnIdle { assertTrue(Observation.consent) }
     }
 
-    @Test fun doomEventsPreserveReportButWrongOrMissingRootInvalidatesAllReportState() {
+    @Test fun doomEventsPreserveReportButForeignOrMissingRootInvalidatesAllReportState() {
         val service = DoomAccessibilityService()
+        rule.runOnIdle {
+            ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+                .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
+        }
         seed()
         revealAndCopy()
         val first = rule.runOnIdle { Observation.report }
         rule.runOnIdle {
-            sendEvent(service, rule.activity.packageName)
-            service.onAccessibilityEvent(null)
+            collectSyntheticRoot(service, rule.activity.packageName)
             assertSame(first, Observation.report)
             assertTrue(Observation.revealed)
             assertTrue(Observation.copied)
         }
-        listOf(rule.activity.packageName, null).forEach { packageName ->
+        listOf("com.example.foreign", null).forEach { packageName ->
             seed(1)
             revealAndCopy()
             rule.runOnIdle { collectSyntheticRoot(service, packageName) }
