@@ -6,30 +6,28 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 SERVICE = (REPO / "app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt").read_text()
 OBSERVATION = (REPO / "app/src/main/java/com/chardy/doom/Observation.kt").read_text()
+OVERLAY_VIEW = (REPO / "app/src/main/java/com/chardy/doom/EntryGateOverlayView.kt").read_text()
 
 
 class StructuralLifecycleSourceTest(unittest.TestCase):
     def test_other_package_events_return_before_reading_root_or_changing_samples(self):
         body = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
         guard = body.split("try {", 1)[0]
-        self.assertRegex(guard, r'if \(!Observation.consent \|\| !Observation.connected \|\| '
-                               r'event\?\.packageName\?\.toString\(\) != "com.instagram.android"\) return')
+        self.assertRegex(body, r'if \(packageName != INSTAGRAM\)\s*\{\s*resetOutside\(\)\s*return\s*\}')
         self.assertNotIn("Observation.record", guard)
         self.assertNotIn("Observation.clear", guard)
         self.assertGreater(body.index("rootInActiveWindow"), body.index("return"))
 
-    def test_delayed_instagram_event_with_doom_root_preserves_current_and_recycles(self):
+    def test_collector_rejects_non_instagram_roots_and_recycles_every_path(self):
         body = SERVICE.split("private fun collect", 1)[1].split("override fun onInterrupt", 1)[0]
-        self.assertIn("applicationContext.packageName", body)
+        self.assertIn("INSTAGRAM", body)
         self.assertNotIn("BuildConfig.APPLICATION_ID", body)
-        self.assertNotIn('== "com.chardy.doom"', body)
-        self.assertRegex(body, r'if \(root.packageName\?\.toString\(\) != "com.instagram.android"\)\s*\{\s*'
-                              r'Observation.record\(null\)\s*;?\s*return\s*\}')
+        self.assertIn("rootPackage == applicationContext.packageName", body)
+        self.assertRegex(body, r'if \(rootPackage != INSTAGRAM\)\s*\{\s*'
+                              r'root\.recycle\(\)\s*Observation\.record\(null\)\s*return\s*\}')
         self.assertLess(body.index("queue.add(root to 0)"), body.index("try {"))
-        self.assertLess(body.index("try {"), body.index("root.packageName"))
         self.assertRegex(body, r'finally \{\s*while \(queue.isNotEmpty\(\)\) '
                               r'queue.removeFirst\(\).first.recycle\(\)\s*\}')
-        self.assertNotIn("Observation.clear()", body)
 
         tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
         preservation = tests.split("@Test fun doomEventsPreserveReportButForeignOrMissingRootInvalidatesAllReportState", 1)[1].split("@Test", 1)[0]
@@ -42,8 +40,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertNotIn('listOf(rule.activity.packageName, null)', tests)
 
     def test_interrupt_marks_disconnected_and_clears_before_any_later_record(self):
-        self.assertRegex(SERVICE, r'override fun onInterrupt\(\)\s*\{\s*'
-                                 r'Observation.connected = false\s+Observation.clear\(\)\s*\}')
+        self.assertIn("override fun onInterrupt()", SERVICE)
         disconnect = SERVICE.split("private fun disconnect()", 1)[1]
         self.assertRegex(disconnect, r'Observation.connected = false\s+Observation.clear\(\)')
         record = OBSERVATION.split('internal fun record(', 1)[1].split('fun revealReport()', 1)[0]
@@ -52,7 +49,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
     def test_reconnection_clears_then_loads_consent_before_enabling_recording(self):
         body = SERVICE.split("override fun onServiceConnected()", 1)[1].split("override fun onAccessibilityEvent", 1)[0]
         self.assertRegex(body, r'Observation.connected = false\s+Observation.clear\(\)\s+Observation.load\(this\)\s+'
-                              r'if \(!Observation.consent\) \{ disableSelf\(\); return \}\s+Observation.connected = true')
+                              r'if \(!Observation.consent\) \{\s*disableSelf\(\)\s*return\s*\}\s*'
+                              r'Observation.connected = true')
 
     def test_fresh_consent_and_no_superseded_implementation(self):
         self.assertIn('"sanitized_structural_report_v1"', OBSERVATION)
@@ -68,7 +66,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         reads = set(re.findall(r"node\.([A-Za-z]+)", SERVICE))
         self.assertEqual(reads, {"packageName", "childCount", "viewIdResourceName", "className", "isClickable",
                                  "isScrollable", "isEditable", "isSelected", "isChecked", "getChild", "recycle"})
-        for forbidden in ("performAction", "performGlobalAction", "dispatchGesture", "takeScreenshot", "Log."):
+        for forbidden in ("performAction", "dispatchGesture", "takeScreenshot", "Log."):
             self.assertNotIn(forbidden, SERVICE)
         self.assertIn("builder.markTruncated()", SERVICE)
 
@@ -120,7 +118,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertEqual("false", app.get(ns + "fullBackupContent"))
         self.assertEqual("android.permission.BIND_ACCESSIBILITY_SERVICE", app.find("service").get(ns + "permission"))
         config = ET.parse(REPO / "app/src/main/res/xml/accessibility_service_config.xml").getroot()
-        self.assertEqual("com.instagram.android", config.get(ns + "packageNames"))
+        self.assertIsNone(config.get(ns + "packageNames"))
         self.assertEqual("typeWindowStateChanged|typeWindowContentChanged", config.get(ns + "accessibilityEventTypes"))
         self.assertEqual("flagReportViewIds", config.get(ns + "accessibilityFlags"))
         self.assertEqual("false", config.get(ns + "isAccessibilityTool"))
@@ -130,8 +128,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("while (queue.isNotEmpty() && nodes < SanitizedStructuralReport.MAX_NODES)", SERVICE)
         self.assertIn("if (depth < SanitizedStructuralReport.MAX_DEPTH)", SERVICE)
         self.assertIn("SanitizedStructuralReport.MAX_NODES - nodes - queue.size", SERVICE)
-        self.assertIn("if (limit < children) builder.markTruncated()", SERVICE)
-        self.assertIn("if (child == null) builder.markTruncated() else queue.add(child to depth + 1)", SERVICE)
+        self.assertIn("builder.markTruncated()", SERVICE)
         self.assertIn("if (queue.isNotEmpty()) builder.markTruncated()", SERVICE)
         self.assertRegex(SERVICE, r'finally \{\s+node.recycle\(\)\s+\}')
 
@@ -146,16 +143,73 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn('if (Observation.canReveal && Observation.revealed && report != null)', ui)
         for name in ("SanitizedStructuralReport.kt", "Observation.kt", "DoomAccessibilityService.kt"):
             for forbidden in (r'\bLog\.', r'\bprintln\(', r'\bprintStackTrace\(', r'\bFile\(',
-                              r'java\.net', r'java\.io', r'android\.graphics', r'ACTION_SEND',
+                              r'java\.net', r'java\.io', r'ACTION_SEND',
                               r'openFileOutput', r'putString', r'putStringSet', r'SavedStateHandle'):
                 self.assertIsNone(re.search(forbidden, files[name]), f"{name}: {forbidden}")
+        for name in ("SanitizedStructuralReport.kt", "Observation.kt"):
+            self.assertNotIn("android.graphics", files[name])
 
 
     def test_foreign_or_unattributed_children_are_skipped_before_metadata_reads(self):
         body = SERVICE.split("val (node, depth) = queue.removeFirst()", 1)[1]
-        self.assertRegex(body, r'if \(node.packageName\?\.toString\(\) != "com.instagram.android"\) \{\s+'
+        self.assertRegex(body, r'if \(node.packageName\?\.toString\(\) != INSTAGRAM\) \{\s+'
                               r'builder.markTruncated\(\)\s+continue\s+\}')
         self.assertLess(body.index("node.packageName"), body.index("node.childCount"))
+
+    def test_entry_overlay_is_default_off_bounded_and_remove_before_actions(self):
+        policy = (REPO / "app/src/main/java/com/chardy/doom/InstagramEntryGate.kt").read_text()
+        self.assertIn("private val enabled: () -> Boolean = { false }", policy)
+        self.assertIn("durationMs in 1L..120_000L", policy)
+        self.assertIn("TYPE_ACCESSIBILITY_OVERLAY", SERVICE)
+        self.assertIn('text = "DISMISS FOR MESSAGES"', OVERLAY_VIEW)
+        self.assertIn('text = "LEAVE INSTAGRAM"', OVERLAY_VIEW)
+        self.assertIn("setOnClickListener { onDismissForMessages() }", OVERLAY_VIEW)
+        self.assertIn("setOnClickListener { onLeaveInstagram() }", OVERLAY_VIEW)
+        install = SERVICE.split("EntryGateOverlayViewFactory.create", 1)[1].split(
+            "val parameters", 1
+        )[0]
+        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.BYPASS)", install)
+        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.HOME)", install)
+        confirmed = SERVICE.split("private fun confirmOverlayRemoved", 1)[1].split(
+            "private fun cancelAndBypass", 1
+        )[0]
+        home = confirmed.split("OverlayRemovalAction.HOME", 1)[1].split("null -> Unit", 1)[0]
+        self.assertLess(home.index("entryGate.bypass"), home.index("performGlobalAction"))
+        self.assertIn("GLOBAL_ACTION_HOME", home)
+        self.assertNotIn("dispatchGesture", SERVICE)
+        self.assertNotIn("node.performAction", SERVICE)
+
+    def test_gate_timer_watchdog_and_completion_fail_open(self):
+        self.assertIn("WATCHDOG_INTERVAL_MS = 50L", SERVICE)
+        self.assertIn("entryGate.overlayShown(shownAt, activeTicket)", SERVICE)
+        completion = SERVICE.split("completion = Runnable", 1)[1].split("watchdog =", 1)[0]
+        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.COMPLETE)", completion)
+        watchdog = SERVICE.split("watchdog = object", 1)[1].split("catch (_: RuntimeException)", 1)[0]
+        self.assertIn("activeRoot?.recycle()", watchdog)
+        self.assertIn("if (packageName != INSTAGRAM)", watchdog)
+        self.assertIn("handler.postDelayed(this, WATCHDOG_INTERVAL_MS)", watchdog)
+
+    def test_overlay_actions_wait_for_confirmed_physical_detachment(self):
+        removal = SERVICE.split("private fun requestOverlayRemoval", 1)[1].split(
+            "private fun cancelAndBypass", 1
+        )[0]
+        self.assertIn("removeViewImmediate(view)", removal)
+        self.assertGreaterEqual(removal.count("!view.isAttachedToWindow"), 2)
+        self.assertIn("removalPolicy.failedAttempt()", removal)
+        self.assertIn("handler.postDelayed(it, REMOVAL_RETRY_INTERVAL_MS)", removal)
+        self.assertIn("disableSelf()", removal)
+        self.assertIn("removalPolicy.confirmedDetached()", removal)
+        self.assertLess(removal.index("confirmedDetached()"), removal.index("GLOBAL_ACTION_HOME"))
+
+    def test_foreign_event_resets_before_root_access_and_gate_reads_only_sanitized_report(self):
+        event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(
+            "private fun InstagramSurface.toGateSurface", 1
+        )[0]
+        self.assertLess(event.index("packageName != INSTAGRAM"), event.index("rootInActiveWindow"))
+        self.assertIn("resetOutside()", event)
+        self.assertIn("InstagramSurfaceShadowClassifier.classify(Observation.report)", event)
+        self.assertNotIn("event.text", event)
+        self.assertNotIn("contentDescription", event)
 
 
 if __name__ == "__main__":

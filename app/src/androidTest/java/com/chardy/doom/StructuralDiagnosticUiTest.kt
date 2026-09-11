@@ -40,10 +40,12 @@ class StructuralDiagnosticUiTest {
     }
 
     @Before fun reset() = rule.runOnIdle {
+        Observation.setGateConsent(rule.activity, false)
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
     }
     @After fun cleanup() = rule.runOnIdle {
+        Observation.setGateConsent(rule.activity, false)
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
     }
@@ -104,9 +106,9 @@ class StructuralDiagnosticUiTest {
     @Test fun disclosureAndControlsNeverClaimProtectionOrAuthorizeActions() {
         shown("INSTAGRAM · NOT PROTECTED")
         shown("SANITIZED STRUCTURAL REPORT")
-        shown("Structure changes with scrolling and content. The sanitized report is separate from a diagnostic shadow prediction; neither blocks, protects, or authorizes actions.")
+        shown("Structure changes with scrolling and content. The sanitized report is separate from a diagnostic shadow prediction; neither blocks, protects, or controls actions; the optional entry pause is default-off and fail-open.")
         shown("Shadow prediction: UNKNOWN")
-        shown("Diagnostic only — never authorizes a gate or protection.")
+        shown("Diagnostic only — may show an optional entry pause; never protects or controls Instagram.")
         shown("Copy leaves Doom process memory and enters the system clipboard. Review the revealed report before copying; upload privately, then clear the clipboard. Clearing or stopping Doom cannot recall copies outside the app.")
         rule.onNodeWithText("OPEN ACCESSIBILITY SETTINGS").performScrollTo().assertIsNotEnabled()
         assertActionsDisabled()
@@ -116,6 +118,46 @@ class StructuralDiagnosticUiTest {
         rule.onNodeWithText("INSTAGRAM · PROTECTED").assertDoesNotExist()
         rule.onNodeWithText("LABEL FEED").assertDoesNotExist()
         rule.onNodeWithText("similarity", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun entryGateConsentIsSeparateDefaultOffAndRevocable() {
+        val gateConsent = rule.onNodeWithContentDescription("Diagnostic Instagram entry gate opt in")
+        gateConsent.performScrollTo().assertIsOff()
+        rule.runOnIdle {
+            assertFalse(Observation.gateConsent)
+            assertFalse(Observation.consent)
+        }
+
+        gateConsent.performClick().assertIsOn()
+        rule.runOnIdle {
+            assertTrue(Observation.gateConsent)
+            assertFalse(Observation.consent)
+        }
+        gateConsent.performClick().assertIsOff()
+        rule.runOnIdle {
+            assertFalse(Observation.gateConsent)
+            assertEquals(EntryGateState.OUTSIDE, Observation.entryGateState)
+        }
+    }
+
+    @Test fun overlayButtonsDispatchOnlyTheirExplicitCallbacks() {
+        rule.runOnIdle {
+            var dismissCalls = 0
+            var leaveCalls = 0
+            val overlay = EntryGateOverlayViewFactory.create(
+                rule.activity,
+                onDismissForMessages = { dismissCalls++ },
+                onLeaveInstagram = { leaveCalls++ }
+            )
+
+            assertTrue(overlay.dismissForMessages.performClick())
+            assertEquals(1, dismissCalls)
+            assertEquals(0, leaveCalls)
+            assertTrue(overlay.leaveInstagram.performClick())
+            assertEquals(1, dismissCalls)
+            assertEquals(1, leaveCalls)
+            assertEquals("5s remaining", overlay.countdown.text.toString())
+        }
     }
 
     @Test fun reportIsHiddenUntilExplicitRevealAndOnlyExplicitCopyChangesClipboard() {

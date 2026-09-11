@@ -11,6 +11,11 @@ import androidx.compose.runtime.setValue
 /** Main-thread state. Only fresh consent is persisted; reports and UI state are process-local. */
 object Observation {
     private const val CONSENT_KEY = "sanitized_structural_report_v1"
+    private const val ENTRY_GATE_CONSENT_KEY = "instagram_diagnostic_entry_gate_v1"
+    var gateConsent by mutableStateOf(false)
+        private set
+    var entryGateState by mutableStateOf(EntryGateState.OUTSIDE)
+        internal set
     var connected by mutableStateOf(false)
         internal set
     var report by mutableStateOf<SanitizedStructuralReport?>(null)
@@ -27,8 +32,17 @@ object Observation {
         get() = InstagramSurfaceShadowClassifier.classify(report)
 
     fun load(context: Context) {
-        consent = context.getSharedPreferences("consent", Context.MODE_PRIVATE).getBoolean(CONSENT_KEY, false)
+        val prefs = context.getSharedPreferences("consent", Context.MODE_PRIVATE)
+        consent = prefs.getBoolean(CONSENT_KEY, false)
+        gateConsent = prefs.getBoolean(ENTRY_GATE_CONSENT_KEY, false)
         if (!consent) clear()
+    }
+
+    fun setGateConsent(context: Context, accepted: Boolean) {
+        context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
+            .putBoolean(ENTRY_GATE_CONSENT_KEY, accepted).apply()
+        gateConsent = accepted
+        if (!accepted) DoomAccessibilityService.cancelEntryGate()
     }
 
     fun accept(context: Context, accepted: Boolean) {
