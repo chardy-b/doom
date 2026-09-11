@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
- <application android:theme="@style/Theme.Doom" android:label="Doom diagnostic" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:supportsRtl="true">
+ <application android:theme="@style/Theme.Doom" android:label="Doom diagnostic" android:icon="@drawable/ic_launcher" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:supportsRtl="true">
   <activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
   <service android:name=".DoomAccessibilityService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true" android:label="Doom observation">
    <intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter>
