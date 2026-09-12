@@ -39,6 +39,25 @@ class InternalSigningTest(unittest.TestCase):
             archive.writestr("classes.dex", b"code")
         for name in VALIDATOR.EXPECTED_SCREENSHOTS:
             (self.evidence / name).write_bytes(b"\x89PNG\r\n\x1a\nfixture")
+        (self.evidence / "context.txt").write_text(
+            "\n".join(
+                (
+                    f"candidate={CANDIDATE}",
+                    f"workflow_ref={'b' * 40}",
+                    f"run_id={RUN_ID}",
+                    "evidence_kind=doom-demo-only-not-instagram",
+                    "emulator_outcome=success",
+                    "",
+                )
+            ),
+            encoding="utf-8",
+        )
+        (self.evidence / "instrumentation.log").write_text(
+            "Starting 12 tests on emulator-5554 - 15\n"
+            "Finished 12 tests on emulator-5554 - 15\n"
+            "BUILD SUCCESSFUL\n",
+            encoding="utf-8",
+        )
         files = []
         for name in VALIDATOR.EXPECTED_EVIDENCE_FILES:
             path = self.evidence / name
@@ -80,6 +99,13 @@ class InternalSigningTest(unittest.TestCase):
     def test_real_evidence_manifest_schema_is_accepted(self) -> None:
         self.assertEqual(self.validate(), self.evidence / "doom-diagnostic.apk")
 
+    def test_extended_manifest_with_auxiliary_files_is_accepted(self) -> None:
+        for name in VALIDATOR.AUXILIARY_EVIDENCE_FILES:
+            path = self.evidence / name
+            self.manifest["files"].append({"path": name, "size": path.stat().st_size, "sha256": file_sha(path)})
+        self._write_contracts()
+        self.assertEqual(self.validate(), self.evidence / "doom-diagnostic.apk")
+
     def test_manifest_requires_size_not_an_invented_bytes_field(self) -> None:
         self.manifest["files"][0]["bytes"] = self.manifest["files"][0].pop("size")
         self._write_contracts()
@@ -112,6 +138,16 @@ class InternalSigningTest(unittest.TestCase):
         self.setUp_contracts_again()
         self.source_run["conclusion"] = "failure"
         self._write_contracts()
+        with self.assertRaises(VALIDATOR.ValidationError):
+            self.validate()
+
+    def test_auxiliary_context_and_test_summary_are_validated(self) -> None:
+        (self.evidence / "context.txt").write_text("candidate=wrong\n", encoding="utf-8")
+        with self.assertRaises(VALIDATOR.ValidationError):
+            self.validate()
+        self.tearDown()
+        self.setUp()
+        (self.evidence / "instrumentation.log").write_text("BUILD SUCCESSFUL\n", encoding="utf-8")
         with self.assertRaises(VALIDATOR.ValidationError):
             self.validate()
 

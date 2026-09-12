@@ -16,6 +16,9 @@ EXPECTED_SCREENSHOTS = (
     "screenshots/04-doom-completed-demo.png",
 )
 EXPECTED_EVIDENCE_FILES = ("doom-diagnostic.apk", *EXPECTED_SCREENSHOTS)
+AUXILIARY_EVIDENCE_FILES = ("context.txt", "instrumentation.log")
+ALL_EVIDENCE_FILES = (*EXPECTED_EVIDENCE_FILES, *AUXILIARY_EVIDENCE_FILES)
+SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 SIGNATURE_ENTRY = re.compile(r"^META-INF/(?:MANIFEST\.MF|[^/]+\.(?:SF|RSA|DSA|EC))$", re.IGNORECASE)
 MAX_APK_ENTRIES = 100_000
 MAX_APK_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
@@ -53,7 +56,7 @@ def load_object(path: Path) -> dict:
 
 
 def validate_source_run(source_run_file: Path, candidate_sha: str, source_run_id: str) -> dict:
-    if re.fullmatch(r"[0-9a-f]{40}", candidate_sha) is None:
+    if SHA_PATTERN.fullmatch(candidate_sha) is None:
         raise ValidationError("candidate SHA must be 40 lowercase hexadecimal characters")
     if re.fullmatch(r"[1-9][0-9]*", source_run_id) is None:
         raise ValidationError("source run ID must be a positive decimal integer")
@@ -98,8 +101,9 @@ def validate_evidence(evidence_dir: Path, source_run_file: Path, candidate_sha: 
             raise ValidationError(f"evidence manifest {key} mismatch")
 
     entries = manifest.get("files")
-    if not isinstance(entries, list) or len(entries) != len(EXPECTED_EVIDENCE_FILES):
-        raise ValidationError("evidence manifest must contain exactly five files")
+    supported_entry_counts = {len(EXPECTED_EVIDENCE_FILES), len(ALL_EVIDENCE_FILES)}
+    if not isinstance(entries, list) or len(entries) not in supported_entry_counts:
+        raise ValidationError("evidence manifest file count is unsupported")
     seen: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {"path", "size", "sha256"}:
@@ -120,8 +124,9 @@ def validate_evidence(evidence_dir: Path, source_run_file: Path, candidate_sha: 
             raise ValidationError(f"invalid evidence checksum: {normalized}")
         if sha256(path) != checksum:
             raise ValidationError(f"evidence checksum mismatch: {normalized}")
-    if seen != set(EXPECTED_EVIDENCE_FILES):
-        raise ValidationError("evidence manifest paths differ from the exact contract")
+    accepted_manifest_sets = {frozenset(EXPECTED_EVIDENCE_FILES), frozenset(ALL_EVIDENCE_FILES)}
+    if frozenset(seen) not in accepted_manifest_sets:
+        raise ValidationError("evidence manifest paths differ from a supported exact contract")
 
     actual_files: set[str] = set()
     for path in evidence_dir.rglob("*"):
@@ -129,8 +134,36 @@ def validate_evidence(evidence_dir: Path, source_run_file: Path, candidate_sha: 
             raise ValidationError("downloaded evidence contains a symbolic link")
         if path.is_file() and path != manifest_path:
             actual_files.add(path.relative_to(evidence_dir).as_posix())
-    if actual_files != set(EXPECTED_EVIDENCE_FILES):
+    if actual_files != set(ALL_EVIDENCE_FILES):
         raise ValidationError("downloaded evidence contains missing or unaccounted files")
+
+    context_lines = (evidence_dir / "context.txt").read_text(encoding="utf-8").splitlines()
+    context: dict[str, str] = {}
+    for line in context_lines:
+        if "=" not in line:
+            raise ValidationError("device evidence context has a malformed line")
+        key, value = line.split("=", 1)
+        if key in context or not key or not value:
+            raise ValidationError("device evidence context has duplicate or empty fields")
+        context[key] = value
+    expected_context = {
+        "candidate": candidate_sha,
+        "run_id": source_run_id,
+        "evidence_kind": "doom-demo-only-not-instagram",
+        "emulator_outcome": "success",
+    }
+    if set(context) != {*expected_context, "workflow_ref"}:
+        raise ValidationError("device evidence context fields differ from the exact contract")
+    if any(context[key] != value for key, value in expected_context.items()):
+        raise ValidationError("device evidence context provenance mismatch")
+    if not SHA_PATTERN.fullmatch(context["workflow_ref"]):
+        raise ValidationError("device evidence context workflow_ref is invalid")
+
+    instrumentation = (evidence_dir / "instrumentation.log").read_text(encoding="utf-8")
+    if not instrumentation or len(instrumentation.encode("utf-8")) > 1_048_576:
+        raise ValidationError("instrumentation log is empty or too large")
+    if "BUILD SUCCESSFUL" not in instrumentation or not re.search(r"Finished [1-9][0-9]* tests? on ", instrumentation):
+        raise ValidationError("instrumentation log lacks a successful nonzero test summary")
     for name in EXPECTED_SCREENSHOTS:
         if not (evidence_dir / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
             raise ValidationError(f"invalid screenshot signature: {name}")
