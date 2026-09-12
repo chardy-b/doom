@@ -79,10 +79,15 @@ class StructuralDiagnosticUiTest {
     }
 
     @Suppress("DEPRECATION")
-    private fun sendEvent(service: DoomAccessibilityService, packageName: String) {
+    private fun sendEvent(
+        service: DoomAccessibilityService,
+        packageName: String,
+        className: String? = null
+    ) {
         val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
         try {
             event.packageName = packageName
+            event.className = className
             service.onAccessibilityEvent(event)
         } finally { event.recycle() }
     }
@@ -109,6 +114,10 @@ class StructuralDiagnosticUiTest {
         shown("Structure changes with scrolling and content. The sanitized report is separate from a diagnostic shadow prediction; neither blocks, protects, or controls actions; the optional entry pause is default-off and fail-open.")
         shown("Shadow prediction: UNKNOWN")
         shown("Diagnostic only — may show an optional entry pause; never protects or controls Instagram.")
+        rule.onNodeWithText(
+            "Returning directly to Doom preserves the latest hidden report for local review.",
+            substring = true
+        ).performScrollTo().assertIsDisplayed()
         shown("Copy leaves Doom process memory and enters the system clipboard. Review the revealed report before copying; upload privately, then clear the clipboard. Clearing or stopping Doom cannot recall copies outside the app.")
         rule.onNodeWithText("OPEN ACCESSIBILITY SETTINGS").performScrollTo().assertIsNotEnabled()
         assertActionsDisabled()
@@ -214,6 +223,36 @@ class StructuralDiagnosticUiTest {
             assertFalse(Observation.report!!.text.contains("SECRET"))
             assertFalse(Observation.revealed)
             assertFalse(Observation.copied)
+        }
+    }
+
+    @Test fun onlyMainActivityWindowEventQualifiesAsDirectReturn() {
+        val service = DoomAccessibilityService()
+        rule.runOnIdle {
+            ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+                .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
+        }
+        seed()
+        val first = rule.runOnIdle { Observation.report }
+        rule.runOnIdle {
+            sendEvent(service, rule.activity.packageName, "android.widget.LinearLayout")
+            assertSame(first, Observation.report)
+            sendEvent(service, rule.activity.packageName, MainActivity::class.java.name)
+            assertSame(first, Observation.report)
+            assertEquals(EntryGateState.OUTSIDE, Observation.entryGateState)
+        }
+    }
+
+    @Test fun strongerForeignCleanupClearsPendingMainActivityReturnMarker() {
+        val service = DoomAccessibilityService()
+        rule.runOnIdle {
+            ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+                .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
+            val marker = DoomAccessibilityService::class.java
+                .getDeclaredField("mainActivityReturnObserved").apply { isAccessible = true }
+            marker.setBoolean(service, true)
+            sendEvent(service, "com.example.foreign")
+            assertFalse(marker.getBoolean(service))
         }
     }
 

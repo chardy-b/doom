@@ -6,9 +6,9 @@ This working tree is based exactly on merged `main` `496e0387fcbc46bfeddc524e5a5
 
 Android opens Instagram normally. On the first bounded Instagram sample in a foreground session:
 
-- strong Feed, Reels, or Stories evidence may show a five-second accessibility overlay;
-- Inbox, thread, composer, or any messaging evidence bypasses the whole session;
-- unknown, mixed, truncated, missing-root, foreign-window, runtime-error, revocation, interruption, or disconnect state fails open;
+- any verified Instagram foreground event shows a five-second accessibility overlay, regardless of sanitized classifier result;
+- Inbox, thread, composer, or any messaging evidence receives the same temporary five-second diagnostic pause; it does not bypass the gate.
+- Unknown, mixed, truncated, missing-root, foreign-window, runtime-error, revocation, interruption, or disconnect state is still sanitized/fail-safe, but a verified Instagram foreground event can pause entry for up to five seconds.
 - classification and gate timing remain separate;
 - the five seconds begin only after `WindowManager.addView` succeeds;
 - notification text, usernames, messages, descriptions, and Instagram content are never read or retained.
@@ -17,8 +17,8 @@ The overlay offers exactly two actions. **Dismiss for messages** removes the ove
 
 ## Changed files
 
-- `app/src/main/java/com/chardy/doom/InstagramEntryGate.kt` — pure generation-ticket policy, monotonic visible-time deadline, messaging/unknown fail-open behavior, stale-callback rejection, and bounded duration.
-- `app/src/test/java/com/chardy/doom/InstagramEntryGateTest.kt` — focused tests for default-off behavior, visible timing, messaging precedence before/during a gate, unknown bypass, repeated samples, revocation, stale tickets, invalid time/duration, and dismissal.
+- `app/src/main/java/com/chardy/doom/InstagramEntryGate.kt` — pure generation-ticket policy, classifier-independent Instagram trigger, monotonic visible-time deadline, stale-callback rejection, and bounded duration.
+- `app/src/test/java/com/chardy/doom/InstagramEntryGateTest.kt` — focused tests for default-off behavior, visible timing, DM/unknown diagnostic pauses, repeated samples, revocation, stale tickets, invalid time/duration, and dismissal.
 - `app/src/main/java/com/chardy/doom/OverlayRemovalPolicy.kt` and its unit test — fake removal-failure/retry policy; no action is released before confirmed detachment.
 - `app/src/main/java/com/chardy/doom/EntryGateOverlayView.kt` — testable overlay content with explicit dismiss and leave callbacks.
 - `app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt` — real default-off `TYPE_ACCESSIBILITY_OVERLAY`, broad package-event session boundaries, Instagram-only traversal, 50 ms watchdog, countdown, remove-before-action ordering, and lifecycle cleanup.
@@ -35,8 +35,8 @@ No manifest, Gradle/dependency, network, backup, fixture implementation, workflo
 
 ## Executed host verification
 
-- `python3 scripts/test-entry-gate-host.py`: **45/45 passed**, including gate and fake removal-policy tests.
-- `scripts/test-structural-lifecycle.py`: **18/18 passed**.
+- `python3 scripts/test-entry-gate-host.py`: **47/47 passed**, including gate and fake removal-policy tests.
+- `scripts/test-structural-lifecycle.py`: **21/21 passed**.
 - `scripts/test-fixture-evidence.py`: **21/21 passed**.
 - `scripts/test_wil155_host.py`: **5/5 passed**.
 - Python syntax and all source XML parsing: passed.
@@ -50,7 +50,8 @@ These checks did not invoke Gradle, Android SDK, an emulator, adb, credentials, 
 
 - Removal is not treated as successful after a `WindowManager` exception. The service uses `removeViewImmediate`, verifies `View.isAttachedToWindow`, retains the view and manager while attached, retries every 50 ms up to 20 attempts, and disables the service without releasing Home/completion/bypass actions if detachment cannot be confirmed.
 - Foreign-window and safety cleanup override pending Home or completion. `GLOBAL_ACTION_HOME`, gate completion, and bypass state changes occur only after confirmed physical detachment.
-- Android instrumentation constructs the real overlay content and executes both button callbacks. Exact accessibility-overlay attachment, touch dispatch, active-root behavior, watchdog cleanup, and timing remain required GitHub emulator and actual-device evidence.
+- A positively identified return to Doom overrides automatic timer completion so the gate session resets while the report remains available; explicit Dismiss/Leave and foreign-window safety cleanup still override report preservation.
+- Android instrumentation constructs the real overlay content and executes both button callbacks. Source guards cover event policy and ordering only; they do not prove runtime overlay attachment. Exact attachment, touch dispatch, active-root behavior, watchdog cleanup, and timing remain required GitHub emulator and actual-device evidence.
 
 ## Required CI evidence
 

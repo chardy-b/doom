@@ -211,6 +211,34 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertNotIn("event.text", event)
         self.assertNotIn("contentDescription", event)
 
+    def test_doom_events_require_positive_main_activity_signal_for_preservation(self):
+        self.assertIn("TYPE_WINDOW_STATE_CHANGED", SERVICE)
+        self.assertIn('className?.toString() == MainActivity::class.java.name', SERVICE)
+        self.assertIn("isMainActivityReturn(event)", SERVICE)
+        self.assertIn("Ignore all other Doom-owned events", SERVICE)
+        own_events = SERVICE.split("if (packageName == applicationContext.packageName)", 1)[1].split(
+            "if (packageName != INSTAGRAM)", 1
+        )[0]
+        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.PRESERVE_REPORT)", own_events)
+        self.assertNotIn("if (overlay != null)", own_events)
+        preserve = SERVICE.split("OverlayRemovalAction.PRESERVE_REPORT", 1)[1].split("OverlayRemovalAction.RESET_OUTSIDE", 1)[0]
+        self.assertIn("mainActivityReturnObserved", preserve)
+
+    def test_removal_priority_keeps_safety_and_explicit_actions_above_preserve(self):
+        policy = (REPO / "app/src/main/java/com/chardy/doom/OverlayRemovalPolicy.kt").read_text()
+        self.assertLess(policy.index("COMPLETE -> 0"), policy.index("PRESERVE_REPORT -> 1"))
+        self.assertLess(policy.index("HOME -> 3"), policy.index("RESET_OUTSIDE -> 4"))
+
+    def test_non_preservation_cleanup_clears_verified_return_marker_centrally(self):
+        confirmed = SERVICE.split("private fun confirmOverlayRemoved", 1)[1].split(
+            "private fun cancelAndBypass", 1
+        )[0]
+        self.assertIn("val action = removalPolicy.confirmedDetached()", confirmed)
+        self.assertIn(
+            "if (action != OverlayRemovalAction.PRESERVE_REPORT) mainActivityReturnObserved = false",
+            confirmed
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

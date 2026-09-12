@@ -1,6 +1,6 @@
 package com.chardy.doom
 
-internal enum class OverlayRemovalAction { HOME, COMPLETE, BYPASS, RESET_OUTSIDE }
+internal enum class OverlayRemovalAction { HOME, COMPLETE, BYPASS, PRESERVE_REPORT, RESET_OUTSIDE }
 internal enum class OverlayRemovalDecision { RETRY, DISABLE_SERVICE }
 
 /** Pure retry/action policy: no post-removal action is released before confirmed detachment. */
@@ -33,10 +33,12 @@ internal class OverlayRemovalPolicy(private val maxAttempts: Int = 20) {
         return action
     }
 
+    /** Safety/explicit actions beat preservation; a verified app return beats timer completion. */
     private fun priority(action: OverlayRemovalAction) = when (action) {
-        OverlayRemovalAction.HOME -> 0
-        OverlayRemovalAction.COMPLETE -> 1
+        OverlayRemovalAction.COMPLETE -> 0
+        OverlayRemovalAction.PRESERVE_REPORT -> 1
         OverlayRemovalAction.BYPASS -> 2
-        OverlayRemovalAction.RESET_OUTSIDE -> 3
+        OverlayRemovalAction.HOME -> 3
+        OverlayRemovalAction.RESET_OUTSIDE -> 4
     }
 }

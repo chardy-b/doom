@@ -23,16 +23,27 @@ class OverlayRemovalPolicyTest {
         assertEquals(OverlayRemovalDecision.DISABLE_SERVICE, policy.failedAttempt())
     }
 
-    @Test fun safetyCleanupOverridesPendingHomeOrCompletion() {
-        val home = OverlayRemovalPolicy()
-        home.request(OverlayRemovalAction.HOME)
-        home.request(OverlayRemovalAction.BYPASS)
-        assertEquals(OverlayRemovalAction.BYPASS, home.confirmedDetached())
+    @Test fun explicitActionsOverridePreserveButResetOutsideIsStrongest() {
+     val home = OverlayRemovalPolicy()
+     home.request(OverlayRemovalAction.HOME)
+     home.request(OverlayRemovalAction.PRESERVE_REPORT)
+     assertEquals(OverlayRemovalAction.HOME, home.confirmedDetached())
 
-        val completion = OverlayRemovalPolicy()
-        completion.request(OverlayRemovalAction.COMPLETE)
-        completion.request(OverlayRemovalAction.RESET_OUTSIDE)
-        assertEquals(OverlayRemovalAction.RESET_OUTSIDE, completion.confirmedDetached())
+     val completion = OverlayRemovalPolicy()
+     completion.request(OverlayRemovalAction.COMPLETE)
+     completion.request(OverlayRemovalAction.PRESERVE_REPORT)
+     assertEquals(OverlayRemovalAction.PRESERVE_REPORT, completion.confirmedDetached())
+     completion.request(OverlayRemovalAction.RESET_OUTSIDE)
+     completion.request(OverlayRemovalAction.HOME)
+     completion.request(OverlayRemovalAction.RESET_OUTSIDE)
+     assertEquals(OverlayRemovalAction.RESET_OUTSIDE, completion.confirmedDetached())
+    }
+
+    @Test fun preserveCannotOverridePendingDismiss() {
+        val dismiss = OverlayRemovalPolicy()
+        dismiss.request(OverlayRemovalAction.BYPASS)
+        dismiss.request(OverlayRemovalAction.PRESERVE_REPORT)
+        assertEquals(OverlayRemovalAction.BYPASS, dismiss.confirmedDetached())
     }
 
     @Test fun lowerPriorityActionCannotReplaceSafetyCleanup() {
@@ -40,6 +51,12 @@ class OverlayRemovalPolicyTest {
         policy.request(OverlayRemovalAction.RESET_OUTSIDE)
         policy.request(OverlayRemovalAction.HOME)
         assertEquals(OverlayRemovalAction.RESET_OUTSIDE, policy.confirmedDetached())
+    }
+
+    @Test fun preserveReportIsExplicitAndSurvivesUntilDetachment() {
+        val policy = OverlayRemovalPolicy()
+        policy.request(OverlayRemovalAction.PRESERVE_REPORT)
+        assertEquals(OverlayRemovalAction.PRESERVE_REPORT, policy.confirmedDetached())
     }
 
     @Test(expected = IllegalArgumentException::class)

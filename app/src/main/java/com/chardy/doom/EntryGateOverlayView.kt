@@ -17,6 +17,7 @@ internal data class EntryGateOverlayUi(
 internal object EntryGateOverlayViewFactory {
     fun create(
         context: Context,
+        surface: EntryGateSurface = EntryGateSurface.UNKNOWN,
         onDismissForMessages: () -> Unit,
         onLeaveInstagram: () -> Unit
     ): EntryGateOverlayUi {
@@ -29,7 +30,7 @@ internal object EntryGateOverlayViewFactory {
             isFocusable = true
         }
         root.addView(TextView(context).apply {
-            text = "UNVERIFIED DIAGNOSTIC\nTake a breath"
+            text = "INSTAGRAM DETECTED\nDIAGNOSTIC PAUSE"
             textSize = 24f
             setTextColor(Color.BLACK)
             gravity = Gravity.CENTER
@@ -41,7 +42,7 @@ internal object EntryGateOverlayViewFactory {
             gravity = Gravity.CENTER
         }
         val explanation = TextView(context).apply {
-            text = "This pause is optional and unverified. Messages and unknown screens bypass it."
+            text = "Instagram detected. Sanitized classifier result: ${surface.name}. This diagnostic pauses entry for up to five seconds; it is not DM-safe or rollout-ready."
             textSize = 16f
             setTextColor(Color.BLACK)
             gravity = Gravity.CENTER

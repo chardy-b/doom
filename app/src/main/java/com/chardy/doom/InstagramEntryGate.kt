@@ -19,34 +19,22 @@ class InstagramEntryGate(
         require(durationMs in 1L..120_000L)
     }
 
-    fun foreground(): GateTicket {
+    /** Starts an Instagram session; surface classification happens separately in observe. */
+    fun beginInstagramSession(): GateTicket {
         generation++
         visibleStartedAtMs = null
         state = if (enabled()) EntryGateState.AWAITING else EntryGateState.BYPASSED
         return GateTicket(generation)
     }
 
-    /** Returns true only while an overlay should be or remain visible. */
-    fun observe(surface: EntryGateSurface, nowMs: Long, ticket: GateTicket): Boolean {
+    /** Returns true only while an Instagram-triggered overlay should be or remain visible. */
+    fun observeInstagram(nowMs: Long, ticket: GateTicket): Boolean {
         if (!enabled() || nowMs < 0L || !valid(ticket)) return false
-        val requiresRemoval = state == EntryGateState.GATING &&
-            (surface == EntryGateSurface.MESSAGING || surface == EntryGateSurface.UNKNOWN)
         state = when (state) {
-            EntryGateState.AWAITING -> when (surface) {
-                EntryGateSurface.FEED, EntryGateSurface.REELS, EntryGateSurface.STORIES ->
-                    EntryGateState.GATING
-                EntryGateSurface.MESSAGING, EntryGateSurface.UNKNOWN -> EntryGateState.BYPASSED
-            }
-            EntryGateState.GATING -> when (surface) {
-                // Keep authority in GATING until the service confirms physical detachment.
-                EntryGateSurface.MESSAGING, EntryGateSurface.UNKNOWN -> EntryGateState.GATING
-                EntryGateSurface.FEED, EntryGateSurface.REELS, EntryGateSurface.STORIES ->
-                    EntryGateState.GATING
-            }
+            EntryGateState.AWAITING, EntryGateState.GATING -> EntryGateState.GATING
             else -> state
         }
-        if (state != EntryGateState.GATING) visibleStartedAtMs = null
-        return state == EntryGateState.GATING && !requiresRemoval
+        return state == EntryGateState.GATING
     }
 
     /** Starts the five visible seconds only after WindowManager accepted the overlay. */

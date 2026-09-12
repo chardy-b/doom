@@ -47,6 +47,7 @@ class DoomAccessibilityService : AccessibilityService() {
     private var watchdog: Runnable? = null
     private var completion: Runnable? = null
     private var removalRetry: Runnable? = null
+    private var mainActivityReturnObserved = false
     private val removalPolicy = OverlayRemovalPolicy(MAX_REMOVAL_ATTEMPTS)
 
     override fun onServiceConnected() {
@@ -67,7 +68,15 @@ class DoomAccessibilityService : AccessibilityService() {
         try {
             val packageName = event?.packageName?.toString()
             // Doom's own accessibility-overlay updates are not app-session transitions.
-            if (packageName == applicationContext.packageName && overlay != null) return
+            if (packageName == applicationContext.packageName) {
+                if (isMainActivityReturn(event)) {
+                    mainActivityReturnObserved = true
+                    // This also resets a completed/granted session when no overlay remains.
+                    requestOverlayRemoval(OverlayRemovalAction.PRESERVE_REPORT)
+                }
+                // Ignore all other Doom-owned events, including overlay updates.
+                return
+            }
             if (packageName != INSTAGRAM) {
                 resetOutside()
                 return
@@ -78,7 +87,7 @@ class DoomAccessibilityService : AccessibilityService() {
             }
 
             val activeTicket = if (Observation.gateConsent) {
-                ticket ?: entryGate.foreground().also {
+                ticket ?: entryGate.beginInstagramSession().also {
                     ticket = it
                     publishGateState()
                 }
@@ -110,10 +119,10 @@ class DoomAccessibilityService : AccessibilityService() {
             ) return
 
             val surface = InstagramSurfaceShadowClassifier.classify(Observation.report).toGateSurface()
-            val shouldShow = entryGate.observe(surface, SystemClock.elapsedRealtime(), activeTicket)
+            val shouldShow = entryGate.observeInstagram(SystemClock.elapsedRealtime(), activeTicket)
             publishGateState()
             if (shouldShow) {
-                if (overlay == null) installOverlay(activeTicket)
+                if (overlay == null) installOverlay(activeTicket, surface)
             } else {
                 requestOverlayRemoval(OverlayRemovalAction.BYPASS)
             }
@@ -191,11 +200,12 @@ class DoomAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun installOverlay(activeTicket: GateTicket) {
+    private fun installOverlay(activeTicket: GateTicket, surface: EntryGateSurface) {
         if (overlay != null) return
         try {
             val overlayUi = EntryGateOverlayViewFactory.create(
                 this,
+                surface = surface,
                 onDismissForMessages = {
                     requestOverlayRemoval(OverlayRemovalAction.BYPASS)
                 },
@@ -239,7 +249,10 @@ class DoomAccessibilityService : AccessibilityService() {
                         } finally {
                             activeRoot?.recycle()
                         }
-                        if (packageName != INSTAGRAM) {
+                        // if (packageName != INSTAGRAM) fails open unless this is a verified Doom return.
+                        if (packageName != INSTAGRAM &&
+                            !(packageName == applicationContext.packageName && mainActivityReturnObserved)
+                        ) {
                             failOpen()
                             return
                         }
@@ -306,11 +319,20 @@ class DoomAccessibilityService : AccessibilityService() {
         removalRetry = null
         overlay = null
         windowManager = null
-        when (removalPolicy.confirmedDetached()) {
+        val action = removalPolicy.confirmedDetached()
+        if (action != OverlayRemovalAction.PRESERVE_REPORT) mainActivityReturnObserved = false
+        when (action) {
             OverlayRemovalAction.BYPASS -> {
                 entryGate.cancel()
                 publishGateState()
                 Observation.clear()
+            }
+            OverlayRemovalAction.PRESERVE_REPORT -> {
+                if (!mainActivityReturnObserved) return
+                entryGate.leaveInstagram()
+                ticket = null
+                mainActivityReturnObserved = false
+                publishGateState()
             }
             OverlayRemovalAction.RESET_OUTSIDE -> {
                 entryGate.leaveInstagram()
@@ -351,6 +373,10 @@ class DoomAccessibilityService : AccessibilityService() {
     private fun publishGateState() {
         Observation.entryGateState = entryGate.state
     }
+
+    private fun isMainActivityReturn(event: AccessibilityEvent?): Boolean =
+        event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            event.className?.toString() == MainActivity::class.java.name
 
     override fun onInterrupt() {
         cancelAndBypass()
