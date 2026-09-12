@@ -179,6 +179,7 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
         Text("DEVICE PROOF · PENDING", color = Jade, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
         Text("No verified Instagram screen mapping or DM route is claimed. Any verified Instagram entry, including DM or unknown surfaces, may receive the temporary five-second diagnostic pause. Do not rely on it to limit scrolling. Disable or uninstall at any time.", color = Paper, fontSize = 14.sp)
         Text("Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})", color = Jade, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        Spacer(Modifier.height(24.dp))
     }
 }
 

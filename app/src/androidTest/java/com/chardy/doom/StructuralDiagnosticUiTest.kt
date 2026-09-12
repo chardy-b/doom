@@ -54,6 +54,8 @@ class StructuralDiagnosticUiTest {
     private fun shown(text: String) = rule.onNodeWithText(text).performScrollTo().assertIsDisplayed()
     private fun sample(depth: Int = 0) = SanitizedStructuralReport.Builder().apply {
         add(depth, "com.instagram.android:id/feed_tab", "android.widget.TextView", 0,
+            false, false, false, true, false)
+        add(depth, "com.instagram.android:id/row_feed_media", "android.view.View", 0,
             false, false, false, false, false)
     }.build()!!
     private fun seed(depth: Int = 0) = rule.runOnIdle {
