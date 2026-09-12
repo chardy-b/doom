@@ -326,12 +326,18 @@ class StructuralDiagnosticUiTest {
         } finally { rule.runOnIdle { service.onDestroy() } }
     }
 
-    @Test fun onlyConsentIsPersistedAndLoadingWithoutConsentClearsMemory() {
+    @Test fun onlyConsentBooleansArePersistedAndLoadingWithoutConsentClearsMemory() {
         seed()
         revealAndCopy()
         rule.runOnIdle {
             val prefs = rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
-            assertEquals(mapOf("sanitized_structural_report_v1" to true), prefs.all)
+            assertEquals(
+                mapOf(
+                    "sanitized_structural_report_v1" to true,
+                    "instagram_diagnostic_entry_gate_v1" to false
+                ),
+                prefs.all
+            )
             prefs.edit().clear().commit()
             Observation.load(rule.activity)
         }

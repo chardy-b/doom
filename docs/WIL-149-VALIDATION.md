@@ -56,6 +56,8 @@ These checks did not invoke Gradle, Android SDK, an emulator, adb, credentials, 
 
 Exact-head GitHub CI must compile, lint, assemble, and instrument the Android app and preserve the existing baseline, fixture, APK-digest, screenshot, and source-SHA evidence contracts. Existing Doom-owned screenshots do not prove Instagram behavior. Any CI-only test added for Stage B must use synthetic or repository-owned screens and must not capture private Instagram content.
 
+CI run `34660087076` on initial PR head `6837e923053143fdf596fadc5adbe8d191ff51a1` compiled and passed the Android baseline and cross-app fixture jobs. Its diagnostic emulator job ran 14 tests and failed one stale persistence assertion that still expected one consent key after Stage B deliberately added the second gate-consent boolean. The assertion now expects exactly those two booleans. A fresh exact-head run is required; the failed run is not acceptance evidence.
+
 ## Required actual-device gate
 
 Live rollout remains disabled until a privacy-safe actual-Instagram matrix passes **20 repetitions per high-risk path**, including:
