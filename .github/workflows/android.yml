@@ -41,7 +41,9 @@ jobs:
       - name: Install API 35 packages
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Tests, lint and diagnostic APK
-        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+        run: |
+          python3 scripts/test-internal-signing.py
+          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
       - name: Upload diagnostic APK (not real-Instagram validation)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
