@@ -99,11 +99,15 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: bash scripts/ci-device.sh
-      - name: Record emulator outcome even on provisioning failure
+      - name: Record emulator outcome and refresh successful evidence manifest
         if: always()
         env:
           EMULATOR_OUTCOME: ${{ steps.emulator.outcome }}
-        run: printf 'emulator_outcome=%s\n' "$EMULATOR_OUTCOME" >> evidence/context.txt
+        run: |
+          printf 'emulator_outcome=%s\n' "$EMULATOR_OUTCOME" >> evidence/context.txt
+          if [ "$EMULATOR_OUTCOME" = success ]; then
+            python3 scripts/evidence-manifest.py
+          fi
       - name: Upload exact tested diagnostic and screen evidence
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

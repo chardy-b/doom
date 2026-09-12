@@ -207,6 +207,9 @@ class InternalSigningTest(unittest.TestCase):
     def test_candidate_ci_never_references_signing_secrets(self) -> None:
         candidate_workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
         self.assertNotIn("DOOM_INTERNAL_SIGNING_", candidate_workflow)
+        self.assertIn("Record emulator outcome and refresh successful evidence manifest", candidate_workflow)
+        self.assertIn('if [ "$EMULATOR_OUTCOME" = success ]; then', candidate_workflow)
+        self.assertEqual(candidate_workflow.count("python3 scripts/evidence-manifest.py"), 1)
         signer_workflow = (ROOT / ".github/workflows/sign-internal-apk.yml").read_text(encoding="utf-8")
         self.assertEqual(signer_workflow.count("${{ secrets.DOOM_INTERNAL_SIGNING_KEYSTORE_B64 }}"), 1)
         self.assertEqual(signer_workflow.count("${{ secrets.DOOM_INTERNAL_SIGNING_PASSWORD }}"), 1)
