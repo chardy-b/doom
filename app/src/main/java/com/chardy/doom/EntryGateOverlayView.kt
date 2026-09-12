@@ -110,7 +110,7 @@ internal object EntryGateOverlayViewFactory {
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(24), dp(24), dp(24), dp(24))
         }
-        scroll.addView(body, ScrollView.LayoutParams(-1, -2))
+        scroll.addView(body, android.widget.FrameLayout.LayoutParams(-1, -2))
         val header = text("INSTAGRAM DETECTED", 20f, BreathingVisuals.JADE).apply {
             contentDescription = "Instagram detected"
             isFocusable = true

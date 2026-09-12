@@ -31,7 +31,7 @@ object Observation {
     val shadowPrediction: InstagramSurface
         get() = InstagramSurfaceShadowClassifier.classify(report)
 
-    fun overlayDiagnosticStatus(): OverlayDiagnosticStatus {
+    internal fun overlayDiagnosticStatus(): OverlayDiagnosticStatus {
         val eligible = consent && connected && report != null
         return OverlayDiagnosticStatus(
             surface = when (shadowPrediction) {
@@ -86,7 +86,7 @@ object Observation {
     }
 
     /** Explicit overlay action. It never reveals the report or changes the reviewed-copy state. */
-    fun copyCurrentReportFromOverlay(context: Context): OverlayCopyResult {
+    internal fun copyCurrentReportFromOverlay(context: Context): OverlayCopyResult {
         if (!consent || !connected) return OverlayCopyResult.UNAVAILABLE
         val current = report ?: return OverlayCopyResult.UNAVAILABLE
         return if (writeClipboard(context, current, markReviewedCopy = false)) OverlayCopyResult.COPIED
