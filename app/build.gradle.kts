@@ -1,7 +1,18 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 
+val ciRunNumber = providers.environmentVariable("GITHUB_RUN_NUMBER").orNull
+    ?.toIntOrNull()
+    ?.takeIf { it in 1..2_100_000_000 }
+
 android { namespace = "com.chardy.doom"; compileSdk = 35
-    defaultConfig { applicationId = "com.chardyb.doom"; minSdk = 26; targetSdk = 35; versionCode = 1; versionName = "0.1-wave0"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+    defaultConfig {
+        applicationId = "com.chardyb.doom"
+        minSdk = 26
+        targetSdk = 35
+        versionCode = ciRunNumber ?: 1
+        versionName = "0.1-wave0" + (ciRunNumber?.let { "-ci.$it" } ?: "")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
     buildFeatures { compose = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
