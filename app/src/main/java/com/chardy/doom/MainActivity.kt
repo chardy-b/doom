@@ -78,11 +78,11 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
             }
         }
     }
-    Column(
-        Modifier.fillMaxSize().background(Ink).safeDrawingPadding()
-            .verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
-    ) {
+    Column(Modifier.fillMaxSize().background(Ink).safeDrawingPadding()) {
+        Column(
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("DOOM", fontSize = 38.sp, color = Jade, fontFamily = FontFamily.Monospace)
             Text("FIELD\nNOTES / 00", color = Paper, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
@@ -176,10 +176,16 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
                 Action("BACK TO DOOM") { leave() }
             }
         }
-        Text("DEVICE PROOF · PENDING", color = Jade, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-        Text("No verified Instagram screen mapping or DM route is claimed. Any verified Instagram entry, including DM or unknown surfaces, may receive the temporary five-second diagnostic pause. Do not rely on it to limit scrolling. Disable or uninstall at any time.", color = Paper, fontSize = 14.sp)
-        Text("Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})", color = Jade, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-        Spacer(Modifier.height(24.dp))
+            Text("DEVICE PROOF · PENDING", color = Jade, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            Text("No verified Instagram screen mapping or DM route is claimed. Any verified Instagram entry, including DM or unknown surfaces, may receive the temporary five-second diagnostic pause. Do not rely on it to limit scrolling. Disable or uninstall at any time.", color = Paper, fontSize = 14.sp)
+        }
+        Text(
+            "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})",
+            color = Jade,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+        )
     }
 }
 
