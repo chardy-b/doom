@@ -14,9 +14,19 @@ def main():
         raise SystemExit("Candidate identity mismatch")
     root = Path("evidence")
     apk = root / "doom-diagnostic.apk"
+    context = root / "context.txt"
+    instrumentation = root / "instrumentation.log"
     screenshots = sorted((root / "screenshots").glob("*.png"))
     expected = {"01-doom-dashboard-demo.png", "02-doom-breathing-demo.png", "03-doom-messages-demo.png", "04-doom-completed-demo.png"}
-    if not apk.is_file() or apk.stat().st_size == 0 or {path.name for path in screenshots} != expected:
+    if (
+        not apk.is_file()
+        or apk.stat().st_size == 0
+        or not context.is_file()
+        or context.stat().st_size == 0
+        or not instrumentation.is_file()
+        or instrumentation.stat().st_size == 0
+        or {path.name for path in screenshots} != expected
+    ):
         raise SystemExit("Missing tested APK or exact four genuine diagnostic screenshots")
     for image in screenshots:
         if not image.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
@@ -36,7 +46,7 @@ def main():
                 "size": path.stat().st_size,
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             }
-            for path in [apk, *screenshots]
+            for path in [apk, context, instrumentation, *screenshots]
         ],
     }
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
