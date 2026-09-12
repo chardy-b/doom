@@ -14,6 +14,9 @@ MAIN = [
     "InstagramEntryGate.kt",
     "InstagramSurfaceShadowClassifier.kt",
     "OverlayRemovalPolicy.kt",
+    "OverlayCallbackGuard.kt",
+    "EntryGateOverlayModel.kt",
+    "BreathingVisuals.kt",
     "SanitizedStructuralReport.kt",
 ]
 TESTS = [
@@ -21,6 +24,9 @@ TESTS = [
     "InstagramEntryGateTest.kt",
     "InstagramSurfaceShadowClassifierTest.kt",
     "OverlayRemovalPolicyTest.kt",
+    "OverlayCallbackGuardTest.kt",
+    "EntryGateOverlayModelTest.kt",
+    "BreathingVisualsTest.kt",
     "SanitizedStructuralReportTest.kt",
 ]
 TEST_CLASSES = [
@@ -28,6 +34,9 @@ TEST_CLASSES = [
     "com.chardy.doom.InstagramEntryGateTest",
     "com.chardy.doom.InstagramSurfaceShadowClassifierTest",
     "com.chardy.doom.OverlayRemovalPolicyTest",
+    "com.chardy.doom.OverlayCallbackGuardTest",
+    "com.chardy.doom.EntryGateOverlayModelTest",
+    "com.chardy.doom.BreathingVisualsTest",
     "com.chardy.doom.SanitizedStructuralReportTest",
 ]
 

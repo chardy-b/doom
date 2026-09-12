@@ -6,13 +6,21 @@ import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.animation.ValueAnimator
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.TextView
 
-/** Diagnostic-only, default-off entry pause. Never navigates or acts on Instagram nodes. */
+internal interface OverlayPlatform {
+    fun isAttached(view: View): Boolean
+    fun removeImmediate(manager: WindowManager, view: View)
+    fun launchInbox(): InboxLaunchResult
+    fun currentForegroundPackage(): String?
+    fun performHome(): Boolean
+}
+
+/** Diagnostic-only, default-off entry pause. A user tap may best-effort route to Instagram messages. */
 class DoomAccessibilityService : AccessibilityService() {
     companion object {
         private const val INSTAGRAM = "com.instagram.android"
@@ -36,19 +44,34 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private val monotonicClock: () -> Long = { SystemClock.elapsedRealtime() }
     private val entryGate = InstagramEntryGate(
         durationMs = GATE_DURATION_MS,
-        enabled = { Observation.gateConsent && Observation.consent && Observation.connected }
+        enabled = { Observation.gateConsent && Observation.consent && Observation.connected },
+        monotonicNowMs = monotonicClock
     )
     private var ticket: GateTicket? = null
     private var overlay: View? = null
-    private var countdownView: TextView? = null
+    private var overlayUi: EntryGateOverlayUi? = null
     private var windowManager: WindowManager? = null
     private var watchdog: Runnable? = null
     private var completion: Runnable? = null
     private var removalRetry: Runnable? = null
     private var mainActivityReturnObserved = false
     private val removalPolicy = OverlayRemovalPolicy(MAX_REMOVAL_ATTEMPTS)
+    private val callbackGuard = OverlayCallbackGuard()
+    private var overlayToken: OverlayCallbackToken? = null
+    private var overlayPlatform: OverlayPlatform = object : OverlayPlatform {
+        override fun isAttached(view: View) = view.isAttachedToWindow
+        override fun removeImmediate(manager: WindowManager, view: View) = manager.removeViewImmediate(view)
+        override fun launchInbox(): InboxLaunchResult =
+            AndroidInstagramInboxLauncher { intent -> this@DoomAccessibilityService.startActivity(intent) }.launch()
+        override fun currentForegroundPackage(): String? {
+            val root = try { rootInActiveWindow } catch (_: RuntimeException) { null } ?: return null
+            return try { root.packageName?.toString() } finally { root.recycle() }
+        }
+        override fun performHome(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -72,7 +95,14 @@ class DoomAccessibilityService : AccessibilityService() {
                 if (isMainActivityReturn(event)) {
                     mainActivityReturnObserved = true
                     // This also resets a completed/granted session when no overlay remains.
-                    requestOverlayRemoval(OverlayRemovalAction.PRESERVE_REPORT)
+                    if (overlay == null) {
+                        entryGate.leaveInstagram()
+                        ticket = null
+                        mainActivityReturnObserved = false
+                        publishGateState()
+                    } else requestOverlayRemoval(
+                        OverlayRemovalAction.PRESERVE_REPORT, overlayToken
+                    )
                 }
                 // Ignore all other Doom-owned events, including overlay updates.
                 return
@@ -81,13 +111,17 @@ class DoomAccessibilityService : AccessibilityService() {
                 resetOutside()
                 return
             }
+            // Suppression is checked before ticket creation, root access, and collection. It is
+            // deliberately a no-op so navigation and transient Instagram events cannot restart
+            // presentation or mutate the bounded report while the cooldown is active.
+            if (Observation.gateConsent && entryGate.cooldownActive()) return
             if (!Observation.consent || !Observation.connected) {
                 cancelAndBypass()
                 return
             }
 
             val activeTicket = if (Observation.gateConsent) {
-                ticket ?: entryGate.beginInstagramSession().also {
+                ticket ?: entryGate.beginInstagramSessionIfEligible()?.also {
                     ticket = it
                     publishGateState()
                 }
@@ -118,25 +152,17 @@ class DoomAccessibilityService : AccessibilityService() {
                 entryGate.state != EntryGateState.GATING
             ) return
 
-            val surface = InstagramSurfaceShadowClassifier.classify(Observation.report).toGateSurface()
-            val shouldShow = entryGate.observeInstagram(SystemClock.elapsedRealtime(), activeTicket)
+            val shouldShow = entryGate.observeInstagram(monotonicClock(), activeTicket)
             publishGateState()
             if (shouldShow) {
-                if (overlay == null) installOverlay(activeTicket, surface)
+                if (overlay == null) installOverlay(activeTicket)
+                else overlayToken?.let { renderOverlay(activeTicket, it) }
             } else {
                 requestOverlayRemoval(OverlayRemovalAction.BYPASS)
             }
         } catch (_: RuntimeException) {
             failOpen()
         }
-    }
-
-    private fun InstagramSurface.toGateSurface() = when (this) {
-        InstagramSurface.FEED -> EntryGateSurface.FEED
-        InstagramSurface.REELS -> EntryGateSurface.REELS
-        InstagramSurface.STORIES -> EntryGateSurface.STORIES
-        InstagramSurface.MESSAGING -> EntryGateSurface.MESSAGING
-        InstagramSurface.UNKNOWN -> EntryGateSurface.UNKNOWN
     }
 
     @Suppress("DEPRECATION") // Release transient nodes on older supported Android versions too.
@@ -200,21 +226,22 @@ class DoomAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun installOverlay(activeTicket: GateTicket, surface: EntryGateSurface) {
+    private fun installOverlay(activeTicket: GateTicket) {
         if (overlay != null) return
         try {
-            val overlayUi = EntryGateOverlayViewFactory.create(
+            val token = callbackGuard.open(activeTicket)
+            val ui = EntryGateOverlayViewFactory.create(
                 this,
-                surface = surface,
-                onDismissForMessages = {
-                    requestOverlayRemoval(OverlayRemovalAction.BYPASS)
+                onSkipToMessages = {
+                    requestOverlayRemoval(OverlayRemovalAction.NAVIGATE_MESSAGES, token)
                 },
                 onLeaveInstagram = {
-                    requestOverlayRemoval(OverlayRemovalAction.HOME)
-                }
+                    requestOverlayRemoval(OverlayRemovalAction.HOME, token)
+                },
+                onCopyCurrentReport = { handleOverlayCopy(activeTicket, token) }
             )
-            val box = overlayUi.root
-            val countdown = overlayUi.countdown
+            val box = ui.root
+            overlayToken = token
 
             val parameters = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -228,20 +255,28 @@ class DoomAccessibilityService : AccessibilityService() {
             manager.addView(box, parameters)
             windowManager = manager
             overlay = box
-            countdownView = countdown
+            overlayUi = ui
+            overlayToken = token
 
-            val shownAt = SystemClock.elapsedRealtime()
+            val shownAt = monotonicClock()
             if (!entryGate.overlayShown(shownAt, activeTicket)) {
-                requestOverlayRemoval(OverlayRemovalAction.BYPASS)
+                requestSafetyCleanup(OverlayRemovalAction.BYPASS)
                 return
             }
+            if (!entryGate.admitForDisplay(activeTicket)) {
+                requestSafetyCleanup(OverlayRemovalAction.BYPASS)
+                return
+            }
+            renderOverlay(activeTicket, token)
             publishGateState()
             completion = Runnable {
-                requestOverlayRemoval(OverlayRemovalAction.COMPLETE)
+                if (callbackGuard.acceptsVisible(token)) {
+                    requestOverlayRemoval(OverlayRemovalAction.COMPLETE, token)
+                }
             }.also { handler.postDelayed(it, GATE_DURATION_MS) }
             watchdog = object : Runnable {
                 override fun run() {
-                    if (overlay == null) return
+                    if (overlay == null || !callbackGuard.acceptsVisible(token)) return
                     try {
                         val activeRoot = rootInActiveWindow
                         val packageName = try {
@@ -256,11 +291,7 @@ class DoomAccessibilityService : AccessibilityService() {
                             failOpen()
                             return
                         }
-                        val remaining = entryGate.remainingMs(
-                            SystemClock.elapsedRealtime(),
-                            activeTicket
-                        )
-                        countdownView?.text = "${(remaining + 999L) / 1_000L}s remaining"
+                        renderOverlay(activeTicket, token)
                         handler.postDelayed(this, WATCHDOG_INTERVAL_MS)
                     } catch (_: RuntimeException) {
                         failOpen()
@@ -268,57 +299,89 @@ class DoomAccessibilityService : AccessibilityService() {
                 }
             }.also { handler.post(it) }
         } catch (_: RuntimeException) {
-            failOpen()
+            callbackGuard.invalidateVisible()
+            requestSafetyCleanup(OverlayRemovalAction.BYPASS)
         }
     }
 
-    private fun requestOverlayRemoval(action: OverlayRemovalAction) {
+    private fun requestOverlayRemoval(
+        action: OverlayRemovalAction,
+        token: OverlayCallbackToken? = null
+    ) {
+        val currentToken = overlayToken
+        if (overlay == null) return
+        val accepted = if (token != null) callbackGuard.beginClosing(token)
+        else currentToken != null && callbackGuard.beginClosing(currentToken)
+        if (!accepted) return
         completion?.let(handler::removeCallbacks)
         watchdog?.let(handler::removeCallbacks)
         completion = null
         watchdog = null
-        countdownView = null
+        overlayUi?.dispose()
         removalPolicy.request(action)
-        attemptOverlayRemoval()
+        attemptOverlayRemoval(currentToken)
     }
 
-    private fun attemptOverlayRemoval() {
+    private fun requestSafetyCleanup(action: OverlayRemovalAction) {
+        callbackGuard.invalidateVisible()
+        completion?.let(handler::removeCallbacks)
+        watchdog?.let(handler::removeCallbacks)
+        completion = null
+        watchdog = null
+        overlayUi?.dispose()
+        removalPolicy.requestSafetyCleanup(action)
+        attemptOverlayRemoval(overlayToken)
+    }
+
+    private fun attemptOverlayRemoval(token: OverlayCallbackToken? = overlayToken) {
         removalRetry?.let(handler::removeCallbacks)
         removalRetry = null
         val view = overlay
-        if (view == null || !view.isAttachedToWindow) {
-            confirmOverlayRemoved()
+        if (view == null || !overlayPlatform.isAttached(view)) {
+            confirmOverlayRemoved(token)
             return
         }
+        if (token != null && !callbackGuard.acceptsRemoval(token)) return
 
         try {
-            windowManager?.removeViewImmediate(view)
+            windowManager?.let { overlayPlatform.removeImmediate(it, view) }
         } catch (_: RuntimeException) {
             // Attachment state below is the postcondition; an exception alone is not success.
         }
-        if (!view.isAttachedToWindow) {
-            confirmOverlayRemoved()
+        if (!overlayPlatform.isAttached(view)) {
+            confirmOverlayRemoved(token)
             return
         }
 
         when (removalPolicy.failedAttempt()) {
             OverlayRemovalDecision.RETRY -> {
-                removalRetry = Runnable { attemptOverlayRemoval() }
+                removalRetry = Runnable {
+                    if (token == null || callbackGuard.acceptsRemoval(token)) attemptOverlayRemoval(token)
+                }
                     .also { handler.postDelayed(it, REMOVAL_RETRY_INTERVAL_MS) }
             }
             OverlayRemovalDecision.DISABLE_SERVICE -> {
                 // Retain the attached view and manager references; never release a pending action.
                 // Android service teardown is the final platform-owned removal path.
+                removalPolicy.requestSafetyCleanup(OverlayRemovalAction.BYPASS)
                 disableSelf()
             }
         }
     }
 
-    private fun confirmOverlayRemoved() {
+    private fun confirmOverlayRemoved(detachedToken: OverlayCallbackToken? = overlayToken) {
         removalRetry?.let(handler::removeCallbacks)
         removalRetry = null
+        val detachedView = overlay
+        if (detachedView != null && overlayPlatform.isAttached(detachedView)) return
+        if (detachedToken != null && overlayToken != detachedToken) return
+        val ownsDetachedEpisode = detachedToken != null && overlayToken == detachedToken
+        if (detachedToken != null) callbackGuard.detached(detachedToken)
+        overlayUi?.dispose()
+        overlayUi = null
         overlay = null
         windowManager = null
+        overlayToken = null
         val action = removalPolicy.confirmedDetached()
         if (action != OverlayRemovalAction.PRESERVE_REPORT) mainActivityReturnObserved = false
         when (action) {
@@ -326,6 +389,23 @@ class DoomAccessibilityService : AccessibilityService() {
                 entryGate.cancel()
                 publishGateState()
                 Observation.clear()
+            }
+            OverlayRemovalAction.NAVIGATE_MESSAGES -> {
+                val routeTicket = detachedToken?.ticket
+                val routeStillAuthorized = routeTicket != null &&
+                    routeTicket == ticket &&
+                    Observation.consent && Observation.gateConsent && Observation.connected &&
+                    entryGate.state == EntryGateState.GATING &&
+                    currentInstagramForeground()
+                if (!routeStillAuthorized || !entryGate.bypass(routeTicket!!)) {
+                    entryGate.cancel()
+                    publishGateState()
+                    Observation.clear()
+                    return
+                }
+                publishGateState()
+                Observation.clear()
+                if (ownsDetachedEpisode) overlayPlatform.launchInbox()
             }
             OverlayRemovalAction.PRESERVE_REPORT -> {
                 if (!mainActivityReturnObserved) return
@@ -343,7 +423,7 @@ class DoomAccessibilityService : AccessibilityService() {
             OverlayRemovalAction.COMPLETE -> {
                 val activeTicket = ticket
                 if (activeTicket == null ||
-                    !entryGate.complete(SystemClock.elapsedRealtime(), activeTicket)
+                    !entryGate.complete(monotonicClock(), activeTicket)
                 ) entryGate.cancel()
                 publishGateState()
             }
@@ -352,14 +432,14 @@ class DoomAccessibilityService : AccessibilityService() {
                 if (activeTicket == null || !entryGate.bypass(activeTicket)) entryGate.cancel()
                 publishGateState()
                 Observation.clear()
-                performGlobalAction(GLOBAL_ACTION_HOME)
+                overlayPlatform.performHome()
             }
             null -> Unit
         }
     }
 
     private fun cancelAndBypass() {
-        requestOverlayRemoval(OverlayRemovalAction.BYPASS)
+        requestSafetyCleanup(OverlayRemovalAction.BYPASS)
     }
 
     private fun failOpen() {
@@ -367,7 +447,30 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     private fun resetOutside() {
-        requestOverlayRemoval(OverlayRemovalAction.RESET_OUTSIDE)
+        requestSafetyCleanup(OverlayRemovalAction.RESET_OUTSIDE)
+    }
+
+    private fun renderOverlay(activeTicket: GateTicket, token: OverlayCallbackToken) {
+        if (!callbackGuard.acceptsVisible(token) || overlayToken != token) return
+        val reduceMotion = try { !ValueAnimator.areAnimatorsEnabled() } catch (_: RuntimeException) { true }
+        val model = EntryGateOverlayModel.from(
+            entryGate.remainingMs(monotonicClock(), activeTicket),
+            GATE_DURATION_MS,
+            reduceMotion,
+            Observation.overlayDiagnosticStatus()
+        )
+        overlayUi?.render(model)
+    }
+
+    private fun handleOverlayCopy(activeTicket: GateTicket, token: OverlayCallbackToken) {
+        if (callbackGuard.acceptsVisible(token) && overlayToken == token) {
+            overlayUi?.showCopyResult(Observation.copyCurrentReportFromOverlay(this))
+            renderOverlay(activeTicket, token)
+        }
+    }
+
+    private fun currentInstagramForeground(): Boolean {
+        return overlayPlatform.currentForegroundPackage() == INSTAGRAM
     }
 
     private fun publishGateState() {

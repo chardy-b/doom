@@ -31,6 +31,21 @@ object Observation {
     val shadowPrediction: InstagramSurface
         get() = InstagramSurfaceShadowClassifier.classify(report)
 
+    fun overlayDiagnosticStatus(): OverlayDiagnosticStatus {
+        val eligible = consent && connected && report != null
+        return OverlayDiagnosticStatus(
+            surface = when (shadowPrediction) {
+                InstagramSurface.FEED -> EntryGateSurface.FEED
+                InstagramSurface.REELS -> EntryGateSurface.REELS
+                InstagramSurface.STORIES -> EntryGateSurface.STORIES
+                InstagramSurface.MESSAGING -> EntryGateSurface.MESSAGING
+                InstagramSurface.UNKNOWN -> EntryGateSurface.UNKNOWN
+            },
+            reportStatus = if (eligible) OverlayReportStatus.CAPTURED else OverlayReportStatus.UNAVAILABLE,
+            canCopyCurrentReport = eligible
+        )
+    }
+
     fun load(context: Context) {
         val prefs = context.getSharedPreferences("consent", Context.MODE_PRIVATE)
         consent = prefs.getBoolean(CONSENT_KEY, false)
@@ -67,18 +82,33 @@ object Observation {
         if (!canCopy) return
         val current = report ?: return
         copied = false
-        try {
-            val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
-            val clip = ClipData.newPlainText("Doom sanitized structural report", current.text)
-            // Suppress supported system clipboard previews; this does not keep the copy in Doom.
-            clip.description.extras = PersistableBundle().apply {
-                putBoolean("android.content.extra.IS_SENSITIVE", true)
-            }
-            clipboard.setPrimaryClip(clip)
-            copied = true
-        } catch (_: RuntimeException) {
-            // No exception details or report data go to logs; the UI does not claim success.
+        writeClipboard(context, current, markReviewedCopy = true)
+    }
+
+    /** Explicit overlay action. It never reveals the report or changes the reviewed-copy state. */
+    fun copyCurrentReportFromOverlay(context: Context): OverlayCopyResult {
+        if (!consent || !connected) return OverlayCopyResult.UNAVAILABLE
+        val current = report ?: return OverlayCopyResult.UNAVAILABLE
+        return if (writeClipboard(context, current, markReviewedCopy = false)) OverlayCopyResult.COPIED
+        else OverlayCopyResult.UNAVAILABLE
+    }
+
+    private fun writeClipboard(
+        context: Context,
+        current: SanitizedStructuralReport,
+        markReviewedCopy: Boolean
+    ): Boolean = try {
+        val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return false
+        val clip = ClipData.newPlainText("Doom sanitized structural report", current.text)
+        // Suppress supported system clipboard previews; this does not keep the copy in Doom.
+        clip.description.extras = PersistableBundle().apply {
+            putBoolean("android.content.extra.IS_SENSITIVE", true)
         }
+        clipboard.setPrimaryClip(clip)
+        if (markReviewedCopy) copied = true
+        true
+    } catch (_: RuntimeException) {
+        false
     }
 
     fun clear() {

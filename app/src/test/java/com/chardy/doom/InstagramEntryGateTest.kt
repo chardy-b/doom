@@ -2,6 +2,8 @@ package com.chardy.doom
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -114,14 +116,14 @@ class InstagramEntryGateTest {
         assertEquals(EntryGateState.BYPASSED, gate.state)
     }
 
-    @Test fun dismissRequiresCurrentVisibleGate() {
+    @Test fun skipToMessagesRequiresCurrentVisibleGate() {
         val gate = InstagramEntryGate(enabled = { true })
         val ticket = gate.beginInstagramSession()
-        assertFalse(gate.dismissForMessages(ticket))
+        assertFalse(gate.skipToMessages(ticket))
         assertTrue(gate.observeInstagram(0L, ticket))
-        assertTrue(gate.dismissForMessages(ticket))
+        assertTrue(gate.skipToMessages(ticket))
         assertEquals(EntryGateState.BYPASSED, gate.state)
-        assertFalse(gate.dismissForMessages(ticket))
+        assertFalse(gate.skipToMessages(ticket))
     }
 
     @Test fun explicitLeaveBypassCannotRegateWithoutForeignSessionReset() {
@@ -132,5 +134,67 @@ class InstagramEntryGateTest {
         assertTrue(gate.bypass(ticket))
         assertEquals(EntryGateState.BYPASSED, gate.state)
         assertFalse(gate.observeInstagram(1L, ticket))
+    }
+
+    @Test fun cooldownStartsOnlyAfterDisplayAdmissionAndHasExactBoundary() {
+        var nowMs = 10_000L
+        val gate = InstagramEntryGate(enabled = { true }, monotonicNowMs = { nowMs })
+        val ticket = gate.beginInstagramSessionIfEligible()!!
+
+        assertFalse(gate.admitForDisplay(ticket))
+        assertFalse(gate.cooldownActive())
+        assertTrue(gate.observeInstagram(nowMs, ticket))
+        assertTrue(gate.overlayShown(nowMs, ticket))
+        assertTrue(gate.admitForDisplay(ticket))
+
+        gate.skipToMessages(ticket)
+        gate.leaveInstagram()
+        nowMs += INSTAGRAM_ENTRY_COOLDOWN_MS - 1L
+        assertTrue(gate.cooldownActive())
+        assertNull(gate.beginInstagramSessionIfEligible())
+
+        nowMs += 1L
+        assertFalse(gate.cooldownActive())
+        assertNotNull(gate.beginInstagramSessionIfEligible())
+    }
+
+    @Test fun sessionResetsAndExplicitActionsCannotBypassCooldownOrAllocateTicket() {
+        var nowMs = 0L
+        var consented = true
+        val gate = InstagramEntryGate(enabled = { consented }, monotonicNowMs = { nowMs })
+        val ticket = gate.beginInstagramSessionIfEligible()!!
+        gate.observeInstagram(nowMs, ticket)
+        gate.overlayShown(nowMs, ticket)
+        assertTrue(gate.admitForDisplay(ticket))
+
+        assertTrue(gate.skipToMessages(ticket))
+        val generationAfterSkip = gate.generation
+        gate.cancel()
+        gate.leaveInstagram()
+        consented = false
+        gate.cancel()
+        consented = true
+        nowMs = INSTAGRAM_ENTRY_COOLDOWN_MS - 1L
+
+        assertTrue(gate.cooldownActive())
+        assertNull(gate.beginInstagramSessionIfEligible())
+        assertEquals(generationAfterSkip + 3L, gate.generation)
+        assertFalse(gate.observeInstagram(nowMs, ticket))
+    }
+
+    @Test fun rejectedAndStaleDisplayAttemptsNeverStartCooldown() {
+        var nowMs = 1L
+        val gate = InstagramEntryGate(enabled = { true }, monotonicNowMs = { nowMs })
+        val stale = gate.beginInstagramSessionIfEligible()!!
+        gate.observeInstagram(nowMs, stale)
+        gate.overlayShown(nowMs, stale)
+        gate.leaveInstagram()
+
+        assertFalse(gate.admitForDisplay(stale))
+        assertFalse(gate.cooldownActive())
+
+        val current = gate.beginInstagramSessionIfEligible()!!
+        assertFalse(gate.admitForDisplay(current))
+        assertFalse(gate.cooldownActive())
     }
 }

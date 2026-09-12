@@ -103,7 +103,7 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = reduceMotion, onCheckedChange = { reduceMotion = it }, modifier = Modifier.semantics { contentDescription = "Reduce breathing motion" })
-                    Text("Still image · reduced motion", color = Paper, modifier = Modifier.padding(start = 12.dp))
+                    Text("Still image · demo-local reduced motion", color = Paper, modifier = Modifier.padding(start = 12.dp))
                 }
                 Frame {
                     Text("INSTAGRAM · NOT PROTECTED", color = Jade, fontFamily = FontFamily.Monospace)
@@ -112,7 +112,7 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
                         !Observation.connected -> "Observation off · service disconnected"
                         else -> "Observer connected · mapping unverified"
                     }, color = Paper, fontSize = 18.sp)
-                    Text("Diagnostic entry breathing gate · OFF by default. Unverified; does not claim protection.", color = Rust)
+                    Text("Diagnostic entry breathing gate · OFF by default. Unverified; does not claim protection. An admitted production gate cannot repeat for one minute; cooldown is in memory only.", color = Rust)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = Observation.gateConsent, onCheckedChange = { Observation.setGateConsent(context, it) }, modifier = Modifier.semantics { contentDescription = "Diagnostic Instagram entry gate opt in" })
                         Text("Allow diagnostic Instagram entry pause", color = Paper, modifier = Modifier.weight(1f))
@@ -178,6 +178,7 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
         }
         Text("DEVICE PROOF · PENDING", color = Jade, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
         Text("No verified Instagram screen mapping or DM route is claimed. Any verified Instagram entry, including DM or unknown surfaces, may receive the temporary five-second diagnostic pause. Do not rely on it to limit scrolling. Disable or uninstall at any time.", color = Paper, fontSize = 14.sp)
+        Text("Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})", color = Jade, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
     }
 }
 
@@ -196,13 +197,10 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
 @Composable private fun PixelBloom(progress: Float) {
     Canvas(Modifier.fillMaxWidth().height(168.dp).semantics { contentDescription = "A quiet pixel bloom" }) {
         val unit = minOf(size.width / 14, size.height / 12)
-        val radius = 2 + (kotlin.math.sin(progress * Math.PI).toFloat() * 2).toInt()
-        for (x in -radius..radius) for (y in -radius..radius) {
-            if (kotlin.math.abs(x) + kotlin.math.abs(y) <= radius + 1) {
-                drawRect(if (x == 0 && y == 0) Paper else Jade,
-                    Offset(size.width / 2 + x * unit - unit / 2, size.height / 2 + y * unit - unit / 2),
-                    Size(unit - 2, unit - 2))
-            }
+        BreathingVisuals.cells(progress).forEach { cell ->
+            drawRect(if (cell.center) Paper else Jade,
+                Offset(size.width / 2 + cell.x * unit - unit / 2, size.height / 2 + cell.y * unit - unit / 2),
+                Size((unit - 2).coerceAtLeast(1f), (unit - 2).coerceAtLeast(1f)))
         }
     }
 }

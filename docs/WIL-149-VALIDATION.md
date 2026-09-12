@@ -2,56 +2,80 @@
 
 ## Scope
 
-This working tree is based exactly on merged `main` `496e0387fcbc46bfeddc524e5a5643f557e039d8`. The feature remains unverified, default-off, and separately consented. It does not claim protection or enable a production rollout.
+This working tree started exactly at `9bf29169271010d9b36c8d6e316c97f46ed49795`. The feature remains unverified, default-off, and separately consented. It does not claim protection or enable a production rollout.
 
 Android opens Instagram normally. On the first bounded Instagram sample in a foreground session:
 
 - any verified Instagram foreground event shows a five-second accessibility overlay, regardless of sanitized classifier result;
+- after `addView` and `overlayShown` successfully admit a production gate, the next production gate is suppressed for exactly 60,000 monotonic milliseconds in process memory; at 59,999 ms it remains suppressed and at 60,000 ms the next otherwise-eligible gate may start;
 - Inbox, thread, composer, or any messaging evidence receives the same temporary five-second diagnostic pause; it does not bypass the gate.
 - Unknown, mixed, truncated, missing-root, foreign-window, runtime-error, revocation, interruption, or disconnect state is still sanitized/fail-safe, but a verified Instagram foreground event can pause entry for up to five seconds.
 - classification and gate timing remain separate;
 - the five seconds begin only after `WindowManager.addView` succeeds;
 - notification text, usernames, messages, descriptions, and Instagram content are never read or retained.
 
-The overlay offers exactly two actions. **Dismiss for messages** removes the overlay and performs no Instagram action. **Leave Instagram** removes the overlay before invoking only `GLOBAL_ACTION_HOME`. The implementation never clicks an Instagram node, dispatches gestures, guesses a deep link, or launches Instagram.
+The overlay offers a primary **Skip to messages** action and secondary **Leave Instagram** action. Skip physically removes the overlay before one best-effort `ACTION_VIEW` attempt to `https://www.instagram.com/direct/inbox/`, targeted only to `com.instagram.android` with `FLAG_ACTIVITY_NEW_TASK`; normal return is `ATTEMPTED`, never verified inbox success. Leave physically removes the overlay before invoking only `GLOBAL_ACTION_HOME`. The implementation never clicks an Instagram node, dispatches gestures, guesses a deep link, or uses a browser/chooser fallback.
 
 ## Changed files
 
-- `app/src/main/java/com/chardy/doom/InstagramEntryGate.kt` — pure generation-ticket policy, classifier-independent Instagram trigger, monotonic visible-time deadline, stale-callback rejection, and bounded duration.
-- `app/src/test/java/com/chardy/doom/InstagramEntryGateTest.kt` — focused tests for default-off behavior, visible timing, DM/unknown diagnostic pauses, repeated samples, revocation, stale tickets, invalid time/duration, and dismissal.
+- `app/src/main/java/com/chardy/doom/InstagramEntryGate.kt` — pure generation-ticket policy, classifier-independent Instagram trigger, monotonic visible-time deadline, stale-callback rejection, bounded duration, and process-local 60-second admission cooldown.
+- `app/src/test/java/com/chardy/doom/InstagramEntryGateTest.kt` — focused tests for default-off behavior, visible timing, DM/unknown diagnostic pauses, repeated samples, revocation, stale tickets, invalid time/duration, skip, exact cooldown boundaries, session resets, and rejected/stale admissions.
 - `app/src/main/java/com/chardy/doom/OverlayRemovalPolicy.kt` and its unit test — fake removal-failure/retry policy; no action is released before confirmed detachment.
-- `app/src/main/java/com/chardy/doom/EntryGateOverlayView.kt` — testable overlay content with explicit dismiss and leave callbacks.
-- `app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt` — real default-off `TYPE_ACCESSIBILITY_OVERLAY`, broad package-event session boundaries, Instagram-only traversal, 50 ms watchdog, countdown, remove-before-action ordering, and lifecycle cleanup.
-- `app/src/main/java/com/chardy/doom/Observation.kt` — independent default-false persisted gate consent and process-local gate state.
+- `app/src/main/java/com/chardy/doom/EntryGateOverlayView.kt` — native Doom-styled, semantic overlay with live status/copy controls and explicit skip/leave callbacks.
+- `app/src/main/java/com/chardy/doom/OverlayCallbackGuard.kt`, `EntryGateOverlayModel.kt`, `BreathingVisuals.kt`, `PixelBreathingView.kt` — pure lifecycle/presentation contracts and timer-free Canvas rendering.
+- `app/src/main/java/com/chardy/doom/InstagramInboxLauncher.kt` — constant package-targeted, best-effort inbox adapter.
+- `app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt` — real default-off `TYPE_ACCESSIBILITY_OVERLAY`, broad package-event session boundaries, Instagram-only traversal, monotonic clock seam, cooldown-before-ticket/root/report checks, 50 ms watchdog, countdown, remove-before-action ordering, and lifecycle cleanup.
+- `app/src/main/java/com/chardy/doom/Observation.kt` — independent default-false persisted gate consent, compact live status, and explicit current-report copy boundary.
 - `app/src/main/java/com/chardy/doom/MainActivity.kt` — separate opt-in, state display, and corrected disclosure.
 - `app/src/main/res/xml/accessibility_service_config.xml` — removes the Instagram package filter so foreign package events can synchronously end a session; tree traversal remains Instagram-only.
 - `app/src/main/res/values/strings.xml` — discloses broad package-event metadata, Instagram-only traversal, the optional overlay, and fail-open limits.
-- `app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt` — updates disclosures, verifies default-off independent consent, constructs the real overlay content, and executes both button callbacks.
-- `scripts/test-structural-lifecycle.py` — source guards for the overlay boundary, remove-before-action ordering, watchdog cleanup, Instagram-only tree access, and default-off policy.
-- `scripts/test-entry-gate-host.py` — reproducible cached Kotlin/JUnit runner that requires no Android SDK.
+- `app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt` — updates disclosures, verifies default-off independent consent, constructs the real overlay content, and covers current-report clipboard denial/replacement/revocation cases.
+- `app/src/androidTest/java/com/chardy/doom/EntryGateServiceActionTest.kt` — fake-platform runtime coverage for detach ordering, token races, safety vetoes, direct return, route failure, foreground suppression, HOME arbitration and retry exhaustion.
+- `app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt`, `DoomUiTest.kt`, `InstagramInboxLauncherTest.kt` — CI-bound six-state Doom-owned capture scenarios, separate scroll-to-end footer verification, layout configuration checks and API-35 Intent contract.
+- `scripts/test-structural-lifecycle.py` — source guards for the overlay boundary, remove-before-action ordering, watchdog cleanup, Instagram-only tree access, default-off policy, and cooldown ordering/clock seam.
+- `scripts/test-entry-gate-host.py`, `scripts/test-overlay-evidence.py`, `scripts/overlay-evidence-manifest.py` — reproducible host runners and isolated supplementary evidence binding.
+- `scripts/ci-device.sh` — pulls supplementary overlay artifacts separately from canonical signer input.
 - `README.md` — honest current behavior, consent, privacy, and remaining evidence limits.
 
-No manifest, Gradle/dependency, network, backup, fixture implementation, workflow, or CI script change is present.
+No manifest, dependency, network, backup, fixture implementation, workflow, or canonical signer contract change is present. BuildConfig generation is explicitly enabled in Gradle.
 
 ## Executed host verification
 
-- `python3 scripts/test-entry-gate-host.py`: **47/47 passed**, including gate and fake removal-policy tests.
-- `scripts/test-structural-lifecycle.py`: **21/21 passed**.
-- `scripts/test-fixture-evidence.py`: **21/21 passed**.
-- `scripts/test_wil155_host.py`: **5/5 passed**.
+- `python3 -B scripts/test-entry-gate-host.py`: **64/64 passed**, including cooldown boundary, session-reset, explicit-action, and stale-admission tests.
+- `python3 -B scripts/test-structural-lifecycle.py`: **30/30 passed**.
+- `python3 -B scripts/test-overlay-evidence.py`: **5/5 passed**.
+- `python3 -B scripts/test-fixture-evidence.py`: **21/21 passed**.
+- `python3 -B scripts/test_wil155_host.py`: **5/5 passed**.
+- `python3 -B scripts/test-internal-signing.py`: **13/13 passed**.
 - Python syntax and all source XML parsing: passed.
-- `bash -n scripts/ci-device.sh scripts/ci-fixture.sh`: passed.
+- `bash -n scripts/ci-device.sh scripts/ci-fixture.sh scripts/sign-internal-apk.sh`: passed.
 - `git diff --check`: passed.
 - Secret-pattern scan: no findings; no file exceeded 1 MiB.
 
 These checks did not invoke Gradle, Android SDK, an emulator, adb, credentials, network, commit, push, or PR operations.
 
+The implementation is uncommitted by policy, so no final candidate SHA is claimed here. Android compilation, lint, instrumentation, emulator, adb, exact-head CI/artifact readback, independent review, signing, and actual Instagram/phone acceptance remain unverified and controller-owned. Host checks do not establish Android runtime success; no screenshot or route success is claimed.
+
 ## Review repairs
 
 - Removal is not treated as successful after a `WindowManager` exception. The service uses `removeViewImmediate`, verifies `View.isAttachedToWindow`, retains the view and manager while attached, retries every 50 ms up to 20 attempts, and disables the service without releasing Home/completion/bypass actions if detachment cannot be confirmed.
 - Foreign-window and safety cleanup override pending Home or completion. `GLOBAL_ACTION_HOME`, gate completion, and bypass state changes occur only after confirmed physical detachment.
-- A positively identified return to Doom overrides automatic timer completion so the gate session resets while the report remains available; explicit Dismiss/Leave and foreign-window safety cleanup still override report preservation.
-- Android instrumentation constructs the real overlay content and executes both button callbacks. Source guards cover event policy and ordering only; they do not prove runtime overlay attachment. Exact attachment, touch dispatch, active-root behavior, watchdog cleanup, and timing remain required GitHub emulator and actual-device evidence.
+- A positively identified return to Doom overrides automatic timer completion so the gate session resets while the report remains available; explicit Skip/Leave and foreign-window safety cleanup still override report preservation.
+- Android instrumentation now includes runtime fake-platform action-order tests and the real overlay factory/layout paths. The Intent, fake detach boundary, top-resumed checks, draw waits and configuration restoration are still unexecuted here; Android compilation, actual attachment/touch dispatch, active-root behavior, watchdog timing, TalkBack behavior and Instagram routing remain GitHub/phone evidence.
+- The six supplementary names are CI-bound scenarios: the first five exercise Doom-owned overlay states (including system font-scale 2.0 and landscape), and the sixth is the scrollable MainActivity build-footer screen after overlay removal. They remain synthetic UI evidence and are not claimed as executed until exact-head CI uploads the manifest.
+- WIL-179 cooldown is host-verified only: suppression is checked before new ticket/root/report work, and admission is recorded only after the real service's successful `addView`/`overlayShown` boundary. Android compilation, instrumentation timing, service recreation behavior, and actual Instagram navigation remain unverified.
+
+## Repair ledger
+
+This uncommitted repair preserves the candidate's base SHA and addresses the independent Opus blockers B1–B5. Host checks below are the only executed verification for this repair; no Android execution or screenshot artifact was fabricated.
+
+- B1: fixed the API-35 Intent assertion to use `selector` and added null categories/`FLAG_ACTIVITY_NEW_TASK` assertions; reviewed all new Android tests for API-35 Kotlin/API usage.
+- B2: added the successful-path supplementary `adb pull` before manifest generation and a host ordering regression.
+- B3: made the CI-bound six-state capture establish font scale/orientation, assert top-resumed Doom, wait for draw, and restore settings; the footer capture is isolated in a separate scroll/reset test.
+- B4: replaced guard-only action coverage with fake-platform service runtime tests and added missing clipboard failure/stale/replacement cases.
+- B5: changed text/actions to wrap-content with minimum heights, exposed visible status text to accessibility, added stateful contrast styling, applied top/bottom/side/cutout insets, preserved pixel layout during retries, and added font-scale/landscape/reachability tests.
+
+Repair 2 for the independent rereview addressed N1–N4 in source/tests: all ActivityScenario reflection and fake-platform mutations are main-thread-owned with deterministic visibility; draw-listener removal is posted after the draw callback; font-scale 2.0 reachability covers 320×640 portrait and 640×320 landscape with immediate content-relative scrolling; and the canonical demo capture/CTA journey remains at the top while footer verification is separate. The duplicate Intent-flags assertion and redundant `allowClosing` branch were removed. These changes are not Android runtime results.
 
 ## Required CI evidence
 

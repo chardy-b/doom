@@ -161,21 +161,20 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("private val enabled: () -> Boolean = { false }", policy)
         self.assertIn("durationMs in 1L..120_000L", policy)
         self.assertIn("TYPE_ACCESSIBILITY_OVERLAY", SERVICE)
-        self.assertIn('text = "DISMISS FOR MESSAGES"', OVERLAY_VIEW)
-        self.assertIn('text = "LEAVE INSTAGRAM"', OVERLAY_VIEW)
-        self.assertIn("setOnClickListener { onDismissForMessages() }", OVERLAY_VIEW)
+        self.assertIn('"SKIP TO MESSAGES"', OVERLAY_VIEW)
+        self.assertIn('button(context, "LEAVE INSTAGRAM"', OVERLAY_VIEW)
+        self.assertIn("setOnClickListener { onSkipToMessages() }", OVERLAY_VIEW)
         self.assertIn("setOnClickListener { onLeaveInstagram() }", OVERLAY_VIEW)
         install = SERVICE.split("EntryGateOverlayViewFactory.create", 1)[1].split(
             "val parameters", 1
         )[0]
-        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.BYPASS)", install)
-        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.HOME)", install)
+        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.NAVIGATE_MESSAGES, token)", install)
+        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.HOME, token)", install)
         confirmed = SERVICE.split("private fun confirmOverlayRemoved", 1)[1].split(
             "private fun cancelAndBypass", 1
         )[0]
         home = confirmed.split("OverlayRemovalAction.HOME", 1)[1].split("null -> Unit", 1)[0]
-        self.assertLess(home.index("entryGate.bypass"), home.index("performGlobalAction"))
-        self.assertIn("GLOBAL_ACTION_HOME", home)
+        self.assertLess(home.index("entryGate.bypass"), home.index("performHome"))
         self.assertNotIn("dispatchGesture", SERVICE)
         self.assertNotIn("node.performAction", SERVICE)
 
@@ -183,7 +182,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("WATCHDOG_INTERVAL_MS = 50L", SERVICE)
         self.assertIn("entryGate.overlayShown(shownAt, activeTicket)", SERVICE)
         completion = SERVICE.split("completion = Runnable", 1)[1].split("watchdog =", 1)[0]
-        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.COMPLETE)", completion)
+        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.COMPLETE, token)", completion)
         watchdog = SERVICE.split("watchdog = object", 1)[1].split("catch (_: RuntimeException)", 1)[0]
         self.assertIn("activeRoot?.recycle()", watchdog)
         self.assertIn("if (packageName != INSTAGRAM)", watchdog)
@@ -193,13 +192,13 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         removal = SERVICE.split("private fun requestOverlayRemoval", 1)[1].split(
             "private fun cancelAndBypass", 1
         )[0]
-        self.assertIn("removeViewImmediate(view)", removal)
-        self.assertGreaterEqual(removal.count("!view.isAttachedToWindow"), 2)
+        self.assertIn("overlayPlatform.removeImmediate", removal)
+        self.assertGreaterEqual(removal.count("overlayPlatform.isAttached(view)"), 2)
         self.assertIn("removalPolicy.failedAttempt()", removal)
         self.assertIn("handler.postDelayed(it, REMOVAL_RETRY_INTERVAL_MS)", removal)
         self.assertIn("disableSelf()", removal)
         self.assertIn("removalPolicy.confirmedDetached()", removal)
-        self.assertLess(removal.index("confirmedDetached()"), removal.index("GLOBAL_ACTION_HOME"))
+        self.assertLess(removal.index("confirmedDetached()"), removal.index("performHome"))
 
     def test_foreign_event_resets_before_root_access_and_gate_reads_only_sanitized_report(self):
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(
@@ -207,7 +206,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         )[0]
         self.assertLess(event.index("packageName != INSTAGRAM"), event.index("rootInActiveWindow"))
         self.assertIn("resetOutside()", event)
-        self.assertIn("InstagramSurfaceShadowClassifier.classify(Observation.report)", event)
+        self.assertIn("Observation.record", event)
+        self.assertIn("fun overlayDiagnosticStatus()", (REPO / "app/src/main/java/com/chardy/doom/Observation.kt").read_text())
         self.assertNotIn("event.text", event)
         self.assertNotIn("contentDescription", event)
 
@@ -219,15 +219,15 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         own_events = SERVICE.split("if (packageName == applicationContext.packageName)", 1)[1].split(
             "if (packageName != INSTAGRAM)", 1
         )[0]
-        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.PRESERVE_REPORT)", own_events)
+        self.assertIn("OverlayRemovalAction.PRESERVE_REPORT, overlayToken", own_events)
         self.assertNotIn("if (overlay != null)", own_events)
         preserve = SERVICE.split("OverlayRemovalAction.PRESERVE_REPORT", 1)[1].split("OverlayRemovalAction.RESET_OUTSIDE", 1)[0]
         self.assertIn("mainActivityReturnObserved", preserve)
 
     def test_removal_priority_keeps_safety_and_explicit_actions_above_preserve(self):
         policy = (REPO / "app/src/main/java/com/chardy/doom/OverlayRemovalPolicy.kt").read_text()
-        self.assertLess(policy.index("COMPLETE -> 0"), policy.index("PRESERVE_REPORT -> 1"))
-        self.assertLess(policy.index("HOME -> 3"), policy.index("RESET_OUTSIDE -> 4"))
+        self.assertLess(policy.index("COMPLETE -> 0"), policy.index("NAVIGATE_MESSAGES -> 1"))
+        self.assertLess(policy.index("HOME -> 4"), policy.index("RESET_OUTSIDE -> 5"))
 
     def test_non_preservation_cleanup_clears_verified_return_marker_centrally(self):
         confirmed = SERVICE.split("private fun confirmOverlayRemoved", 1)[1].split(
@@ -238,6 +238,113 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
             "if (action != OverlayRemovalAction.PRESERVE_REPORT) mainActivityReturnObserved = false",
             confirmed
         )
+
+    def test_messages_route_is_constant_and_has_no_fallback_or_node_action(self):
+        launcher = (REPO / "app/src/main/java/com/chardy/doom/InstagramInboxLauncher.kt").read_text()
+        self.assertIn('Intent.ACTION_VIEW', launcher)
+        self.assertIn('https://www.instagram.com/direct/inbox/', launcher)
+        self.assertIn('setPackage("com.instagram.android")', launcher)
+        self.assertIn('FLAG_ACTIVITY_NEW_TASK', launcher)
+        for forbidden in ("createChooser", "ACTION_SEND", "resolveActivity", "dispatchGesture",
+                          "performAction", "Uri.parse(user", "http://"):
+            self.assertNotIn(forbidden, launcher + SERVICE)
+        self.assertIn("InboxLaunchResult.ATTEMPTED", launcher)
+        self.assertIn("catch (_: RuntimeException)", launcher)
+
+    def test_overlay_callbacks_are_scoped_and_service_has_no_compose_or_animation_clock(self):
+        guard = (REPO / "app/src/main/java/com/chardy/doom/OverlayCallbackGuard.kt").read_text()
+        self.assertIn("OverlayCallbackToken", guard)
+        self.assertIn("++nextEpoch", guard)
+        self.assertIn("acceptsVisible", guard)
+        self.assertIn("acceptsRemoval", guard)
+        self.assertIn("beginClosing", guard)
+        self.assertIn("callbackGuard.acceptsVisible(token)", SERVICE)
+        self.assertIn("callbackGuard.acceptsRemoval(token)", SERVICE)
+        self.assertNotIn("ComposeView", SERVICE)
+        self.assertNotIn("ValueAnimator", (REPO / "app/src/main/java/com/chardy/doom/PixelBreathingView.kt").read_text())
+        self.assertNotIn("postDelayed", (REPO / "app/src/main/java/com/chardy/doom/PixelBreathingView.kt").read_text())
+
+    def test_overlay_status_and_copy_model_never_contain_report_payload(self):
+        model = (REPO / "app/src/main/java/com/chardy/doom/EntryGateOverlayModel.kt").read_text()
+        self.assertIn("OverlayReportStatus", model)
+        self.assertIn("canCopyCurrentReport", model)
+        for forbidden in ("SanitizedStructuralReport", "report.text", "viewIdResourceName", "contentDescription"):
+            self.assertNotIn(forbidden, model)
+        observation = OBSERVATION
+        self.assertIn("fun overlayDiagnosticStatus()", observation)
+        self.assertIn("fun copyCurrentReportFromOverlay(context: Context)", observation)
+        self.assertEqual(1, sum(path.read_text().count("setPrimaryClip(") for path in
+                                 (REPO / "app/src/main/java/com/chardy/doom").glob("*.kt")))
+
+    def test_build_identity_is_generated_and_not_hard_coded(self):
+        gradle = (REPO / "app/build.gradle.kts").read_text()
+        ui = (REPO / "app/src/main/java/com/chardy/doom/MainActivity.kt").read_text()
+        self.assertIn("buildConfig = true", gradle)
+        self.assertIn("Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})", ui)
+        self.assertNotIn("code 29", ui)
+
+    def test_overlay_uses_wrapping_accessible_layout_and_complete_insets(self):
+        self.assertIn("LinearLayout.LayoutParams(-1, -2)", OVERLAY_VIEW)
+        self.assertIn("minHeight", OVERLAY_VIEW)
+        self.assertNotIn("LinearLayout.LayoutParams(-1, dp(48))", OVERLAY_VIEW)
+        self.assertNotIn("LinearLayout.LayoutParams(-1, dp(52))", OVERLAY_VIEW)
+        self.assertIn("systemWindowInsetLeft", OVERLAY_VIEW)
+        self.assertIn("systemWindowInsetTop", OVERLAY_VIEW)
+        self.assertIn("systemWindowInsetRight", OVERLAY_VIEW)
+        self.assertIn("systemWindowInsetBottom", OVERLAY_VIEW)
+        self.assertIn("displayCutout", OVERLAY_VIEW)
+        self.assertNotIn('contentDescription = "Diagnostic status"', OVERLAY_VIEW)
+        self.assertIn("state_pressed", OVERLAY_VIEW)
+        self.assertIn("state_focused", OVERLAY_VIEW)
+        self.assertIn("state_enabled", OVERLAY_VIEW)
+        self.assertIn("lastStatus", OVERLAY_VIEW)
+        self.assertIn("lastCopyVisibility", OVERLAY_VIEW)
+        self.assertIn("pixel.visibility = View.INVISIBLE", OVERLAY_VIEW)
+
+    def test_messages_route_rechecks_token_consents_and_foreground_before_launch(self):
+        service = SERVICE[SERVICE.rfind("OverlayRemovalAction.NAVIGATE_MESSAGES"):]
+        self.assertIn("detachedToken?.ticket", service)
+        self.assertIn("Observation.gateConsent", service)
+        self.assertIn("Observation.consent", service)
+        self.assertIn("Observation.connected", service)
+        self.assertIn("currentInstagramForeground()", service)
+        self.assertIn("overlayPlatform.launchInbox()", service)
+
+    def test_direct_return_closes_visible_callbacks_before_preserving_report(self):
+        own_events = SERVICE.split("OverlayRemovalAction.PRESERVE_REPORT, overlayToken", 1)[0]
+        self.assertIn("requestOverlayRemoval", own_events)
+        preserve_request = SERVICE.split("OverlayRemovalAction.PRESERVE_REPORT, overlayToken", 1)[1].split(")", 1)[0]
+        self.assertNotIn("allowClosing", preserve_request)
+        self.assertIn("beginClosing", SERVICE.split("private fun requestOverlayRemoval", 1)[1].split("private fun requestSafetyCleanup", 1)[0])
+
+    def test_cooldown_is_monotonic_in_memory_and_checked_before_new_session_side_effects(self):
+        policy = (REPO / "app/src/main/java/com/chardy/doom/InstagramEntryGate.kt").read_text()
+        self.assertIn("INSTAGRAM_ENTRY_COOLDOWN_MS = 60_000L", policy)
+        self.assertIn("monotonicNowMs: () -> Long", policy)
+        self.assertIn("return nowMs - admittedAt < durationMs", policy)
+        self.assertNotIn("System.currentTimeMillis", SERVICE + policy)
+        self.assertEqual(1, SERVICE.count("SystemClock.elapsedRealtime()"))
+        event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(
+            "@Suppress", 1
+        )[0]
+        suppression = "if (Observation.gateConsent && entryGate.cooldownActive()) return"
+        self.assertIn(suppression, event)
+        self.assertLess(event.index(suppression), event.index("beginInstagramSessionIfEligible"))
+        self.assertLess(event.index(suppression), event.index("rootInActiveWindow"))
+        self.assertLess(event.index(suppression), event.index("Observation.record"))
+
+    def test_cooldown_starts_only_after_real_overlay_admission(self):
+        policy = (REPO / "app/src/main/java/com/chardy/doom/InstagramEntryGate.kt").read_text()
+        self.assertIn("fun admitForDisplay(ticket: GateTicket)", policy)
+        self.assertIn("visibleStartedAtMs == null", policy)
+        install = SERVICE.split("manager.addView(box, parameters)", 1)[1].split(
+            "completion = Runnable", 1
+        )[0]
+        self.assertLess(install.index("entryGate.overlayShown(shownAt, activeTicket)"),
+                        install.index("entryGate.admitForDisplay(activeTicket)"))
+        self.assertLess(install.index("entryGate.admitForDisplay(activeTicket)"),
+                        install.index("renderOverlay(activeTicket, token)"))
+        self.assertIn("requestSafetyCleanup(OverlayRemovalAction.BYPASS)", install)
 
 
 if __name__ == "__main__":

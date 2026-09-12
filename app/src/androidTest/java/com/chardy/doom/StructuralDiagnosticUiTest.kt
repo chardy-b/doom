@@ -151,20 +151,25 @@ class StructuralDiagnosticUiTest {
 
     @Test fun overlayButtonsDispatchOnlyTheirExplicitCallbacks() {
         rule.runOnIdle {
-            var dismissCalls = 0
+            var skipCalls = 0
             var leaveCalls = 0
+            var copyCalls = 0
             val overlay = EntryGateOverlayViewFactory.create(
                 rule.activity,
-                onDismissForMessages = { dismissCalls++ },
-                onLeaveInstagram = { leaveCalls++ }
+                onSkipToMessages = { skipCalls++ },
+                onLeaveInstagram = { leaveCalls++ },
+                onCopyCurrentReport = { copyCalls++ }
             )
 
-            assertTrue(overlay.dismissForMessages.performClick())
-            assertEquals(1, dismissCalls)
+            assertTrue(overlay.skipToMessages.performClick())
+            assertEquals(1, skipCalls)
             assertEquals(0, leaveCalls)
             assertTrue(overlay.leaveInstagram.performClick())
-            assertEquals(1, dismissCalls)
+            assertEquals(1, skipCalls)
             assertEquals(1, leaveCalls)
+            overlay.copyCurrentReport.visibility = android.view.View.VISIBLE
+            assertTrue(overlay.copyCurrentReport.performClick())
+            assertEquals(1, copyCalls)
             assertEquals("5s remaining", overlay.countdown.text.toString())
         }
     }
@@ -192,6 +197,74 @@ class StructuralDiagnosticUiTest {
         assertEmpty()
         assertActionsDisabled()
         rule.runOnIdle { assertTrue(Observation.consent) }
+    }
+
+    @Test fun overlayStatusIsCompactAndOverlayCopyDoesNotRevealReport() {
+        seed()
+        rule.runOnIdle {
+            val status = Observation.overlayDiagnosticStatus()
+            assertEquals(OverlayReportStatus.CAPTURED, status.reportStatus)
+            assertEquals(EntryGateSurface.FEED, status.surface)
+            assertTrue(status.canCopyCurrentReport)
+            assertFalse(Observation.revealed)
+            assertEquals(OverlayCopyResult.COPIED, Observation.copyCurrentReportFromOverlay(rule.activity))
+            assertFalse(Observation.revealed)
+            assertFalse(Observation.copied)
+            assertEquals(Observation.report!!.text, clipboard.primaryClip!!.getItemAt(0).text.toString())
+            Observation.connected = false
+            assertEquals(OverlayReportStatus.UNAVAILABLE, Observation.overlayDiagnosticStatus().reportStatus)
+            assertFalse(Observation.overlayDiagnosticStatus().canCopyCurrentReport)
+            clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
+            assertEquals(OverlayCopyResult.UNAVAILABLE, Observation.copyCurrentReportFromOverlay(rule.activity))
+            assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
+        }
+    }
+
+    @Test fun overlayCopyUsesCurrentReportAndDoesNotSetReviewedCopyStatus() {
+        seed()
+        rule.runOnIdle {
+            val first = Observation.report!!.text
+            assertEquals(OverlayCopyResult.COPIED, Observation.copyCurrentReportFromOverlay(rule.activity))
+            assertFalse(Observation.copied)
+            Observation.record(sample(1))
+            assertFalse(Observation.copied)
+            clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
+            assertEquals(OverlayCopyResult.COPIED, Observation.copyCurrentReportFromOverlay(rule.activity))
+            assertNotEquals(first, clipboard.primaryClip!!.getItemAt(0).text.toString())
+            assertEquals(Observation.report!!.text, clipboard.primaryClip!!.getItemAt(0).text.toString())
+        }
+    }
+
+    @Test fun overlayCopyDeniesMissingOrThrowingClipboardAndStaleRevokedAction() {
+        seed()
+        rule.runOnIdle {
+            clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
+            val missing = object : ContextWrapper(rule.activity) {
+                override fun getSystemService(name: String): Any? = null
+            }
+            assertEquals(OverlayCopyResult.UNAVAILABLE, Observation.copyCurrentReportFromOverlay(missing))
+            assertFalse(Observation.copied)
+            assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
+            val throwing = object : ContextWrapper(rule.activity) {
+                override fun getSystemService(name: String): Any? = throw IllegalStateException("test")
+            }
+            assertEquals(OverlayCopyResult.UNAVAILABLE, Observation.copyCurrentReportFromOverlay(throwing))
+            assertFalse(Observation.copied)
+            Observation.connected = false
+            assertEquals(OverlayCopyResult.UNAVAILABLE, Observation.copyCurrentReportFromOverlay(rule.activity))
+            assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
+
+            var copies = 0
+            val overlay = EntryGateOverlayViewFactory.create(rule.activity, {}, {}, {
+                copies++
+                Observation.copyCurrentReportFromOverlay(rule.activity)
+            })
+            overlay.copyCurrentReport.visibility = android.view.View.VISIBLE
+            assertTrue(overlay.copyCurrentReport.performClick())
+            assertEquals(1, copies)
+            assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
+            overlay.dispose()
+        }
     }
 
     @Test fun doomEventsPreserveReportButForeignOrMissingRootInvalidatesAllReportState() {

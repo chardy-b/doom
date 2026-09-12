@@ -5,6 +5,8 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiScrollable
+import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
 import org.junit.Rule
@@ -55,6 +57,13 @@ class DoomUiTest {
         // visible() uses UiDevice.wait(Until.hasObject(...), 10_000), not an immediate assertion.
         visible("A deliberate start.")
         capture("04-doom-completed-demo")
+    }
+
+    @Test fun buildFooterIsReachableAfterScrollingToTheEnd() {
+        visible("THE QUIET ROOM")
+        assertTrue(UiScrollable(UiSelector().scrollable(true)).scrollToEnd(20))
+        visible("Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})")
+        assertTrue(UiScrollable(UiSelector().scrollable(true)).scrollToBeginning(20))
     }
 
     @Test fun backgroundCancelsPendingGate() {
