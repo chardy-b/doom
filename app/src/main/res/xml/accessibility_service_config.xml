@@ -5,5 +5,4 @@
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="true"
     android:isAccessibilityTool="false"
-    android:description="@string/observation_description"
-    android:packageNames="com.instagram.android" />
+    android:description="@string/observation_description" />

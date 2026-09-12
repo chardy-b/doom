@@ -11,6 +11,11 @@ import androidx.compose.runtime.setValue
 /** Main-thread state. Only fresh consent is persisted; reports and UI state are process-local. */
 object Observation {
     private const val CONSENT_KEY = "sanitized_structural_report_v1"
+    private const val ENTRY_GATE_CONSENT_KEY = "instagram_diagnostic_entry_gate_v1"
+    var gateConsent by mutableStateOf(false)
+        private set
+    var entryGateState by mutableStateOf(EntryGateState.OUTSIDE)
+        internal set
     var connected by mutableStateOf(false)
         internal set
     var report by mutableStateOf<SanitizedStructuralReport?>(null)
@@ -26,9 +31,33 @@ object Observation {
     val shadowPrediction: InstagramSurface
         get() = InstagramSurfaceShadowClassifier.classify(report)
 
+    internal fun overlayDiagnosticStatus(): OverlayDiagnosticStatus {
+        val eligible = consent && connected && report != null
+        return OverlayDiagnosticStatus(
+            surface = when (shadowPrediction) {
+                InstagramSurface.FEED -> EntryGateSurface.FEED
+                InstagramSurface.REELS -> EntryGateSurface.REELS
+                InstagramSurface.STORIES -> EntryGateSurface.STORIES
+                InstagramSurface.MESSAGING -> EntryGateSurface.MESSAGING
+                InstagramSurface.UNKNOWN -> EntryGateSurface.UNKNOWN
+            },
+            reportStatus = if (eligible) OverlayReportStatus.CAPTURED else OverlayReportStatus.UNAVAILABLE,
+            canCopyCurrentReport = eligible
+        )
+    }
+
     fun load(context: Context) {
-        consent = context.getSharedPreferences("consent", Context.MODE_PRIVATE).getBoolean(CONSENT_KEY, false)
+        val prefs = context.getSharedPreferences("consent", Context.MODE_PRIVATE)
+        consent = prefs.getBoolean(CONSENT_KEY, false)
+        gateConsent = prefs.getBoolean(ENTRY_GATE_CONSENT_KEY, false)
         if (!consent) clear()
+    }
+
+    fun setGateConsent(context: Context, accepted: Boolean) {
+        context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
+            .putBoolean(ENTRY_GATE_CONSENT_KEY, accepted).apply()
+        gateConsent = accepted
+        if (!accepted) DoomAccessibilityService.cancelEntryGate()
     }
 
     fun accept(context: Context, accepted: Boolean) {
@@ -53,18 +82,33 @@ object Observation {
         if (!canCopy) return
         val current = report ?: return
         copied = false
-        try {
-            val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
-            val clip = ClipData.newPlainText("Doom sanitized structural report", current.text)
-            // Suppress supported system clipboard previews; this does not keep the copy in Doom.
-            clip.description.extras = PersistableBundle().apply {
-                putBoolean("android.content.extra.IS_SENSITIVE", true)
-            }
-            clipboard.setPrimaryClip(clip)
-            copied = true
-        } catch (_: RuntimeException) {
-            // No exception details or report data go to logs; the UI does not claim success.
+        writeClipboard(context, current, markReviewedCopy = true)
+    }
+
+    /** Explicit overlay action. It never reveals the report or changes the reviewed-copy state. */
+    internal fun copyCurrentReportFromOverlay(context: Context): OverlayCopyResult {
+        if (!consent || !connected) return OverlayCopyResult.UNAVAILABLE
+        val current = report ?: return OverlayCopyResult.UNAVAILABLE
+        return if (writeClipboard(context, current, markReviewedCopy = false)) OverlayCopyResult.COPIED
+        else OverlayCopyResult.UNAVAILABLE
+    }
+
+    private fun writeClipboard(
+        context: Context,
+        current: SanitizedStructuralReport,
+        markReviewedCopy: Boolean
+    ): Boolean = try {
+        val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return false
+        val clip = ClipData.newPlainText("Doom sanitized structural report", current.text)
+        // Suppress supported system clipboard previews; this does not keep the copy in Doom.
+        clip.description.extras = PersistableBundle().apply {
+            putBoolean("android.content.extra.IS_SENSITIVE", true)
         }
+        clipboard.setPrimaryClip(clip)
+        if (markReviewedCopy) copied = true
+        true
+    } catch (_: RuntimeException) {
+        false
     }
 
     fun clear() {
