@@ -55,7 +55,7 @@ def main() -> None:
     if actual != candidate:
         raise SystemExit("Candidate identity mismatch")
     root = Path("app/build/reports/androidTests/overlay-evidence")
-    apk = Path("app/build/outputs/apk/debug/app-debug.apk")
+    apk = Path("app/build/reports/androidTests/supplemental-apk/app-debug.apk")
     manifest = build_manifest(root, apk, candidate, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"Bound {len(EXPECTED_SCREENSHOTS)} supplementary screenshots to {candidate}.")

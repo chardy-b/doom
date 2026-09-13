@@ -130,6 +130,16 @@ class EntryGateServiceActionTest {
         val activity: MainActivity,
     )
 
+    private enum class InstallMode { SUCCEED, FAIL, REJECT_CONNECTION }
+
+    private data class FreshService(
+        val service: DoomAccessibilityService,
+        val platform: FakePlatform,
+        val now: LongArray,
+        var installMode: InstallMode = InstallMode.SUCCEED,
+        var installs: Int = 0,
+    )
+
     private data class Outcome(
         val attached: Boolean,
         val removes: Int,
@@ -375,10 +385,14 @@ class EntryGateServiceActionTest {
         val fixture = fixture(attached = true, detachOnRemove = false)
         request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
         request(fixture.service, OverlayRemovalAction.HOME, fixture.token)
+        assertEquals(0, fixture.platform.homeCalls)
+        assertEquals(0, fixture.platform.routeCalls)
         rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
         waitFor { fixture.platform.homeCalls == 1 }
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(1, fixture.platform.homeCalls)
+        assertTrue(fixture.platform.platformCalls.indexOf("removeImmediate") <
+            fixture.platform.platformCalls.indexOf("performHome"))
     }
 
     @Test fun directDoomReturnBeatsSkipAndPreservesReportWithoutRoute() {
@@ -394,7 +408,8 @@ class EntryGateServiceActionTest {
         assertEquals(EntryGateState.OUTSIDE, gate(fixture.service).state)
     }
 
-    @Test fun foreignOrMissingForegroundSuppressesRouteAndHome() {
+    @Test fun messagesRouteRejectsForeignOrUnattributedRootAfterDetach() {
+        // This is a Messages-only foreground recheck; HOME has a separate release path.
         listOf(RootBehavior.FOREIGN, RootBehavior.NULL_PACKAGE).forEach { behavior ->
             val fixture = fixture(rootBehavior = behavior)
             request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
@@ -402,6 +417,95 @@ class EntryGateServiceActionTest {
             assertEquals(0, fixture.platform.routeCalls)
             assertEquals(0, fixture.platform.homeCalls)
             assertEquals(1, fixture.platform.recycledRoots)
+        }
+    }
+
+    @Test fun serviceCooldownSurvivesDetachAndReentryUntilExactBoundary() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertEquals(1, fresh.installs)
+                assertTrue(fresh.platform.attached)
+                assertTrue(gate(fresh.service).cooldownActive())
+                val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
+                requestOverlayRemovalWithToken(fresh.service, OverlayRemovalAction.HOME, token)
+                assertFalse(fresh.platform.attached)
+                assertEquals(1, fresh.platform.homeCalls)
+                assertEquals(0, fresh.platform.routeCalls)
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                val roots = fresh.platform.currentRootCalls
+                val generation = gate(fresh.service).generation
+                fresh.now[0] = 69_999L
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertEquals(roots, fresh.platform.currentRootCalls)
+                assertEquals(1, fresh.installs)
+                assertEquals(generation, gate(fresh.service).generation)
+                assertEquals(null, field(fresh.service, "ticket").get(fresh.service))
+                fresh.now[0] = 70_000L
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertEquals(roots + 1, fresh.platform.currentRootCalls)
+                assertEquals(2, fresh.installs)
+                assertTrue(fresh.platform.attached)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun failedServiceInstallDoesNotArmCooldown() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L, InstallMode.FAIL)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertFalse(gate(fresh.service).cooldownActive())
+                assertFalse(fresh.platform.attached)
+                assertEquals(0, fresh.platform.homeCalls)
+                assertEquals(0, fresh.platform.routeCalls)
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                fresh.installMode = InstallMode.SUCCEED
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertTrue(fresh.platform.attached)
+                assertTrue(gate(fresh.service).cooldownActive())
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun revokedAdmissionDoesNotArmCooldown() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L, InstallMode.REJECT_CONNECTION)
+            try {
+                // Model admission revocation without setGateConsent's nested cleanup: the
+                // synthetic installer makes the wired service disconnected before the
+                // post-install overlayShown/admission checks run.
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertFalse(fresh.platform.attached)
+                assertFalse(gate(fresh.service).cooldownActive())
+                assertEquals(0, fresh.platform.homeCalls)
+                assertEquals(0, fresh.platform.routeCalls)
+                Observation.connected = true
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                fresh.installMode = InstallMode.SUCCEED
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertTrue(fresh.platform.attached)
+                assertTrue(gate(fresh.service).cooldownActive())
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun recreatedServiceStartsWithoutCooldown() {
+        rule.scenario.onActivity { activity ->
+            val first = freshService(activity, 10_000L)
+            var second: FreshService? = null
+            try {
+                sendEvent(first.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertTrue(gate(first.service).cooldownActive())
+                destroyFresh(first)
+                second = freshService(activity, 10_000L)
+                sendEvent(second.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertEquals(1, second.installs)
+                assertTrue(second.platform.attached)
+                assertTrue(gate(second.service).cooldownActive())
+            } finally { second?.let(::destroyFresh) }
         }
     }
 
@@ -1165,6 +1269,62 @@ class EntryGateServiceActionTest {
             action = action,
             calls = platform.platformCalls.toList(),
         )
+    }
+
+    private fun freshService(
+        activity: MainActivity,
+        startMs: Long,
+        initialMode: InstallMode = InstallMode.SUCCEED,
+    ): FreshService {
+        Observation.accept(activity, true)
+        Observation.setGateConsent(activity, true)
+        Observation.connected = true
+        val service = DoomAccessibilityService()
+        ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+            .apply { isAccessible = true }.invoke(service, activity.applicationContext)
+        DoomAccessibilityService::class.java.getDeclaredField("instance")
+            .apply { isAccessible = true }.set(null, service)
+        val states = mutableListOf<EntryGateState>()
+        val platform = FakePlatform(false, true, RootBehavior.INSTAGRAM,
+            MessagesRouteResult.CLICKED, states)
+        platform.stateReader = { gate(service).state }
+        platform.revokeInsideRoot = { }
+        field(service, "overlayPlatform").set(service, platform)
+        val now = longArrayOf(startMs)
+        val clock: () -> Long = { now[0] }
+        field(service, "monotonicClock").set(service, clock)
+        val cooldown = field(gate(service), "cooldown").get(gate(service))
+        field(cooldown, "monotonicNowMs").set(cooldown, clock)
+        lateinit var fresh: FreshService
+        fresh = FreshService(service, platform, now, initialMode)
+        field(service, "overlayWindowInstaller").set(
+            service,
+            { _: WindowManager, _: View, _: WindowManager.LayoutParams ->
+                fresh.installs++
+                when (fresh.installMode) {
+                    InstallMode.SUCCEED -> platform.attached = true
+                    InstallMode.FAIL -> throw IllegalStateException("synthetic install failure")
+                    InstallMode.REJECT_CONNECTION -> {
+                        platform.attached = true
+                        Observation.connected = false
+                    }
+                }
+            }
+        )
+        return fresh
+    }
+
+    private fun destroyFresh(fresh: FreshService) {
+        try {
+            invoke(fresh.service, "cancelAndBypass")
+        } finally {
+            try {
+                fresh.service.onDestroy()
+            } finally {
+                DoomAccessibilityService::class.java.getDeclaredField("instance")
+                    .apply { isAccessible = true }.set(null, null)
+            }
+        }
     }
 
     private fun fixture(

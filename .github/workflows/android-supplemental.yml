@@ -1,0 +1,100 @@
+name: Android supplemental CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doom-android-supplemental-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  supplemental:
+    name: Supplemental UI and cross-app fixture evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - name: Initialize exact-candidate supplemental provenance
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p evidence
+          printf 'candidate=%s\nevent_sha=%s\nrepository=%s\nworkflow=%s\nrun_id=%s\nrun_attempt=%s\nscope=synthetic-doom-ui-not-instagram\n' "$CANDIDATE_SHA" "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_WORKFLOW" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > evidence/supplemental-context.txt
+          printf 'candidate=%s\nevent_sha=%s\nrepository=%s\nworkflow=%s\nrun_id=%s\nrun_attempt=%s\nscope=original-test-apks-not-instagram\n' "$CANDIDATE_SHA" "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_WORKFLOW" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > evidence/fixture-context.txt
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - name: Install API 35 packages
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Deterministic supplemental preparation
+        id: preparation
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --stacktrace :app:assembleDebug :app:assembleDebugAndroidTest :fixtureapp:assembleDebug :fixtureapp:lintDebug :fixturegate:assembleDebug :fixturegate:testDebugUnitTest :fixturegate:lintDebug :fixturegate:assembleDebugAndroidTest 2>&1 | tee evidence/supplemental-preparation.log
+      - name: Enable runner-group KVM access
+        run: sudo chgrp "$(id -gn)" /dev/kvm && sudo chmod 660 /dev/kvm
+      - name: Run supplemental components on one API 35 emulator
+        id: supplemental
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          disable-animations: true
+          script: bash scripts/ci-supplemental.sh
+      - name: Record bounded supplemental result summary
+        if: always()
+        env:
+          PREPARATION_OUTCOME: ${{ steps.preparation.outcome }}
+          EMULATOR_OUTCOME: ${{ steps.supplemental.outcome }}
+        run: |
+          printf 'preparation_outcome=%s\nemulator_outcome=%s\n' "$PREPARATION_OUTCOME" "$EMULATOR_OUTCOME" >> evidence/supplemental-context.txt
+          cat evidence/overlay-exit.txt evidence/fixture-exit.txt 2>/dev/null || printf '%s\n' 'Components not executed.'
+      - name: Preserve supplemental overlay evidence and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: doom-overlay-ui-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            evidence/supplemental-context.txt
+            evidence/supplemental-preparation.log
+            evidence/overlay-exit.txt
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve fixture evidence and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: doom-fixture-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            evidence/fixture-context.txt
+            evidence/supplemental-preparation.log
+            evidence/fixture-exit.txt
+            fixture-evidence/
+            fixtureapp/build/reports/
+            fixturegate/build/reports/
+            fixturegate/build/test-results/
+            fixtureapp/build/outputs/apk/debug/
+            fixturegate/build/outputs/apk/debug/
+          if-no-files-found: error
+          retention-days: 14
