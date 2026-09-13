@@ -618,7 +618,7 @@ class EntryGateServiceActionTest {
     }
 
     @Test fun enabledTraceUsesTheRealRemovalBoundaryWithoutChangingReleasedAction() {
-        val fixture = fixture()
+        val fixture = fixture(attached = true, detachOnRemove = true)
         rule.scenario.onActivity {
             val now = android.os.SystemClock.elapsedRealtime()
             RemovalTraceStore.process.arm(now)
