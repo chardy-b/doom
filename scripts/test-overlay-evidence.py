@@ -52,23 +52,20 @@ class OverlayEvidenceManifestTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE.build_manifest(self.overlay, self.apk, "A" * 40, "123", "2")
 
-    def test_ci_keeps_supplementary_artifacts_out_of_canonical_evidence(self):
-        ci = (ROOT / "scripts/ci-device.sh").read_text()
-        self.assertIn("app/build/reports/androidTests/overlay-evidence", ci)
-        self.assertIn("doom-overlay-ui-evidence", ci)
-        self.assertNotIn("evidence/overlay-evidence", ci)
-        self.assertIn("python3 scripts/evidence-manifest.py", ci)
-        self.assertIn("python3 scripts/overlay-evidence-manifest.py", ci)
+    def test_supplemental_runner_pulls_before_manifest_and_canonical_is_clean(self):
+        canonical = (ROOT / "scripts/ci-device.sh").read_text()
+        runner = (ROOT / "scripts/ci-overlay.sh").read_text()
+        self.assertNotIn("doom-overlay-ui-evidence", canonical)
+        self.assertNotIn("overlay-evidence-manifest.py", canonical)
+        pull = "adb pull /sdcard/Download/doom-overlay-ui-evidence/."
+        self.assertLess(runner.index(pull), runner.index("python3 scripts/overlay-evidence-manifest.py"))
+        self.assertIn("supplemental-apk/app-debug.apk", runner)
 
-    def test_ci_pulls_overlay_artifacts_before_generating_their_manifest(self):
-        ci = (ROOT / "scripts/ci-device.sh").read_text()
-        manifest = ci.index("python3 scripts/overlay-evidence-manifest.py")
-        pull = "adb pull /sdcard/Download/doom-overlay-ui-evidence/. app/build/reports/androidTests/overlay-evidence/"
-        self.assertGreaterEqual(ci[:manifest].count(pull), 2,
-                                "trap pull plus successful-path pull are both required")
-        self.assertLess(ci.rfind(pull, 0, manifest), manifest)
-        self.assertLess(ci.index("python3 scripts/evidence-manifest.py"),
-                         ci.index(pull, ci.index("./gradlew")))
+    def test_missing_or_empty_apk_is_rejected(self):
+        self.apk.unlink()
+        with self.assertRaises(ValueError): self.manifest()
+        self.apk.write_bytes(b"")
+        with self.assertRaises(ValueError): self.manifest()
 
 
 if __name__ == "__main__":

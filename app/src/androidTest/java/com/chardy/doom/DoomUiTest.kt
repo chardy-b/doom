@@ -59,7 +59,7 @@ class DoomUiTest {
         capture("04-doom-completed-demo")
     }
 
-    @Test fun buildFooterIsReachableAfterScrollingToTheEnd() {
+    @Test @SupplementalEvidence fun buildFooterIsReachableAfterScrollingToTheEnd() {
         visible("THE QUIET ROOM")
         assertTrue(UiScrollable(UiSelector().scrollable(true)).scrollToEnd(20))
         visible("Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})")

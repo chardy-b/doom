@@ -26,7 +26,7 @@ class EntryGateOverlayUiTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val device get() = UiDevice.getInstance(instrumentation)
 
-    @Test fun nativeOverlayIsDoomStyledSemanticAndTargeted() {
+    @Test @SupplementalEvidence fun nativeOverlayIsDoomStyledSemanticAndTargeted() {
         var ui: EntryGateOverlayUi? = null
         rule.scenario.onActivity { activity ->
             ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
@@ -49,7 +49,7 @@ class EntryGateOverlayUiTest {
         }
     }
 
-    @Test fun largeFontAndLandscapeKeepWrappingActionsReachable() {
+    @Test @SupplementalEvidence fun largeFontAndLandscapeKeepWrappingActionsReachable() {
         rule.scenario.onActivity { activity ->
             listOf(
                 Triple(320, 640, Configuration.ORIENTATION_PORTRAIT),
@@ -90,7 +90,7 @@ class EntryGateOverlayUiTest {
         }
     }
 
-    @Test fun supplementaryScreenshotsEstablishEachNamedStateAndRestoreConfiguration() {
+    @Test @SupplementalEvidence fun supplementaryScreenshotsEstablishEachNamedStateAndRestoreConfiguration() {
         val originalFontScale = device.executeShellCommand("settings get system font_scale")
             .trim().takeIf { it.matches(Regex("[0-9]+(?:\\.[0-9]+)?")) } ?: "1.0"
         val originalRotation = device.displayRotation
@@ -130,7 +130,7 @@ class EntryGateOverlayUiTest {
         }
     }
 
-    @Test fun supplementaryFooterScreenshotScrollsOnlyInItsSeparateTest() {
+    @Test @SupplementalEvidence fun supplementaryFooterScreenshotScrollsOnlyInItsSeparateTest() {
         val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
         val scroll = UiScrollable(UiSelector().scrollable(true))
         try {

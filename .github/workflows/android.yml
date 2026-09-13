@@ -28,7 +28,9 @@ jobs:
           ref: ${{ env.CANDIDATE_SHA }}
           persist-credentials: false
       - name: Verify candidate
-        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
@@ -40,10 +42,20 @@ jobs:
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
       - name: Install API 35 packages
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Host source and evidence checks
+        run: |
+          python3 -B scripts/test-ci-isolation.py
+          python3 -B scripts/test-structural-lifecycle.py
+          python3 -B scripts/test-overlay-evidence.py
+          python3 -B scripts/test-fixture-evidence.py
+          python3 -B scripts/test_wil155_host.py
+          python3 -B scripts/test-removal-trace.py
+          python3 -B scripts/test-internal-signing.py
       - name: Tests, lint and diagnostic APK
         run: |
-          python3 scripts/test-internal-signing.py
-          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+          set -o pipefail
+          mkdir -p app/build/reports
+          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest 2>&1 | tee app/build/reports/baseline-preparation.log
       - name: Upload diagnostic APK (not real-Instagram validation)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -73,7 +85,8 @@ jobs:
       - name: Initialize provenance before emulator provisioning
         run: |
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          mkdir -p evidence
+          test -z "$(git status --porcelain)"
+          mkdir -p evidence app/build/reports/androidTests
           printf 'candidate=%s\nworkflow_ref=%s\nrun_id=%s\nevidence_kind=doom-demo-only-not-instagram\n' "$CANDIDATE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" > evidence/context.txt
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
@@ -84,6 +97,12 @@ jobs:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
       - name: Set up Android SDK tools
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - name: Install API 35 packages
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Compile canonical APK and Android tests before emulator
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --stacktrace :app:assembleDebug :app:assembleDebugAndroidTest 2>&1 | tee app/build/reports/androidTests/device-preparation.log
       - name: Enable runner-group KVM access
         run: |
           sudo chgrp "$(id -gn)" /dev/kvm
@@ -126,59 +145,6 @@ jobs:
             evidence/instrumentation.log
             evidence/screenshots/
             app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
           if-no-files-found: error
           retention-days: 7
-
-  fixture:
-    name: Cross-app fixture evidence
-    needs: baseline
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ env.CANDIDATE_SHA }}
-          persist-credentials: false
-      - name: Initialize fixture provenance
-        run: |
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          mkdir -p evidence
-          printf 'candidate=%s\nevent_sha=%s\nrun_id=%s\nscope=original-test-apks-not-instagram\n' "$CANDIDATE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" > evidence/fixture-context.txt
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
-        with:
-          cache-read-only: ${{ github.event_name == 'pull_request' }}
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
-      - name: Enable runner-group KVM access
-        run: |
-          sudo chgrp "$(id -gn)" /dev/kvm
-          sudo chmod 660 /dev/kvm
-      - name: Exercise real fixture accessibility overlay
-        id: fixture
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          disable-animations: true
-          script: bash scripts/ci-fixture.sh
-      - name: Record fixture outcome
-        if: always()
-        env:
-          FIXTURE_OUTCOME: ${{ steps.fixture.outcome }}
-        run: printf 'fixture_outcome=%s\n' "$FIXTURE_OUTCOME" >> evidence/fixture-context.txt
-      - name: Preserve actual fixture evidence and failure diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: doom-fixture-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            evidence/fixture-context.txt
-            fixture-evidence/
-          if-no-files-found: error
-          retention-days: 14

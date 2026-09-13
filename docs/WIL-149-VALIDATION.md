@@ -1,3 +1,9 @@
+
+## Current WIL-181 CI boundary (2026-09-13)
+
+This document includes historical WIL-149 evidence below; those records are not WIL-181 validation. The signer-compatible `Android diagnostic CI` workflow now owns canonical baseline and API 35 instrumentation. `Android supplemental CI` independently runs the five explicitly marked synthetic UI methods and the independent fixture on one emulator. Supplemental failure remains visible and requires manual severity classification, but cannot by itself change the canonical workflow conclusion or authorize signing. Privacy, safety, core-action, and provenance findings remain blockers regardless of lane.
+
+Configured Codex Cloud may perform Java 17/SDK 35 no-emulator unit, lint, assembly, and Android-test compilation. GitHub Actions owns emulator/device execution, signing, and release. Canonical evidence has exactly four Doom-owned screenshots; supplemental overlay evidence has exactly six and fixture evidence exactly thirteen. Each workflow records the source SHA and digest of the APK it actually tested. Independent debug builds may differ and supplemental APKs are never signer input.
 # WIL-149 Stage B diagnostic entry-gate validation
 
 ## Scope

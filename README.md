@@ -13,9 +13,9 @@ Native Kotlin/Compose diagnostic for WIL-149. With fresh explicit consent, it bu
 - **Explicit copy boundary:** reports are hidden until **Reveal local report** in the main app. **Copy reviewed report** still requires reveal. The overlay's optional **Copy current report** action rechecks current consent, connection and report synchronously, copies only that bounded report through the same sensitive clipboard sink, and never reveals it in the overlay. Clipboard contents leave Doom and cannot be recalled by clearing Doom.
 - **Demo and fixture:** the demo gate stays inside Doom, with immediate simulated messages/leave and cancellation on background/lock. Separate `:fixtureapp` and `:fixturegate` test-only APKs exercise an accessibility overlay against original fake screens; they are not dependencies of `:app`. See [fixture scope and CI evidence](docs/FIXTURE.md). Fixture/demo evidence cannot establish Instagram support.
 
-## Build and test (CI only)
+## Build and test
 
-GitHub-hosted CI runs these tasks; Android builds/tests/emulators do not run on the agent host:
+The configured Codex Cloud Java 17/SDK 35 environment may run no-emulator unit tests, lint, assembly, and Android-test compilation. GitHub Actions alone owns emulator instrumentation, signing, and release:
 
 ```text
 :app:assembleDebug
@@ -24,7 +24,7 @@ GitHub-hosted CI runs these tasks; Android builds/tests/emulators do not run on 
 :app:connectedDebugAndroidTest
 ```
 
-The package is `com.chardyb.doom`. Instrumented tests use a test-only shell capture on the disposable CI emulator to retain clearly labelled Doom-owned demo screens under `/sdcard/Download/doom-ci-evidence/`, outside app-uninstall cleanup. The production observer never takes screenshots and has no storage/capture permissions. Baseline CI gates the emulator job; artifacts bind the tested source SHA to APK size/checksum and genuine screenshots. Initial bootstrap runs device evidence after baseline on the same PR because no dispatch workflow exists on main yet. No APK/build pass is implied by this document.
+The package is `com.chardyb.doom`. Instrumented tests use a test-only shell capture on the disposable CI emulator to retain clearly labelled Doom-owned demo screens under `/sdcard/Download/doom-ci-evidence/`, outside app-uninstall cleanup. The production observer never takes screenshots and has no storage/capture permissions. Canonical baseline CI gates canonical emulator evidence. An independent supplemental workflow runs exactly five marked synthetic UI tests and the cross-app fixture; its red conclusion stays visible but does not alter canonical signer eligibility. Canonical evidence retains four screenshots, while supplemental overlay and fixture evidence retain six and thirteen respectively. Each run binds its own APK digest to the same source SHA; independently built APK bytes are not assumed identical. Initial bootstrap runs device evidence after baseline on the same PR because no dispatch workflow exists on main yet. No APK/build pass is implied by this document.
 
 CI assigns builds a monotonic `versionCode` from `GITHUB_RUN_NUMBER`. A separate, manual workflow on trusted `main` can sign an exact successful Android CI device-evidence artifact with a stable **internal-test** identity. It revalidates GitHub run provenance and the complete evidence manifest, rejects unsafe or duplicate archive entries, proves that non-signature APK payload entries remain identical, pins the certificate fingerprint, and publishes signing evidence. Signing secrets are scoped to the `internal-signing` environment, whose deployment policy permits only `main`; pull-request workflows do not receive them. This internal identity is not the future production key.
 
@@ -32,7 +32,7 @@ Tests were written before implementation. The host source suite first reported f
 
 Synthetic roots enter the private collector directly; connection tests supply a Context without OS binding. These tests do not prove real OS callback timing, process-kill behavior or actual Instagram metadata. Process-start defaults and absence of report persistence are additionally source-guarded. Clipboard tests use synthetic reports and clean their clipboard afterward. Runtime service action tests use the production fake-platform seam to exercise detach ordering and safety races. The exact-four demo screenshot, foreground verification, APK checksum, candidate-SHA and fixture evidence contracts remain unchanged. Supplementary evidence, when exact-head CI runs, contains six Doom-owned UI states with real font-scale/landscape/footer setup; it is not Instagram or report evidence. No diagnostic report is captured as CI screenshot evidence.
 
-Pure Kotlin/JVM tests can run directly with a host Kotlin compiler and JUnit, without Gradle or Android. Android compilation, lint, assembly and instrumentation remain CI-only. Other host checks are source inspection, `python3 scripts/test-structural-lifecycle.py`, `python3 scripts/test-fixture-evidence.py`, shell syntax, XML parsing and `git diff --check`. No local Gradle, Android, adb, credentials, commit, push or Linear update is needed. See [implementation validation](docs/WIL-149-VALIDATION.md) for this working-tree check record and CI-only risks.
+Pure Kotlin/JVM tests can run directly with the pinned host compiler. Configured Codex Cloud may also run Gradle without an emulator; device instrumentation remains GitHub-only. Other host checks are source inspection, `python3 scripts/test-structural-lifecycle.py`, `python3 scripts/test-fixture-evidence.py`, shell syntax, XML parsing and `git diff --check`. No local Gradle, Android, adb, credentials, commit, push or Linear update is needed. See [implementation validation](docs/WIL-149-VALIDATION.md) for this working-tree check record and CI-only risks.
 
 ## Try the diagnostic
 

@@ -99,6 +99,25 @@ class InternalSigningTest(unittest.TestCase):
     def test_real_evidence_manifest_schema_is_accepted(self) -> None:
         self.assertEqual(self.validate(), self.evidence / "doom-diagnostic.apk")
 
+    def test_source_eligibility_is_canonical_only_and_needs_no_supplemental_result(self) -> None:
+        self.assertNotIn("supplemental", self.source_run)
+        self.assertEqual(self.validate(), self.evidence / "doom-diagnostic.apk")
+        for path, status, conclusion in (
+            (".github/workflows/android-supplemental.yml", "completed", "success"),
+            (".github/workflows/android.yml", "completed", "failure"),
+            (".github/workflows/android.yml", "completed", "cancelled"),
+            (".github/workflows/android.yml", "in_progress", None),
+        ):
+            self.source_run.update(workflow_path=path, status=status, conclusion=conclusion)
+            self._write_contracts()
+            with self.assertRaises(VALIDATOR.ValidationError):
+                self.validate()
+            self.source_run.update(
+                workflow_path=".github/workflows/android.yml",
+                status="completed",
+                conclusion="success",
+            )
+
     def test_extended_manifest_with_auxiliary_files_is_accepted(self) -> None:
         for name in VALIDATOR.AUXILIARY_EVIDENCE_FILES:
             path = self.evidence / name
