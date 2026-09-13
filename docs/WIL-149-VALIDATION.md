@@ -2,7 +2,7 @@
 
 ## Scope
 
-This working tree started exactly at `9bf29169271010d9b36c8d6e316c97f46ed49795`. The feature remains unverified, default-off, and separately consented. It does not claim protection or enable a production rollout.
+This working tree started exactly at `014fa1006944e28b8225c81404c3da3495596377`. The feature remains unverified, default-off, and separately consented. It does not claim protection or enable a production rollout.
 
 Android opens Instagram normally. On the first bounded Instagram sample in a foreground session:
 
@@ -16,21 +16,27 @@ Android opens Instagram normally. On the first bounded Instagram sample in a for
 
 The overlay offers a primary **Skip to messages** action and secondary **Leave Instagram** action. Skip physically removes the overlay before one best-effort `ACTION_VIEW` attempt to `https://www.instagram.com/direct/inbox/`, targeted only to `com.instagram.android` with `FLAG_ACTIVITY_NEW_TASK`; normal return is `ATTEMPTED`, never verified inbox success. Leave physically removes the overlay before invoking only `GLOBAL_ACTION_HOME`. The implementation never clicks an Instagram node, dispatches gestures, guesses a deep link, or uses a browser/chooser fallback.
 
+## WIL-182 watchdog repair
+
+The first confirmed phone defect was an overlay disappearing about one second after Instagram opened without user action. The phone did not capture the root/package sequence, so this validation does not attribute the event with certainty. The repaired boundary keeps delivered foreign-package accessibility events authoritative and immediate. During the visible overlay episode, the watchdog treats a non-null foreign active-root package as confirmed foreign and fails open immediately. A null package or active-root inspection exception is unattributed uncertainty: it is retained for less than 150 monotonic milliseconds from the last confirmed-safe moment, then fails open. Instagram or a positively identified Doom return refreshes that safe moment. This bounded policy keeps a single transient sample from detaching the overlay; scheduling and physical removal timing remain device evidence questions. The five-second visible timer, cooldown, consent, collection scope, and actions are unchanged.
+
 ## Changed files
 
 - `app/src/main/java/com/chardy/doom/InstagramEntryGate.kt` — pure generation-ticket policy, classifier-independent Instagram trigger, monotonic visible-time deadline, stale-callback rejection, bounded duration, and process-local 60-second admission cooldown.
+- `app/src/main/java/com/chardy/doom/OverlayForegroundWatchdog.kt` — pure monotonic policy distinguishing confirmed foreign roots from bounded unattributed-root uncertainty.
 - `app/src/test/java/com/chardy/doom/InstagramEntryGateTest.kt` — focused tests for default-off behavior, visible timing, DM/unknown diagnostic pauses, repeated samples, revocation, stale tickets, invalid time/duration, skip, exact cooldown boundaries, session resets, and rejected/stale admissions.
+- `app/src/test/java/com/chardy/doom/OverlayForegroundWatchdogTest.kt` — deterministic transient-null, monotonic-boundary, foreign-root, and verified-Doom-return policy tests.
 - `app/src/main/java/com/chardy/doom/OverlayRemovalPolicy.kt` and its unit test — fake removal-failure/retry policy; no action is released before confirmed detachment.
 - `app/src/main/java/com/chardy/doom/EntryGateOverlayView.kt` — native Doom-styled, semantic overlay with live status/copy controls and explicit skip/leave callbacks.
 - `app/src/main/java/com/chardy/doom/OverlayCallbackGuard.kt`, `EntryGateOverlayModel.kt`, `BreathingVisuals.kt`, `PixelBreathingView.kt` — pure lifecycle/presentation contracts and timer-free Canvas rendering.
 - `app/src/main/java/com/chardy/doom/InstagramInboxLauncher.kt` — constant package-targeted, best-effort inbox adapter.
-- `app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt` — real default-off `TYPE_ACCESSIBILITY_OVERLAY`, broad package-event session boundaries, Instagram-only traversal, monotonic clock seam, cooldown-before-ticket/root/report checks, 50 ms watchdog, countdown, remove-before-action ordering, and lifecycle cleanup.
+- `app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt` — real default-off `TYPE_ACCESSIBILITY_OVERLAY`, broad package-event session boundaries, Instagram-only traversal, monotonic clock seam, cooldown-before-ticket/root/report checks, 50 ms watchdog with bounded active-root uncertainty, countdown, remove-before-action ordering, and lifecycle cleanup.
 - `app/src/main/java/com/chardy/doom/Observation.kt` — independent default-false persisted gate consent, compact live status, and explicit current-report copy boundary.
 - `app/src/main/java/com/chardy/doom/MainActivity.kt` — separate opt-in, state display, and corrected disclosure.
 - `app/src/main/res/xml/accessibility_service_config.xml` — removes the Instagram package filter so foreign package events can synchronously end a session; tree traversal remains Instagram-only.
 - `app/src/main/res/values/strings.xml` — discloses broad package-event metadata, Instagram-only traversal, the optional overlay, and fail-open limits.
 - `app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt` — updates disclosures, verifies default-off independent consent, constructs the real overlay content, and covers current-report clipboard denial/replacement/revocation cases.
-- `app/src/androidTest/java/com/chardy/doom/EntryGateServiceActionTest.kt` — fake-platform runtime coverage for detach ordering, token races, safety vetoes, direct return, route failure, foreground suppression, HOME arbitration and retry exhaustion.
+- `app/src/androidTest/java/com/chardy/doom/EntryGateServiceActionTest.kt` — fake-platform runtime coverage for detach ordering, token races, safety vetoes, direct return, route failure, foreground suppression, HOME arbitration, retry exhaustion, and the watchdog policy through the service-owned boundary.
 - `app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt`, `DoomUiTest.kt`, `InstagramInboxLauncherTest.kt` — CI-bound six-state Doom-owned capture scenarios, separate scroll-to-end footer verification, layout configuration checks and API-35 Intent contract.
 - `scripts/test-structural-lifecycle.py` — source guards for the overlay boundary, remove-before-action ordering, watchdog cleanup, Instagram-only tree access, default-off policy, and cooldown ordering/clock seam.
 - `scripts/test-entry-gate-host.py`, `scripts/test-overlay-evidence.py`, `scripts/overlay-evidence-manifest.py` — reproducible host runners and isolated supplementary evidence binding.
@@ -41,8 +47,8 @@ No manifest, dependency, network, backup, fixture implementation, workflow, or c
 
 ## Executed host verification
 
-- `python3 -B scripts/test-entry-gate-host.py`: **64/64 passed**, including cooldown boundary, session-reset, explicit-action, and stale-admission tests.
-- `python3 -B scripts/test-structural-lifecycle.py`: **30/30 passed**.
+- `python3 -B scripts/test-entry-gate-host.py`: **72/72 passed**, including watchdog uncertainty, exact last-safe boundaries, rollback, reset, and foreign-root policy boundaries.
+- `python3 -B scripts/test-structural-lifecycle.py`: **31/31 passed**.
 - `python3 -B scripts/test-overlay-evidence.py`: **5/5 passed**.
 - `python3 -B scripts/test-fixture-evidence.py`: **21/21 passed**.
 - `python3 -B scripts/test_wil155_host.py`: **5/5 passed**.
@@ -59,6 +65,7 @@ The implementation is uncommitted by policy, so no final candidate SHA is claime
 ## Review repairs
 
 - Removal is not treated as successful after a `WindowManager` exception. The service uses `removeViewImmediate`, verifies `View.isAttachedToWindow`, retains the view and manager while attached, retries every 50 ms up to 20 attempts, and disables the service without releasing Home/completion/bypass actions if detachment cannot be confirmed.
+- The watchdog no longer equates one unattributed active-root sample with a foreign foreground. Null or root-inspection uncertainty receives less than 150 monotonic milliseconds from the last confirmed-safe moment; a non-null foreign package and every authoritative foreign accessibility event still fail open immediately.
 - Foreign-window and safety cleanup override pending Home or completion. `GLOBAL_ACTION_HOME`, gate completion, and bypass state changes occur only after confirmed physical detachment.
 - A positively identified return to Doom overrides automatic timer completion so the gate session resets while the report remains available; explicit Skip/Leave and foreign-window safety cleanup still override report preservation.
 - Android instrumentation now includes runtime fake-platform action-order tests and the real overlay factory/layout paths. The Intent, fake detach boundary, top-resumed checks, draw waits and configuration restoration are still unexecuted here; Android compilation, actual attachment/touch dispatch, active-root behavior, watchdog timing, TalkBack behavior and Instagram routing remain GitHub/phone evidence.

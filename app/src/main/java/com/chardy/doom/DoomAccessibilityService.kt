@@ -26,6 +26,7 @@ class DoomAccessibilityService : AccessibilityService() {
         private const val INSTAGRAM = "com.instagram.android"
         private const val GATE_DURATION_MS = 5_000L
         private const val WATCHDOG_INTERVAL_MS = 50L
+        private const val WATCHDOG_UNCERTAINTY_GRACE_MS = 150L
         private const val REMOVAL_RETRY_INTERVAL_MS = 50L
         private const val MAX_REMOVAL_ATTEMPTS = 20
         private var instance: DoomAccessibilityService? = null
@@ -58,6 +59,11 @@ class DoomAccessibilityService : AccessibilityService() {
     private var completion: Runnable? = null
     private var removalRetry: Runnable? = null
     private var mainActivityReturnObserved = false
+    private val foregroundWatchdog = OverlayForegroundWatchdog(
+        instagramPackage = INSTAGRAM,
+        doomPackage = "com.chardyb.doom",
+        uncertaintyGraceMs = WATCHDOG_UNCERTAINTY_GRACE_MS,
+    )
     private val removalPolicy = OverlayRemovalPolicy(MAX_REMOVAL_ATTEMPTS)
     private val callbackGuard = OverlayCallbackGuard()
     private var overlayToken: OverlayCallbackToken? = null
@@ -267,6 +273,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 requestSafetyCleanup(OverlayRemovalAction.BYPASS)
                 return
             }
+            foregroundWatchdog.reset(shownAt)
             renderOverlay(activeTicket, token)
             publishGateState()
             completion = Runnable {
@@ -278,16 +285,22 @@ class DoomAccessibilityService : AccessibilityService() {
                 override fun run() {
                     if (overlay == null || !callbackGuard.acceptsVisible(token)) return
                     try {
-                        val activeRoot = rootInActiveWindow
                         val packageName = try {
-                            activeRoot?.packageName?.toString()
-                        } finally {
-                            activeRoot?.recycle()
+                            val activeRoot = rootInActiveWindow
+                            try {
+                                activeRoot?.packageName?.toString()
+                            } finally {
+                                activeRoot?.recycle()
+                            }
+                        } catch (_: RuntimeException) {
+                            null
                         }
-                        // if (packageName != INSTAGRAM) fails open unless this is a verified Doom return.
-                        if (packageName != INSTAGRAM &&
-                            !(packageName == applicationContext.packageName && mainActivityReturnObserved)
-                        ) {
+                        val decision = foregroundWatchdog.observe(
+                            monotonicClock(),
+                            packageName,
+                            packageName == applicationContext.packageName && mainActivityReturnObserved,
+                        )
+                        if (decision == OverlayForegroundDecision.FAIL_OPEN) {
                             failOpen()
                             return
                         }

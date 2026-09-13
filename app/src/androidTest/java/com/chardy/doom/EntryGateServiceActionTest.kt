@@ -221,6 +221,29 @@ class EntryGateServiceActionTest {
         }
     }
 
+    @Test fun watchdogUsesExactShownAtBoundaryAndVetoesForeignRoot() {
+        val fixture = fixture()
+        val shownAt = 1_000L
+        rule.scenario.onActivity {
+            val watchdog = field(fixture.service, "foregroundWatchdog")
+                .get(fixture.service) as OverlayForegroundWatchdog
+            watchdog.reset(shownAt)
+            assertEquals(
+                OverlayForegroundDecision.KEEP_UNCERTAIN,
+                watchdog.observe(shownAt + 149L, null, verifiedDoomReturn = false),
+            )
+            assertEquals(
+                OverlayForegroundDecision.FAIL_OPEN,
+                watchdog.observe(shownAt + 150L, null, verifiedDoomReturn = false),
+            )
+            assertEquals(
+                OverlayForegroundDecision.FAIL_OPEN,
+                watchdog.observe(shownAt + 151L, "com.example.foreign", verifiedDoomReturn = false),
+            )
+        }
+        instrumentation.waitForIdleSync()
+    }
+
     @Test fun removalExhaustionVetoesPendingHomeAndLateDetach() {
         val fixture = fixture(attached = true, detachOnRemove = false)
         request(fixture.service, OverlayRemovalAction.HOME, fixture.token)

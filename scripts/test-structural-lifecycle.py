@@ -180,13 +180,33 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
 
     def test_gate_timer_watchdog_and_completion_fail_open(self):
         self.assertIn("WATCHDOG_INTERVAL_MS = 50L", SERVICE)
+        self.assertIn("WATCHDOG_UNCERTAINTY_GRACE_MS = 150L", SERVICE)
         self.assertIn("entryGate.overlayShown(shownAt, activeTicket)", SERVICE)
+        self.assertIn("foregroundWatchdog.reset(shownAt)", SERVICE)
         completion = SERVICE.split("completion = Runnable", 1)[1].split("watchdog =", 1)[0]
         self.assertIn("requestOverlayRemoval(OverlayRemovalAction.COMPLETE, token)", completion)
-        watchdog = SERVICE.split("watchdog = object", 1)[1].split("catch (_: RuntimeException)", 1)[0]
+        watchdog = SERVICE.split("watchdog = object", 1)[1].split(
+            "}.also { handler.post(it) }", 1
+        )[0]
         self.assertIn("activeRoot?.recycle()", watchdog)
-        self.assertIn("if (packageName != INSTAGRAM)", watchdog)
+        self.assertRegex(watchdog, r'catch \(_:\s*RuntimeException\)\s*\{\s*null\s*\}')
+        self.assertIn("foregroundWatchdog.observe", watchdog)
+        self.assertIn("OverlayForegroundDecision.FAIL_OPEN", watchdog)
         self.assertIn("handler.postDelayed(this, WATCHDOG_INTERVAL_MS)", watchdog)
+
+    def test_watchdog_uncertainty_is_bounded_and_foreign_roots_are_not_graced(self):
+        policy = (REPO / "app/src/main/java/com/chardy/doom/OverlayForegroundWatchdog.kt").read_text()
+        self.assertIn("uncertaintyGraceMs in 1L..249L", policy)
+        self.assertIn("lastSafeAtMs", policy)
+        self.assertIn("fun reset(shownAtMs: Long)", policy)
+        self.assertIn("nowMs - lastSafe < uncertaintyGraceMs", policy)
+        self.assertIn("if (packageName != null)", policy)
+        self.assertLess(policy.index("if (packageName != null)"), policy.index("val lastSafe = lastSafeAtMs ?: return OverlayForegroundDecision.FAIL_OPEN"))
+        install = SERVICE.split("manager.addView(box, parameters)", 1)[1].split(
+            "completion = Runnable", 1
+        )[0]
+        self.assertLess(install.index("entryGate.admitForDisplay(activeTicket)"),
+                        install.index("foregroundWatchdog.reset(shownAt)"))
 
     def test_overlay_actions_wait_for_confirmed_physical_detachment(self):
         removal = SERVICE.split("private fun requestOverlayRemoval", 1)[1].split(
