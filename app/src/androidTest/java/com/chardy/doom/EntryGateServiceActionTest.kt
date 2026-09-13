@@ -143,11 +143,6 @@ class EntryGateServiceActionTest {
     )
 
     @After fun cleanUp() {
-        // Disconnect the process singleton before revoking persisted consent so a fixture whose
-        // fake overlay intentionally refuses detachment cannot queue retries into the next test.
-        DoomAccessibilityService::class.java.getDeclaredField("instance")
-            .apply { isAccessible = true }
-            .set(null, null)
         rule.scenario.onActivity {
             Observation.setGateConsent(it, false)
             Observation.accept(it, false)
@@ -155,6 +150,9 @@ class EntryGateServiceActionTest {
             Observation.clear()
             RemovalTraceStore.process.clear()
         }
+        DoomAccessibilityService::class.java.getDeclaredField("instance")
+            .apply { isAccessible = true }
+            .set(null, null)
         instrumentation.waitForIdleSync()
     }
 
