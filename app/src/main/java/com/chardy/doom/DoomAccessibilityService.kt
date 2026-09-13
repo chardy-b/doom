@@ -239,6 +239,11 @@ class DoomAccessibilityService : AccessibilityService() {
                 return
             }
 
+            // An installed or closing gate already owns this episode. Instagram event roots
+            // can be transient; leave package-only foreground validation to the bounded
+            // watchdog instead of recollecting or vetoing the pending terminal action.
+            if (overlay != null) return
+
             val activeTicket = if (Observation.gateConsent) {
                 ticket ?: entryGate.beginInstagramSessionIfEligible()?.also {
                     ticket = it
@@ -414,14 +419,6 @@ class DoomAccessibilityService : AccessibilityService() {
                 return
             }
             traceRecord(RemovalTraceMark.SHOWN, now = shownAt)
-            if (!entryGate.admitForDisplay(activeTicket)) {
-                requestSafetyCleanup(
-                    OverlayRemovalAction.BYPASS,
-                    RemovalTraceMark.ADMISSION_REJECTED,
-                    now = shownAt,
-                )
-                return
-            }
             foregroundWatchdog.reset(shownAt)
             renderOverlay(activeTicket, token)
             publishGateState()
@@ -587,7 +584,8 @@ class DoomAccessibilityService : AccessibilityService() {
         val detachedView = overlay
         if (detachedView != null && overlayPlatform.isAttached(detachedView)) return
         if (detachedToken != null && overlayToken != detachedToken) return
-        val ownsDetachedEpisode = detachedToken != null && overlayToken == detachedToken
+        val ownsDetachedEpisode = detachedView != null && detachedToken != null &&
+            overlayToken == detachedToken && callbackGuard.acceptsRemoval(detachedToken)
         if (detachedToken != null) callbackGuard.detached(detachedToken)
         overlayUi?.dispose()
         overlayUi = null
@@ -620,33 +618,30 @@ class DoomAccessibilityService : AccessibilityService() {
             }
             OverlayRemovalAction.NAVIGATE_MESSAGES -> {
                 val routeTicket = detachedToken?.ticket
-                if (routeTicket == null ||
-                    !ownsDetachedEpisode ||
-                    routeTicket != ticket ||
-                    !Observation.consent || !Observation.gateConsent || !Observation.connected ||
-                    entryGate.state != EntryGateState.GATING
+                if (routeTicket == null || !ownsDetachedEpisode ||
+                    !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)
                 ) {
-                    entryGate.cancel()
+                    if (routeTicket == ticket && entryGate.state == EntryGateState.GATING) entryGate.cancel()
                     publishGateState()
                     Observation.clear()
+                    detachedToken?.let(callbackGuard::consumeDetached)
                     return
                 }
                 val root = try { overlayPlatform.currentRoot() } catch (_: RuntimeException) { null }
                 if (root == null) {
-                    entryGate.cancel()
+                    if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) entryGate.cancel()
                     publishGateState()
                     Observation.clear()
+                    callbackGuard.consumeDetached(detachedToken)
                     return
                 }
                 try {
                     val instagramForeground = root.packageName?.toString() == INSTAGRAM
-                    val rechecked = ownsDetachedEpisode &&
-                        routeTicket == ticket &&
-                        Observation.consent && Observation.gateConsent && Observation.connected &&
-                        instagramForeground &&
-                        entryGate.state == EntryGateState.GATING
-                    if (!rechecked || !entryGate.bypass(routeTicket)) {
-                        entryGate.cancel()
+                    if (!instagramForeground ||
+                        !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
+                        !entryGate.beginMessagesRoute(routeTicket)
+                    ) {
+                        if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) entryGate.cancel()
                         publishGateState()
                         Observation.clear()
                         return
@@ -655,13 +650,26 @@ class DoomAccessibilityService : AccessibilityService() {
                     Observation.clear()
                     // The router is deliberately one-shot. It either observes the selected tab,
                     // clicks the one exact actionable match, or fails closed.
-                    overlayPlatform.routeMessages(root)
+                    val result = overlayPlatform.routeMessages(root)
+                    if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.BYPASSED)) {
+                        entryGate.finishMessagesRoute(monotonicClock(), routeTicket, result)
+                    } else {
+                        entryGate.bypass(routeTicket)
+                    }
+                    publishGateState()
                 } catch (_: RuntimeException) {
-                    entryGate.cancel()
+                    if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.BYPASSED)) {
+                        entryGate.finishMessagesRoute(
+                            monotonicClock(), routeTicket, MessagesRouteResult.FAILED
+                        )
+                    } else if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) {
+                        entryGate.cancel()
+                    }
                     publishGateState()
                     Observation.clear()
                 } finally {
                     try { overlayPlatform.recycleRoot(root) } catch (_: RuntimeException) { }
+                    callbackGuard.consumeDetached(detachedToken)
                 }
             }
             OverlayRemovalAction.PRESERVE_REPORT -> {
@@ -678,11 +686,37 @@ class DoomAccessibilityService : AccessibilityService() {
                 Observation.clear()
             }
             OverlayRemovalAction.COMPLETE -> {
-                val activeTicket = ticket
-                if (activeTicket == null ||
-                    !entryGate.complete(monotonicClock(), activeTicket)
-                ) entryGate.cancel()
-                publishGateState()
+                val completeTicket = detachedToken?.ticket
+                if (completeTicket == null || !ownsDetachedEpisode ||
+                    !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)
+                ) {
+                    if (completeTicket == ticket && entryGate.state == EntryGateState.GATING) entryGate.cancel()
+                    publishGateState()
+                    detachedToken?.let(callbackGuard::consumeDetached)
+                    return
+                }
+                val root = try { overlayPlatform.currentRoot() } catch (_: RuntimeException) { null }
+                if (root == null) {
+                    if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) entryGate.cancel()
+                    publishGateState()
+                    callbackGuard.consumeDetached(detachedToken)
+                    return
+                }
+                try {
+                    val validRoot = root.packageName?.toString() == INSTAGRAM
+                    if (!validRoot || !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
+                        !entryGate.complete(monotonicClock(), completeTicket)
+                    ) {
+                        if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) entryGate.cancel()
+                    }
+                    publishGateState()
+                } catch (_: RuntimeException) {
+                    if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) entryGate.cancel()
+                    publishGateState()
+                } finally {
+                    try { overlayPlatform.recycleRoot(root) } catch (_: RuntimeException) { }
+                    callbackGuard.consumeDetached(detachedToken)
+                }
             }
             OverlayRemovalAction.HOME -> {
                 val activeTicket = ticket
@@ -694,6 +728,14 @@ class DoomAccessibilityService : AccessibilityService() {
             null -> Unit
         }
     }
+
+    private fun hasDetachedTerminalAuthority(
+        token: OverlayCallbackToken,
+        expectedState: EntryGateState,
+    ): Boolean = callbackGuard.acceptsDetached(token) && overlay == null && overlayToken == null &&
+        token.ticket == ticket && token.ticket.generation == entryGate.generation &&
+        Observation.consent && Observation.gateConsent && Observation.connected &&
+        entryGate.state == expectedState
 
     private fun cancelAndBypass() {
         requestSafetyCleanup(OverlayRemovalAction.BYPASS, RemovalTraceMark.SAFETY_OVERRIDE)

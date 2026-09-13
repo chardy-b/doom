@@ -4,16 +4,17 @@ package com.chardy.doom
 enum class EntryGateState { OUTSIDE, AWAITING, GATING, GRANTED, BYPASSED }
 enum class EntryGateSurface { FEED, REELS, STORIES, MESSAGING, UNKNOWN }
 data class GateTicket(val generation: Long)
+internal enum class MessagesRouteResult { FAILED, ALREADY_SELECTED, CLICKED }
 
 internal const val INSTAGRAM_ENTRY_COOLDOWN_MS = 60_000L
 
-/** Process-local monotonic cooldown for successfully admitted production Instagram gates. */
+/** Process-local monotonic cooldown for successful terminal Instagram actions. */
 internal class InstagramGateCooldown(
     private val monotonicNowMs: () -> Long,
     private val durationMs: Long = INSTAGRAM_ENTRY_COOLDOWN_MS
 ) {
-    private var admittedAtMs: Long? = null
-    private var lastAdmittedGeneration: Long? = null
+    private var terminalAtMs: Long? = null
+    private var lastTerminalGeneration: Long? = null
 
     init {
         require(durationMs > 0L)
@@ -22,19 +23,17 @@ internal class InstagramGateCooldown(
     fun isSuppressed(): Boolean = isSuppressed(monotonicNowMs())
 
     fun isSuppressed(nowMs: Long): Boolean {
-        val admittedAt = admittedAtMs ?: return false
-        if (nowMs < 0L || nowMs < admittedAt) return true
-        return nowMs - admittedAt < durationMs
+        val terminalAt = terminalAtMs ?: return false
+        if (nowMs < 0L || nowMs < terminalAt) return true
+        return nowMs - terminalAt < durationMs
     }
 
-    fun admit(ticket: GateTicket): Boolean = admit(ticket, monotonicNowMs())
-
-    /** Records only a current, new gate admission; rejected or stale tickets cannot arm it. */
-    fun admit(ticket: GateTicket, nowMs: Long): Boolean {
+    /** Records only a new terminal success; rejected or stale tickets cannot arm it. */
+    fun recordTerminal(ticket: GateTicket, nowMs: Long): Boolean {
         if (nowMs < 0L || isSuppressed(nowMs)) return false
-        if (lastAdmittedGeneration?.let { ticket.generation <= it } == true) return false
-        admittedAtMs = nowMs
-        lastAdmittedGeneration = ticket.generation
+        if (lastTerminalGeneration?.let { ticket.generation <= it } == true) return false
+        terminalAtMs = nowMs
+        lastTerminalGeneration = ticket.generation
         return true
     }
 }
@@ -49,6 +48,7 @@ class InstagramEntryGate(
     var generation: Long = 0
         private set
     private var visibleStartedAtMs: Long? = null
+    private var pendingMessagesAttempt: Pair<GateTicket, Long>? = null
     private val cooldown = InstagramGateCooldown(monotonicNowMs)
 
     init {
@@ -59,6 +59,7 @@ class InstagramEntryGate(
     fun beginInstagramSession(): GateTicket {
         generation++
         visibleStartedAtMs = null
+        pendingMessagesAttempt = null
         state = if (enabled()) EntryGateState.AWAITING else EntryGateState.BYPASSED
         return GateTicket(generation)
     }
@@ -88,14 +89,6 @@ class InstagramEntryGate(
         return true
     }
 
-    /** Arms the one-minute cooldown only after addView and overlayShown succeeded. */
-    fun admitForDisplay(ticket: GateTicket): Boolean {
-        if (!enabled() || !valid(ticket) || state != EntryGateState.GATING ||
-            visibleStartedAtMs == null
-        ) return false
-        return cooldown.admit(ticket)
-    }
-
     fun remainingMs(nowMs: Long, ticket: GateTicket): Long {
         val started = visibleStartedAtMs
         if (nowMs < 0L || !valid(ticket) || state != EntryGateState.GATING || started == null) return 0L
@@ -108,18 +101,43 @@ class InstagramEntryGate(
         if (!enabled() || nowMs < 0L || !valid(ticket) || state != EntryGateState.GATING ||
             started == null || nowMs < started || nowMs - started < durationMs
         ) return false
+        if (!cooldown.recordTerminal(ticket, nowMs)) return false
         visibleStartedAtMs = null
+        pendingMessagesAttempt = null
         state = EntryGateState.GRANTED
         return true
     }
 
-    fun skipToMessages(ticket: GateTicket): Boolean {
-        return bypass(ticket)
+    internal fun beginMessagesRoute(ticket: GateTicket): Boolean {
+        val started = visibleStartedAtMs
+        if (!enabled() || !valid(ticket) || state != EntryGateState.GATING || started == null) return false
+        pendingMessagesAttempt = ticket to started
+        visibleStartedAtMs = null
+        state = EntryGateState.BYPASSED
+        return true
+    }
+
+    internal fun finishMessagesRoute(
+        nowMs: Long,
+        ticket: GateTicket,
+        result: MessagesRouteResult,
+    ): Boolean {
+        val attempt = pendingMessagesAttempt
+        if (attempt?.first != ticket || !valid(ticket) || state != EntryGateState.BYPASSED) return false
+        pendingMessagesAttempt = null
+        if (!enabled() || nowMs < 0L || nowMs < attempt.second || result == MessagesRouteResult.FAILED) return false
+        return cooldown.recordTerminal(ticket, nowMs)
     }
 
     fun bypass(ticket: GateTicket): Boolean {
-        if (!valid(ticket) || state != EntryGateState.GATING) return false
+        if (!valid(ticket)) return false
+        if (state == EntryGateState.BYPASSED) {
+            pendingMessagesAttempt = null
+            return false
+        }
+        if (state != EntryGateState.GATING) return false
         visibleStartedAtMs = null
+        pendingMessagesAttempt = null
         state = EntryGateState.BYPASSED
         return true
     }
@@ -127,12 +145,14 @@ class InstagramEntryGate(
     fun leaveInstagram() {
         generation++
         visibleStartedAtMs = null
+        pendingMessagesAttempt = null
         state = EntryGateState.OUTSIDE
     }
 
     fun cancel() {
         generation++
         visibleStartedAtMs = null
+        pendingMessagesAttempt = null
         if (state != EntryGateState.OUTSIDE) state = EntryGateState.BYPASSED
     }
 

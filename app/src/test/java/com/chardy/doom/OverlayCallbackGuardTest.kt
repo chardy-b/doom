@@ -22,6 +22,9 @@ class OverlayCallbackGuardTest {
         guard.detached(token)
         assertFalse(guard.acceptsVisible(token))
         assertFalse(guard.acceptsRemoval(token))
+        assertTrue(guard.acceptsDetached(token))
+        guard.consumeDetached(token)
+        assertFalse(guard.acceptsDetached(token))
         guard.detached(token)
     }
 
@@ -31,5 +34,22 @@ class OverlayCallbackGuardTest {
         val fresh = guard.open(GateTicket(1))
         guard.detached(old)
         assertTrue(guard.acceptsVisible(fresh))
+    }
+
+    @Test fun newEpochAndSafetyInvalidationRevokeDetachedContinuation() {
+        val guard = OverlayCallbackGuard()
+        val old = guard.open(GateTicket(1))
+        guard.beginClosing(old)
+        guard.detached(old)
+        assertTrue(guard.acceptsDetached(old))
+        val fresh = guard.open(GateTicket(1))
+        assertFalse(guard.acceptsDetached(old))
+        guard.detached(old)
+        guard.consumeDetached(old)
+        assertTrue(guard.acceptsVisible(fresh))
+        guard.beginClosing(fresh)
+        guard.detached(fresh)
+        guard.invalidateVisible()
+        assertFalse(guard.acceptsDetached(fresh))
     }
 }
