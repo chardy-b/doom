@@ -12,17 +12,41 @@ OVERLAY_VIEW = (REPO / "app/src/main/java/com/chardy/doom/EntryGateOverlayView.k
 
 
 class StructuralLifecycleSourceTest(unittest.TestCase):
-    def test_other_package_events_return_before_reading_root_or_changing_samples(self):
+    def test_revocation_preflight_is_limited_to_a_visible_overlay(self):
+        event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
+        preflight = event.split("// Doom's own", 1)[0]
+        self.assertIn("if (overlay != null &&", preflight)
+        self.assertNotIn("overlay != null || ticket != null", preflight)
+
+    def test_closing_or_stale_visible_event_keeps_the_old_safety_veto(self):
         body = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
-        guard = body.split("try {", 1)[0]
-        self.assertIsNotNone(re.search(
-            r'if \(packageName != INSTAGRAM\)\s*\{.*?resetOutside\(cause = RemovalTraceMark\.EVENT_PACKAGE_RESET,.*?\)\s*return\s*\}',
-            body,
-            re.S,
-        ))
-        self.assertNotIn("Observation.record", guard)
-        self.assertNotIn("Observation.clear", guard)
-        self.assertGreater(body.index("eventRoot()"), body.index("return"))
+        branch = body.split("if (packageName != INSTAGRAM)", 1)[1]
+        stale = branch.split("val sample =", 1)[0]
+        self.assertIn("visibleToken == null || visibleTicket == null", stale)
+        self.assertIn("!callbackGuard.acceptsVisible(visibleToken)", stale)
+        self.assertGreaterEqual(stale.count("resetOutside("), 3)
+        self.assertIn("RemovalTraceMark.EVENT_PACKAGE_RESET", stale)
+        self.assertNotIn("eventRoot()", stale)
+
+    def test_other_package_events_revalidate_visible_root_without_collection(self):
+        body = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
+        branch = body.split("if (packageName != INSTAGRAM)", 1)[1]
+        self.assertIn("readPackageRoot", branch)
+        self.assertIn("overlayPlatform.eventRoot()", branch)
+        self.assertIn("foregroundWatchdog.observe", branch)
+        self.assertIn("resetOutside(cause = RemovalTraceMark.EVENT_PACKAGE_RESET", branch)
+        event_policy = branch.split("// Suppression is checked", 1)[0]
+        self.assertNotIn("collect(", event_policy)
+        self.assertLess(branch.index("callbackGuard.acceptsVisible"), branch.index("eventRoot()"))
+        self.assertLess(branch.index("eventRoot()"), branch.index("foregroundWatchdog.observe"))
+
+    def test_no_visible_gate_keeps_conservative_reset_without_root_access(self):
+        body = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
+        branch = body.split("if (packageName != INSTAGRAM)", 1)[1]
+        no_visible = branch.split("val sample =", 1)[0]
+        self.assertIn("visibleView == null", no_visible)
+        self.assertIn("resetOutside(cause = RemovalTraceMark.EVENT_PACKAGE_RESET", no_visible)
+        self.assertNotIn("eventRoot()", no_visible)
 
     def test_collector_rejects_non_instagram_roots_and_recycles_every_path(self):
         body = SERVICE.split("private fun collect", 1)[1].split("override fun onInterrupt", 1)[0]
@@ -201,10 +225,11 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("readWatchdogRoot()", tick)
         self.assertIn("handler.postDelayed(next, WATCHDOG_INTERVAL_MS)", tick)
 
-        read = SERVICE.split("private fun readWatchdogRoot", 1)[1].split(
+        read = SERVICE.split("private fun readPackageRoot", 1)[1].split(
             "private fun traceRecord", 1
         )[0]
-        self.assertIn("overlayPlatform.recycleRoot(activeRoot)", read)
+        self.assertIn("readPackageRoot", read)
+        self.assertIn("overlayPlatform.recycleRoot(it)", read)
         self.assertIn("catch (_: RuntimeException)", read)
         self.assertIn("RemovalTraceRoot.READ_FAILURE", read)
         self.assertIn("foregroundWatchdog.observe", tick)
@@ -238,13 +263,18 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("removalPolicy.confirmedDetached()", removal)
         self.assertLess(removal.index("confirmedDetached()"), removal.index("performHome"))
 
-    def test_foreign_event_resets_before_root_access_and_gate_reads_only_sanitized_report(self):
+    def test_foreign_event_reads_one_package_only_root_and_skips_collection(self):
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(
-            "private fun InstagramSurface.toGateSurface", 1
+            '@Suppress("DEPRECATION")', 1
         )[0]
-        self.assertLess(event.index("packageName != INSTAGRAM"), event.index("eventRoot()"))
+        branch = event.split("if (packageName != INSTAGRAM)", 1)[1]
+        self.assertIn("readPackageRoot", branch)
+        self.assertIn("overlayPlatform.eventRoot()", branch)
+        self.assertIn("overlayPlatform.readRootPackage", SERVICE)
+        self.assertLess(branch.index("eventRoot()"), branch.index("foregroundWatchdog.observe"))
+        event_policy = branch.split("// Suppression is checked", 1)[0]
+        self.assertNotIn("collect(", event_policy)
         self.assertIn("resetOutside(cause = RemovalTraceMark.EVENT_PACKAGE_RESET", event)
-        self.assertIn("Observation.record", event)
         self.assertIn("fun overlayDiagnosticStatus()", (REPO / "app/src/main/java/com/chardy/doom/Observation.kt").read_text())
         self.assertNotIn("event.text", event)
         self.assertNotIn("contentDescription", event)
@@ -395,11 +425,12 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(
             "@Suppress", 1
         )[0]
+        instagram = event.split("// Suppression is checked", 1)[1]
         suppression = "if (Observation.gateConsent && entryGate.cooldownActive())"
-        self.assertIn(suppression, event)
-        self.assertLess(event.index(suppression), event.index("beginInstagramSessionIfEligible"))
-        self.assertLess(event.index(suppression), event.index("eventRoot()"))
-        self.assertLess(event.index(suppression), event.index("Observation.record"))
+        self.assertIn(suppression, instagram)
+        self.assertLess(instagram.index(suppression), instagram.index("beginInstagramSessionIfEligible"))
+        self.assertLess(instagram.index(suppression), instagram.index("eventRoot()"))
+        self.assertLess(instagram.index(suppression), instagram.index("Observation.record"))
 
     def test_cooldown_starts_only_after_real_overlay_admission(self):
         policy = (REPO / "app/src/main/java/com/chardy/doom/InstagramEntryGate.kt").read_text()

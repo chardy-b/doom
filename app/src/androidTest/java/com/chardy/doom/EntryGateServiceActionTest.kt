@@ -30,8 +30,12 @@ class EntryGateServiceActionTest {
         INSTAGRAM,
         NULL_PACKAGE,
         FOREIGN,
+        DOOM,
         MISSING,
         THROW,
+        PACKAGE_THROW,
+        REPLACE_TOKEN_DURING_READ,
+        REPLACE_TICKET_DURING_READ,
         REVOKE_CONSENT,
         REVOKE_GATE_CONSENT,
         REVOKE_CONNECTION,
@@ -47,11 +51,13 @@ class EntryGateServiceActionTest {
         @Volatile var removeAttempts = 0
         @Volatile var currentRootCalls = 0
         @Volatile var recycledRoots = 0
+        @Volatile var recycleThrows = false
         @Volatile var routeCalls = 0
         @Volatile var routeThrows = false
         @Volatile var homeCalls = 0
         val platformCalls = Collections.synchronizedList(mutableListOf<String>())
         lateinit var revokeInsideRoot: () -> Unit
+        var rootReadHook: () -> Unit = {}
 
         override fun isAttached(view: View) = attached
 
@@ -73,20 +79,29 @@ class EntryGateServiceActionTest {
                 RootBehavior.REVOKE_CONSENT,
                 RootBehavior.REVOKE_GATE_CONSENT,
                 RootBehavior.REVOKE_CONNECTION -> revokeInsideRoot()
+                RootBehavior.REPLACE_TOKEN_DURING_READ,
+                RootBehavior.REPLACE_TICKET_DURING_READ -> rootReadHook()
                 else -> Unit
             }
             return AccessibilityNodeInfo.obtain().apply {
                 packageName = when (rootBehavior) {
                     RootBehavior.NULL_PACKAGE -> null
                     RootBehavior.FOREIGN -> "com.example.foreign"
+                    RootBehavior.DOOM -> "com.chardyb.doom"
                     else -> "com.instagram.android"
                 }
             }
         }
 
+        override fun readRootPackage(root: AccessibilityNodeInfo): String? {
+            if (rootBehavior == RootBehavior.PACKAGE_THROW) throw IllegalStateException("package unavailable")
+            return root.packageName?.toString()
+        }
+
         override fun recycleRoot(root: AccessibilityNodeInfo) {
             recycledRoots++
             root.recycle()
+            if (recycleThrows) throw IllegalStateException("recycle unavailable")
         }
 
         override fun routeMessages(root: AccessibilityNodeInfo): MessagesRouteResult {
@@ -128,6 +143,11 @@ class EntryGateServiceActionTest {
     )
 
     @After fun cleanUp() {
+        // Disconnect the process singleton before revoking persisted consent so a fixture whose
+        // fake overlay intentionally refuses detachment cannot queue retries into the next test.
+        DoomAccessibilityService::class.java.getDeclaredField("instance")
+            .apply { isAccessible = true }
+            .set(null, null)
         rule.scenario.onActivity {
             Observation.setGateConsent(it, false)
             Observation.accept(it, false)
@@ -135,9 +155,6 @@ class EntryGateServiceActionTest {
             Observation.clear()
             RemovalTraceStore.process.clear()
         }
-        DoomAccessibilityService::class.java.getDeclaredField("instance")
-            .apply { isAccessible = true }
-            .set(null, null)
         instrumentation.waitForIdleSync()
     }
 
@@ -227,6 +244,30 @@ class EntryGateServiceActionTest {
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(1, fixture.platform.recycledRoots)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+    }
+
+    @Test fun closingForeignEventVetoesPendingHomeWithoutReadingARoot() {
+        val fixture = fixture(attached = true, detachOnRemove = false)
+        rule.scenario.onActivity {
+            val now = android.os.SystemClock.elapsedRealtime()
+            RemovalTraceStore.process.arm(now)
+            RemovalTraceStore.process.beginEligibleEpisode(now)
+            RemovalTraceStore.process.record(now, RemovalTraceMark.SHOWN)
+        }
+        request(fixture.service, OverlayRemovalAction.HOME, fixture.token)
+        rule.scenario.onActivity {
+            sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                "com.example.foreign")
+            fixture.platform.detachOnRemove = true
+        }
+        waitFor { !fixture.platform.attached }
+
+        assertEquals(0, fixture.platform.homeCalls)
+        assertEquals(0, fixture.platform.currentRootCalls)
+        assertEquals(EntryGateState.OUTSIDE, gate(fixture.service).state)
+        assertTrue(requireNotNull(RemovalTraceStore.process.snapshot()).records.any {
+            it.mark == RemovalTraceMark.ACTION_VETOED && it.action == RemovalTraceAction.HOME
+        })
     }
 
     @Test fun staleSkipTokenCannotReachMessagesRoute() {
@@ -393,13 +434,21 @@ class EntryGateServiceActionTest {
         fun run(trace: Boolean): Outcome {
             val fixture = fixture(attached = true, detachOnRemove = true)
             rule.scenario.onActivity {
+                val now = android.os.SystemClock.elapsedRealtime()
                 if (trace) {
-                    val now = android.os.SystemClock.elapsedRealtime()
                     RemovalTraceStore.process.arm(now)
                     RemovalTraceStore.process.beginEligibleEpisode(now)
                 } else {
                     RemovalTraceStore.process.clear()
                 }
+                assertTrue(gate(fixture.service).admitForDisplay(fixture.ticket))
+                val watchdog = field(fixture.service, "foregroundWatchdog")
+                    .get(fixture.service) as OverlayForegroundWatchdog
+                watchdog.reset(now)
+                assertEquals(
+                    OverlayForegroundDecision.KEEP,
+                    watchdog.observe(now, "com.instagram.android", verifiedDoomReturn = false),
+                )
                 sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
                     "com.example.foreign")
             }
@@ -410,7 +459,14 @@ class EntryGateServiceActionTest {
         val unarmed = run(false)
         val armed = run(true)
         assertEquals(unarmed, armed)
-        assertEquals(EntryGateState.OUTSIDE, unarmed.state)
+        assertTrue(unarmed.attached)
+        assertEquals(EntryGateState.GATING, unarmed.state)
+        assertEquals(1, unarmed.roots)
+        assertEquals(1, unarmed.recycledRoots)
+        assertTrue(armed.attached)
+        assertEquals(EntryGateState.GATING, armed.state)
+        assertEquals(1, armed.roots)
+        assertEquals(1, armed.recycledRoots)
     }
 
     @Test fun actualInstagramEventMissingForeignAndThrowRootsMatchArmedAndUnarmed() {
@@ -494,6 +550,349 @@ class EntryGateServiceActionTest {
         assertTrue(fixture.platform.attached)
         assertEquals(0, fixture.platform.currentRootCalls)
         assertEquals(0, fixture.platform.removeAttempts)
+    }
+
+    @Test fun otherStateOverInstagramRootKeepsTheCurrentAdmittedGate() {
+        val fixture = fixture(attached = true)
+        lateinit var trace: List<RemovalTraceRecord>
+        rule.scenario.onActivity {
+            val now = android.os.SystemClock.elapsedRealtime()
+            field(fixture.service, "monotonicClock").set(fixture.service, { now + 10L })
+            assertTrue(gate(fixture.service).admitForDisplay(fixture.ticket))
+            val watchdog = field(fixture.service, "foregroundWatchdog")
+                .get(fixture.service) as OverlayForegroundWatchdog
+            watchdog.reset(now)
+            invoke(fixture.service, "runWatchdogTick", fixture.ticket, fixture.token, Runnable {})
+            RemovalTraceStore.process.arm(now)
+            RemovalTraceStore.process.beginEligibleEpisode(now)
+            RemovalTraceStore.process.record(now, RemovalTraceMark.SHOWN)
+            sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                "com.example.system-ui")
+            val recorder = RemovalTraceStore::class.java.getDeclaredField("recorder")
+                .apply { isAccessible = true }
+                .get(RemovalTraceStore.process) as RemovalTraceRecorder
+            trace = recorder.entries
+        }
+        instrumentation.waitForIdleSync()
+
+        assertTrue(fixture.platform.attached)
+        assertEquals(0, fixture.platform.removeAttempts)
+        assertEquals(2, fixture.platform.currentRootCalls)
+        assertEquals(2, fixture.platform.recycledRoots)
+        assertEquals(fixture.ticket, field(fixture.service, "ticket").get(fixture.service))
+        assertEquals(EntryGateState.GATING, gate(fixture.service).state)
+        assertTrue(trace.any {
+            it.mark == RemovalTraceMark.EVENT_ROOT_SAFE &&
+                it.event == RemovalTraceEvent.STATE &&
+                it.owner == RemovalTraceOwner.OTHER &&
+                it.root == RemovalTraceRoot.IG &&
+                it.action == RemovalTraceAction.NONE
+        })
+        assertFalse(trace.any { it.mark == RemovalTraceMark.CLOSING })
+    }
+
+    @Test fun admittedInstagramRootEventHasArmedAndUnarmedEquivalentBehavior() {
+        fun run(trace: Boolean): Outcome {
+            val fixture = fixture(attached = true)
+            rule.scenario.onActivity {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (trace) {
+                    RemovalTraceStore.process.arm(now)
+                    RemovalTraceStore.process.beginEligibleEpisode(now)
+                    RemovalTraceStore.process.record(now, RemovalTraceMark.SHOWN)
+                } else RemovalTraceStore.process.clear()
+                assertTrue(gate(fixture.service).admitForDisplay(fixture.ticket))
+                val watchdog = field(fixture.service, "foregroundWatchdog")
+                    .get(fixture.service) as OverlayForegroundWatchdog
+                watchdog.reset(now)
+                watchdog.observe(now, "com.instagram.android", verifiedDoomReturn = false)
+                sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                    "com.example.system-ui")
+            }
+            instrumentation.waitForIdleSync()
+            return outcome(fixture.service, fixture.platform)
+        }
+
+        val unarmed = run(false)
+        val armed = run(true)
+        assertEquals(unarmed, armed)
+        listOf(unarmed, armed).forEach { result ->
+            assertTrue(result.attached)
+            assertEquals(EntryGateState.GATING, result.state)
+            assertEquals(1, result.roots)
+            assertEquals(1, result.recycledRoots)
+        }
+    }
+
+    @Test fun watchdogInstagramRootAnchorsAnUncertainEvent() {
+        val fixture = fixture(attached = true)
+        val base = 1_000L
+        rule.scenario.onActivity {
+            field(fixture.service, "monotonicClock").set(fixture.service, { base + 10L })
+            invoke(fixture.service, "runWatchdogTick", fixture.ticket, fixture.token, Runnable {})
+            fixture.platform.rootBehavior = RootBehavior.NULL_PACKAGE
+            sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                "com.example.system-ui")
+        }
+        instrumentation.waitForIdleSync()
+
+        assertTrue(fixture.platform.attached)
+        assertEquals(EntryGateState.GATING, gate(fixture.service).state)
+        assertEquals(2, fixture.platform.currentRootCalls)
+        assertEquals(2, fixture.platform.recycledRoots)
+    }
+
+    @Test fun eventInstagramRootAnchorsAnUncertainWatchdogTick() {
+        val fixture = fixture(attached = true, rootBehavior = RootBehavior.INSTAGRAM)
+        val base = 1_000L
+        rule.scenario.onActivity {
+            field(fixture.service, "monotonicClock").set(fixture.service, { base + 10L })
+            sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                "com.example.system-ui")
+            fixture.platform.rootBehavior = RootBehavior.NULL_PACKAGE
+            invoke(fixture.service, "runWatchdogTick", fixture.ticket, fixture.token, Runnable {})
+        }
+        instrumentation.waitForIdleSync()
+
+        assertTrue(fixture.platform.attached)
+        assertEquals(EntryGateState.GATING, gate(fixture.service).state)
+        assertEquals(2, fixture.platform.currentRootCalls)
+        assertEquals(2, fixture.platform.recycledRoots)
+    }
+
+    @Test fun nullEventOverInstagramRootKeepsTheCurrentGateWithoutCollection() {
+        val fixture = fixture(attached = true)
+        rule.scenario.onActivity {
+            val now = android.os.SystemClock.elapsedRealtime()
+            val watchdog = field(fixture.service, "foregroundWatchdog")
+                .get(fixture.service) as OverlayForegroundWatchdog
+            watchdog.reset(now)
+            watchdog.observe(now, "com.instagram.android", verifiedDoomReturn = false)
+            fixture.service.onAccessibilityEvent(null)
+        }
+        instrumentation.waitForIdleSync()
+        assertTrue(fixture.platform.attached)
+        assertEquals(0, fixture.platform.removeAttempts)
+        assertEquals(1, fixture.platform.currentRootCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+    }
+
+    @Test fun nullPackageNameEventOverInstagramRootKeepsTheCurrentGate() {
+        val fixture = fixture(attached = true)
+        lateinit var records: List<RemovalTraceRecord>
+        rule.scenario.onActivity {
+            val now = android.os.SystemClock.elapsedRealtime()
+            RemovalTraceStore.process.arm(now)
+            RemovalTraceStore.process.beginEligibleEpisode(now)
+            RemovalTraceStore.process.record(now, RemovalTraceMark.SHOWN)
+            val watchdog = field(fixture.service, "foregroundWatchdog")
+                .get(fixture.service) as OverlayForegroundWatchdog
+            watchdog.reset(now)
+            watchdog.observe(now, "com.instagram.android", verifiedDoomReturn = false)
+            sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, null)
+            records = (RemovalTraceStore::class.java.getDeclaredField("recorder")
+                .apply { isAccessible = true }
+                .get(RemovalTraceStore.process) as RemovalTraceRecorder).entries
+        }
+        instrumentation.waitForIdleSync()
+
+        assertTrue(fixture.platform.attached)
+        assertEquals(EntryGateState.GATING, gate(fixture.service).state)
+        assertEquals(1, fixture.platform.currentRootCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertTrue(records.any {
+            it.mark == RemovalTraceMark.EVENT_ROOT_SAFE &&
+                it.event == RemovalTraceEvent.CONTENT &&
+                it.owner == RemovalTraceOwner.UNATTRIBUTED &&
+                it.root == RemovalTraceRoot.IG &&
+                it.action == RemovalTraceAction.NONE
+        })
+    }
+
+    @Test fun foreignEventStillResetsImmediatelyAfterFreshRootRevalidation() {
+        listOf(RootBehavior.FOREIGN, RootBehavior.DOOM).forEach { behavior ->
+            val fixture = fixture(attached = true, rootBehavior = behavior)
+            rule.scenario.onActivity {
+                val watchdog = field(fixture.service, "foregroundWatchdog")
+                    .get(fixture.service) as OverlayForegroundWatchdog
+                val now = android.os.SystemClock.elapsedRealtime()
+                watchdog.reset(now)
+                watchdog.observe(now, "com.instagram.android", verifiedDoomReturn = false)
+                sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                    "com.example.system-ui")
+            }
+            waitFor { !fixture.platform.attached }
+            assertEquals(1, fixture.platform.currentRootCalls)
+            assertEquals(1, fixture.platform.recycledRoots)
+            assertEquals(EntryGateState.OUTSIDE, gate(fixture.service).state)
+        }
+    }
+
+    @Test fun unknownEventRootUsesTheSharedAnchorAtTheExactServiceBoundary() {
+        listOf(RootBehavior.MISSING, RootBehavior.THROW, RootBehavior.NULL_PACKAGE,
+            RootBehavior.PACKAGE_THROW).forEach { behavior ->
+            val fixture = fixture(attached = true, rootBehavior = behavior)
+            val base = 1_000L
+            rule.scenario.onActivity {
+                field(fixture.service, "monotonicClock").set(fixture.service, { base + 149L })
+                val watchdog = field(fixture.service, "foregroundWatchdog")
+                    .get(fixture.service) as OverlayForegroundWatchdog
+                watchdog.reset(base)
+                watchdog.observe(base, "com.instagram.android", verifiedDoomReturn = false)
+                sendEvent(fixture.service, AccessibilityEvent.TYPE_VIEW_CLICKED, "com.example.system-ui")
+            }
+            assertTrue(fixture.platform.attached)
+            assertEquals(1, fixture.platform.currentRootCalls)
+            assertEquals(if (behavior == RootBehavior.MISSING || behavior == RootBehavior.THROW) 0 else 1,
+                fixture.platform.recycledRoots)
+
+            rule.scenario.onActivity {
+                field(fixture.service, "monotonicClock").set(fixture.service, { base + 150L })
+                sendEvent(fixture.service, AccessibilityEvent.TYPE_VIEW_CLICKED, "com.example.system-ui")
+            }
+            waitFor { !fixture.platform.attached }
+            assertEquals(2, fixture.platform.currentRootCalls)
+            assertEquals(if (behavior == RootBehavior.MISSING || behavior == RootBehavior.THROW) 0 else 2,
+                fixture.platform.recycledRoots)
+            assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        }
+    }
+
+    @Test fun foreignClassificationSurvivesARecycleExceptionAndAttemptsRecycleOnce() {
+        val fixture = fixture(attached = true, rootBehavior = RootBehavior.FOREIGN)
+        fixture.platform.recycleThrows = true
+        rule.scenario.onActivity {
+            sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                "com.example.system-ui")
+        }
+        waitFor { !fixture.platform.attached }
+        assertEquals(1, fixture.platform.currentRootCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertEquals(EntryGateState.OUTSIDE, gate(fixture.service).state)
+    }
+
+    @Test fun eventTraceRecordsForeignResetOutsideAndExpiredUncertainty() {
+        val foreign = fixture(attached = true, rootBehavior = RootBehavior.FOREIGN)
+        rule.scenario.onActivity {
+            val now = android.os.SystemClock.elapsedRealtime()
+            RemovalTraceStore.process.arm(now)
+            RemovalTraceStore.process.beginEligibleEpisode(now)
+            RemovalTraceStore.process.record(now, RemovalTraceMark.SHOWN)
+            val watchdog = field(foreign.service, "foregroundWatchdog")
+                .get(foreign.service) as OverlayForegroundWatchdog
+            watchdog.reset(now)
+            watchdog.observe(now, "com.instagram.android", verifiedDoomReturn = false)
+            sendEvent(foreign.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                "com.example.system-ui")
+        }
+        waitFor { !foreign.platform.attached }
+        val foreignSnapshot = requireNotNull(RemovalTraceStore.process.snapshot())
+        assertTrue(foreignSnapshot.records.any {
+            it.mark == RemovalTraceMark.EVENT_ROOT_MISMATCH &&
+                it.root == RemovalTraceRoot.FOREIGN &&
+                it.action == RemovalTraceAction.RESET_OUTSIDE
+        })
+
+        val uncertain = fixture(attached = true, rootBehavior = RootBehavior.NULL_PACKAGE)
+        rule.scenario.onActivity {
+            RemovalTraceStore.process.clear()
+            val base = 1_000L
+            field(uncertain.service, "monotonicClock").set(uncertain.service, { base + 150L })
+            RemovalTraceStore.process.arm(base)
+            RemovalTraceStore.process.beginEligibleEpisode(base)
+            RemovalTraceStore.process.record(base, RemovalTraceMark.SHOWN)
+            val watchdog = field(uncertain.service, "foregroundWatchdog")
+                .get(uncertain.service) as OverlayForegroundWatchdog
+            watchdog.reset(base)
+            watchdog.observe(base, "com.instagram.android", verifiedDoomReturn = false)
+            sendEvent(uncertain.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                "com.example.system-ui")
+        }
+        waitFor { !uncertain.platform.attached }
+        val uncertainSnapshot = requireNotNull(RemovalTraceStore.process.snapshot(1_150L))
+        assertTrue(uncertainSnapshot.records.any {
+            it.mark == RemovalTraceMark.EVENT_UNCERTAINTY_EXPIRED &&
+                it.root == RemovalTraceRoot.NO_PACKAGE &&
+                it.action == RemovalTraceAction.BYPASS
+        })
+    }
+
+    @Test fun staleTokenOrTicketReplacementDuringRootReadDiscardsTheSample() {
+        listOf(RootBehavior.REPLACE_TOKEN_DURING_READ, RootBehavior.REPLACE_TICKET_DURING_READ)
+            .forEach { behavior ->
+                val fixture = fixture(attached = true, rootBehavior = behavior)
+                rule.scenario.onActivity {
+                    RemovalTraceStore.process.clear()
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    RemovalTraceStore.process.arm(now)
+                    RemovalTraceStore.process.beginEligibleEpisode(now)
+                    RemovalTraceStore.process.record(now, RemovalTraceMark.SHOWN)
+                    fixture.platform.rootReadHook = {
+                        when (behavior) {
+                            RootBehavior.REPLACE_TOKEN_DURING_READ -> {
+                                val guard = field(fixture.service, "callbackGuard")
+                                    .get(fixture.service) as OverlayCallbackGuard
+                                field(fixture.service, "overlayToken")
+                                    .set(fixture.service, guard.open(fixture.ticket))
+                            }
+                            RootBehavior.REPLACE_TICKET_DURING_READ -> {
+                                field(fixture.service, "ticket")
+                                    .set(fixture.service, gate(fixture.service).beginInstagramSession())
+                            }
+                            else -> error("unexpected root replacement")
+                        }
+                    }
+                    sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                        "com.example.system-ui")
+                }
+                instrumentation.waitForIdleSync()
+                assertTrue(fixture.platform.attached)
+                assertEquals(1, fixture.platform.currentRootCalls)
+                assertEquals(1, fixture.platform.recycledRoots)
+                val records = (RemovalTraceStore::class.java.getDeclaredField("recorder")
+                    .apply { isAccessible = true }
+                    .get(RemovalTraceStore.process) as RemovalTraceRecorder).entries
+                assertFalse(records.any {
+                    it.mark == RemovalTraceMark.EVENT_ROOT_SAFE ||
+                        it.mark == RemovalTraceMark.EVENT_ROOT_UNCERTAIN ||
+                        it.mark == RemovalTraceMark.EVENT_ROOT_MISMATCH
+                })
+            }
+    }
+
+    @Test fun revocationDuringRootReadCleansCurrentEpisodeAndDiscardsTheSample() {
+        val fixture = fixture(attached = true, rootBehavior = RootBehavior.REVOKE_CONNECTION)
+        rule.scenario.onActivity {
+            fixture.platform.revokeInsideRoot = { fixture.service.onInterrupt() }
+            sendEvent(fixture.service, AccessibilityEvent.TYPE_VIEW_CLICKED, "com.example.system-ui")
+        }
+        waitFor { !fixture.platform.attached }
+        assertEquals(1, fixture.platform.currentRootCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertEquals(0, fixture.platform.homeCalls)
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+    }
+
+    @Test fun realConsentRevocationDuringEventRootReadUsesTheWiredService() {
+        listOf(RootBehavior.REVOKE_CONSENT, RootBehavior.REVOKE_GATE_CONSENT).forEach { behavior ->
+            val fixture = fixture(attached = true, rootBehavior = behavior)
+            fixture.platform.revokeInsideRoot = {
+                if (behavior == RootBehavior.REVOKE_CONSENT) {
+                    Observation.accept(fixture.activity, false)
+                } else {
+                    Observation.setGateConsent(fixture.activity, false)
+                }
+            }
+            rule.scenario.onActivity {
+                sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                    "com.example.system-ui")
+            }
+            waitFor { !fixture.platform.attached }
+            assertEquals(1, fixture.platform.currentRootCalls)
+            assertEquals(1, fixture.platform.recycledRoots)
+            assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+            assertEquals(0, fixture.platform.homeCalls)
+        }
     }
 
     @Test fun actualAccessibilityEventDrivesInstallShownAdmissionAndRemoval() {
@@ -784,6 +1183,8 @@ class EntryGateServiceActionTest {
             val service = DoomAccessibilityService()
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, activity.applicationContext)
+            DoomAccessibilityService::class.java.getDeclaredField("instance")
+                .apply { isAccessible = true }.set(null, service)
             val entryGate = gate(service)
             val ticket = entryGate.beginInstagramSession()
             entryGate.observeInstagram(0L, ticket)

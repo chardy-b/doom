@@ -5,11 +5,13 @@ import java.util.EnumSet
 /** Closed, content-free vocabulary for the one-episode removal diagnosis. */
 internal enum class RemovalTraceMark {
     ATTEMPT, SHOWN, EVENT_OBSERVED, EVENT_IGNORED_OWN, EVENT_SUPPRESSED_COOLDOWN,
-    WATCHDOG_SAFE, WATCHDOG_UNCERTAIN, EVENT_PACKAGE_RESET, EVENT_ROOT_MISSING,
+    WATCHDOG_SAFE, WATCHDOG_UNCERTAIN, EVENT_ROOT_SAFE, EVENT_ROOT_UNCERTAIN,
+    EVENT_PACKAGE_RESET, EVENT_ROOT_MISSING,
     EVENT_ROOT_MISMATCH, EVENT_DENIED, EVENT_FAILURE, WATCHDOG_FOREIGN,
     WATCHDOG_UNCERTAINTY_EXPIRED, WATCHDOG_ROLLBACK,
     WATCHDOG_NO_SAFE_ANCHOR, WATCHDOG_FAILURE, INSTALL_FAILURE, SHOWN_REJECTED,
     ADMISSION_REJECTED, TIMER_COMPLETE, USER_MESSAGES, USER_HOME, APP_RETURN,
+    EVENT_UNCERTAINTY_EXPIRED, EVENT_ROLLBACK, EVENT_NO_SAFE_ANCHOR,
     SERVICE_CONNECTED_RESET, SERVICE_INTERRUPTED, SERVICE_UNBOUND, SERVICE_DESTROYED,
     CLOSING, REMOVAL_RETRY, SAFETY_OVERRIDE, REMOVAL_EXHAUSTED, DETACHED,
     ALREADY_DETACHED, NO_OVERLAY_RELEASED, ACTION_RELEASED, ACTION_VETOED,
@@ -42,7 +44,7 @@ internal data class RemovalTraceSnapshot(val records: List<RemovalTraceRecord>) 
 
     /** ACTION_RELEASED is a policy release after detach, not proof that the action executed. */
     fun serializeAscii(): String {
-        val out = StringBuilder("WIL182_REMOVAL_TRACE_V1\n")
+        val out = StringBuilder("WIL182_REMOVAL_TRACE_V2\n")
         records.forEach { record ->
             val row = buildString {
                 append(record.dtMs)
@@ -72,7 +74,9 @@ internal class RemovalTraceRecorder(
         private val causeMarks: Set<RemovalTraceMark> = EnumSet.of(
             RemovalTraceMark.EVENT_PACKAGE_RESET, RemovalTraceMark.EVENT_ROOT_MISSING,
             RemovalTraceMark.EVENT_ROOT_MISMATCH, RemovalTraceMark.EVENT_DENIED,
-            RemovalTraceMark.EVENT_FAILURE, RemovalTraceMark.WATCHDOG_FOREIGN,
+            RemovalTraceMark.EVENT_FAILURE, RemovalTraceMark.EVENT_UNCERTAINTY_EXPIRED,
+            RemovalTraceMark.EVENT_ROLLBACK, RemovalTraceMark.EVENT_NO_SAFE_ANCHOR,
+            RemovalTraceMark.WATCHDOG_FOREIGN,
             RemovalTraceMark.WATCHDOG_UNCERTAINTY_EXPIRED,
             RemovalTraceMark.WATCHDOG_ROLLBACK, RemovalTraceMark.WATCHDOG_NO_SAFE_ANCHOR,
             RemovalTraceMark.WATCHDOG_FAILURE, RemovalTraceMark.INSTALL_FAILURE,

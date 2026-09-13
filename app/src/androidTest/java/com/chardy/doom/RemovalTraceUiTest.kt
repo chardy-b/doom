@@ -70,7 +70,7 @@ class RemovalTraceUiTest {
         }
         instrumentation.waitForIdleSync()
         val copied = clipboard.primaryClip!!.getItemAt(0).text.toString()
-        assertTrue(copied.startsWith("WIL182_REMOVAL_TRACE_V1\n"))
+        assertTrue(copied.startsWith("WIL182_REMOVAL_TRACE_V2\n"))
         assertTrue(copied.contains("EVENT_PACKAGE_RESET"))
         assertTrue(copied.length <= RemovalTraceRecorder.MAX_ASCII_BYTES)
     }

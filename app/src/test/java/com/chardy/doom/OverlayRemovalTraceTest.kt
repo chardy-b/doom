@@ -6,6 +6,31 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OverlayRemovalTraceTest {
+    @Test fun v2RetainsEventOwnerAndSampledRootWithoutTurningSafeRowsIntoCauses() {
+        val recorder = RemovalTraceRecorder(100L)
+        recorder.record(
+            101L,
+            RemovalTraceMark.EVENT_ROOT_SAFE,
+            event = RemovalTraceEvent.STATE,
+            owner = RemovalTraceOwner.OTHER,
+            root = RemovalTraceRoot.IG,
+        )
+        recorder.record(
+            102L,
+            RemovalTraceMark.EVENT_ROOT_UNCERTAIN,
+            event = RemovalTraceEvent.OTHER,
+            owner = RemovalTraceOwner.UNATTRIBUTED,
+            root = RemovalTraceRoot.READ_FAILURE,
+        )
+        recorder.freeze()
+
+        val snapshot = recorder.snapshot()
+        assertEquals(null, recorder.firstCause)
+        assertEquals(RemovalTraceOwner.OTHER, snapshot.records[0].owner)
+        assertEquals(RemovalTraceRoot.IG, snapshot.records[0].root)
+        assertTrue(snapshot.serializeAscii().startsWith("WIL182_REMOVAL_TRACE_V2\n"))
+    }
+
     @Test fun recorderHasExactCapacityAndPinsEpisodeBoundaries() {
         val recorder = RemovalTraceRecorder(100L, capacity = 8)
         recorder.record(100L, RemovalTraceMark.ATTEMPT)

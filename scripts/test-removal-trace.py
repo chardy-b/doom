@@ -55,21 +55,29 @@ class RemovalTracePrivacyTest(unittest.TestCase):
         self.assertIn("enum class RemovalTraceOwner", TRACE)
         self.assertIn("enum class RemovalTraceRoot", TRACE)
         self.assertIn("enum class RemovalTraceAction", TRACE)
+        self.assertIn("WIL182_REMOVAL_TRACE_V2", TRACE)
+        self.assertIn("EVENT_ROOT_SAFE", TRACE)
+        self.assertIn("EVENT_ROOT_UNCERTAIN", TRACE)
+        self.assertIn("EVENT_ROOT_MISMATCH", TRACE)
+        self.assertIn("EVENT_UNCERTAINTY_EXPIRED", TRACE)
         self.assertIn("MAX_RECORDS = 64", TRACE)
         self.assertIn("MAX_OFFSET_MS = 10_000L", TRACE)
         self.assertIn("MAX_ASCII_BYTES = 8_192", TRACE)
 
     def test_service_trace_adapter_only_classifies_existing_package_and_event_values(self):
-        adapter = SERVICE.split("private fun readWatchdogRoot", 1)[1].split(
-            "private fun isMainActivityReturn", 1
+        adapter = SERVICE.split("private fun readPackageRoot", 1)[1].split(
+            "private fun traceRecord", 1
         )[0]
         for forbidden in (".text", "contentDescription", ".className", "getChild", "childCount",
                           "viewIdResourceName", "Log.", "File(", "SharedPreferences", "ClipData",
                           "setPrimaryClip", "serializeAscii"):
             self.assertNotIn(forbidden, adapter)
         self.assertIn("event.eventType", SERVICE.split("private fun traceEventKind", 1)[1])
-        self.assertIn("activeRoot.packageName", adapter)
-        self.assertIn("RemovalTraceStore.process", adapter)
+        self.assertIn("overlayPlatform.readRootPackage", adapter)
+        self.assertIn("overlayPlatform.recycleRoot(it)", adapter)
+        self.assertIn("RemovalTraceStore.process", SERVICE)
+        self.assertIn("RemovalTraceMark.EVENT_ROOT_MISMATCH", SERVICE)
+        self.assertIn("RemovalTraceAction.RESET_OUTSIDE", SERVICE)
 
     def test_trace_copy_is_only_explicit_and_separate_from_structural_report(self):
         observation = (ROOT / "app/src/main/java/com/chardy/doom/Observation.kt").read_text()

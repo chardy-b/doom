@@ -18,6 +18,8 @@ internal interface OverlayPlatform {
     fun currentRoot(): AccessibilityNodeInfo?
     /** Event-root seam; production reads the same root property used by the baseline path. */
     fun eventRoot(): AccessibilityNodeInfo? = currentRoot()
+    /** Package-only seam; production does not inspect any other root property here. */
+    fun readRootPackage(root: AccessibilityNodeInfo): String? = root.packageName?.toString()
     fun routeMessages(root: AccessibilityNodeInfo): MessagesRouteResult
     fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
     fun performHome(): Boolean
@@ -49,7 +51,7 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
-    private val monotonicClock: () -> Long = { SystemClock.elapsedRealtime() }
+    private var monotonicClock: () -> Long = { SystemClock.elapsedRealtime() }
     private val entryGate = InstagramEntryGate(
         durationMs = GATE_DURATION_MS,
         enabled = { Observation.gateConsent && Observation.consent && Observation.connected },
@@ -83,6 +85,7 @@ class DoomAccessibilityService : AccessibilityService() {
             null
         }
         override fun eventRoot(): AccessibilityNodeInfo? = rootInActiveWindow
+        override fun readRootPackage(root: AccessibilityNodeInfo): String? = root.packageName?.toString()
         override fun routeMessages(root: AccessibilityNodeInfo): MessagesRouteResult =
             InstagramMessagesRouter.route(root)
         override fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
@@ -109,6 +112,17 @@ class DoomAccessibilityService : AccessibilityService() {
             val traceCapturing = RemovalTraceStore.process.isCapturing()
             val eventKind = if (traceCapturing) traceEventKind(event) else RemovalTraceEvent.NA
             val owner = if (traceCapturing) traceOwner(packageName) else RemovalTraceOwner.NA
+            if (overlay != null &&
+                (!Observation.consent || !Observation.gateConsent || !Observation.connected)
+            ) {
+                requestSafetyCleanup(
+                    OverlayRemovalAction.BYPASS,
+                    RemovalTraceMark.EVENT_DENIED,
+                    eventKind,
+                    owner,
+                )
+                return
+            }
             // Doom's own accessibility-overlay updates are not app-session transitions.
             if (packageName == applicationContext.packageName) {
                 traceRecord(RemovalTraceMark.EVENT_IGNORED_OWN, eventKind, owner)
@@ -130,8 +144,86 @@ class DoomAccessibilityService : AccessibilityService() {
                 return
             }
             if (packageName != INSTAGRAM) {
-                resetOutside(cause = RemovalTraceMark.EVENT_PACKAGE_RESET,
-                    event = eventKind, owner = owner)
+                val visibleView = overlay
+                val visibleToken = overlayToken
+                val visibleTicket = ticket
+                if (visibleView == null) {
+                    resetOutside(cause = RemovalTraceMark.EVENT_PACKAGE_RESET,
+                        event = eventKind, owner = owner)
+                    return
+                }
+                // A non-null view with no current token/ticket is already closing or stale;
+                // preserve the old safety veto without reading a root or restarting it.
+                if (visibleToken == null || visibleTicket == null) {
+                    resetOutside(
+                        cause = RemovalTraceMark.EVENT_PACKAGE_RESET,
+                        event = eventKind,
+                        owner = owner,
+                    )
+                    return
+                }
+                if (!callbackGuard.acceptsVisible(visibleToken) ||
+                    visibleTicket != ticket ||
+                    visibleTicket.generation != entryGate.generation ||
+                    overlay !== visibleView ||
+                    entryGate.state != EntryGateState.GATING
+                ) {
+                    resetOutside(
+                        cause = RemovalTraceMark.EVENT_PACKAGE_RESET,
+                        event = eventKind,
+                        owner = owner,
+                    )
+                    return
+                }
+
+                val sample = readPackageRoot { overlayPlatform.eventRoot() }
+                val now = monotonicClock()
+                // A root read is synchronous in production, but test/lifecycle seams may revoke
+                // or replace this episode while it is in progress. Never apply its result to a
+                // newer visible gate.
+                if (!Observation.consent || !Observation.gateConsent || !Observation.connected ||
+                    !callbackGuard.acceptsVisible(visibleToken) ||
+                    overlay !== visibleView || overlayToken != visibleToken ||
+                    ticket != visibleTicket || visibleTicket.generation != entryGate.generation ||
+                    entryGate.state != EntryGateState.GATING
+                ) return
+
+                val decision = foregroundWatchdog.observe(now, sample.packageName, verifiedDoomReturn = false)
+                when (decision) {
+                    OverlayForegroundDecision.KEEP -> {
+                        traceRecord(RemovalTraceMark.EVENT_ROOT_SAFE, eventKind, owner, sample.root, now = now)
+                    }
+                    OverlayForegroundDecision.KEEP_UNCERTAIN -> {
+                        traceRecord(RemovalTraceMark.EVENT_ROOT_UNCERTAIN, eventKind, owner, sample.root, now = now)
+                    }
+                    OverlayForegroundDecision.FAIL_OPEN -> {
+                        val mark = when (foregroundWatchdog.lastFailureReason) {
+                            OverlayForegroundFailureReason.FOREIGN -> RemovalTraceMark.EVENT_ROOT_MISMATCH
+                            OverlayForegroundFailureReason.UNCERTAINTY_EXPIRED -> RemovalTraceMark.EVENT_UNCERTAINTY_EXPIRED
+                            OverlayForegroundFailureReason.ROLLBACK -> RemovalTraceMark.EVENT_ROLLBACK
+                            OverlayForegroundFailureReason.NO_SAFE_ANCHOR -> RemovalTraceMark.EVENT_NO_SAFE_ANCHOR
+                            OverlayForegroundFailureReason.NONE -> RemovalTraceMark.EVENT_FAILURE
+                        }
+                        if (foregroundWatchdog.lastFailureReason == OverlayForegroundFailureReason.FOREIGN) {
+                            resetOutside(
+                                cause = mark,
+                                event = eventKind,
+                                owner = owner,
+                                root = sample.root,
+                                now = now,
+                            )
+                        } else {
+                            requestSafetyCleanup(
+                                OverlayRemovalAction.BYPASS,
+                                mark,
+                                eventKind,
+                                owner,
+                                sample.root,
+                                now,
+                            )
+                        }
+                    }
+                }
                 return
             }
             // Suppression is checked before ticket creation, root access, and collection. It is
@@ -619,12 +711,16 @@ class DoomAccessibilityService : AccessibilityService() {
         cause: RemovalTraceMark = RemovalTraceMark.EVENT_PACKAGE_RESET,
         event: RemovalTraceEvent = RemovalTraceEvent.NA,
         owner: RemovalTraceOwner = RemovalTraceOwner.NA,
+        root: RemovalTraceRoot = RemovalTraceRoot.NOT_READ,
+        now: Long? = null,
     ) {
         requestSafetyCleanup(
             OverlayRemovalAction.RESET_OUTSIDE,
             cause,
             event = event,
             owner = owner,
+            root = root,
+            now = now,
         )
     }
 
@@ -657,23 +753,30 @@ class DoomAccessibilityService : AccessibilityService() {
         val root: RemovalTraceRoot
     )
 
-    private fun readWatchdogRoot(): WatchdogRootSample {
+    private fun readPackageRoot(acquireRoot: () -> AccessibilityNodeInfo?): WatchdogRootSample {
+        var activeRoot: AccessibilityNodeInfo? = null
         return try {
-            val activeRoot = overlayPlatform.currentRoot()
-            if (activeRoot == null) {
-                WatchdogRootSample(null, RemovalTraceOwner.UNATTRIBUTED, RemovalTraceRoot.NO_ROOT)
-            } else {
-                try {
-                    val packageName = activeRoot.packageName?.toString()
-                    WatchdogRootSample(packageName, traceOwner(packageName), traceRoot(packageName))
-                } finally {
-                    overlayPlatform.recycleRoot(activeRoot)
-                }
+            activeRoot = acquireRoot()
+            val root = activeRoot ?: return WatchdogRootSample(
+                null, RemovalTraceOwner.UNATTRIBUTED, RemovalTraceRoot.NO_ROOT
+            )
+            val packageName = try {
+                overlayPlatform.readRootPackage(root)
+            } catch (_: RuntimeException) {
+                return WatchdogRootSample(null, RemovalTraceOwner.UNATTRIBUTED, RemovalTraceRoot.READ_FAILURE)
             }
+            WatchdogRootSample(packageName, traceOwner(packageName), traceRoot(packageName))
         } catch (_: RuntimeException) {
             WatchdogRootSample(null, RemovalTraceOwner.UNATTRIBUTED, RemovalTraceRoot.READ_FAILURE)
+        } finally {
+            activeRoot?.let {
+                try { overlayPlatform.recycleRoot(it) } catch (_: RuntimeException) { }
+            }
         }
     }
+
+    private fun readWatchdogRoot(): WatchdogRootSample =
+        readPackageRoot { overlayPlatform.currentRoot() }
 
     private fun traceRecord(
         mark: RemovalTraceMark,
