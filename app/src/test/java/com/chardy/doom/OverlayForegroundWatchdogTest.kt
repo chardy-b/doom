@@ -120,4 +120,22 @@ class OverlayForegroundWatchdogTest {
             watchdog.observe(2_150L, null, verifiedDoomReturn = false),
         )
     }
+
+    @Test fun watchdogExposesPreciseNonBehavioralFailureReasons() {
+        val rollback = policy()
+        assertEquals(OverlayForegroundDecision.FAIL_OPEN, rollback.observe(999L, null, false))
+        assertEquals(OverlayForegroundFailureReason.ROLLBACK, rollback.lastFailureReason)
+
+        val foreign = policy()
+        assertEquals(OverlayForegroundDecision.FAIL_OPEN, foreign.observe(1_001L, "other", false))
+        assertEquals(OverlayForegroundFailureReason.FOREIGN, foreign.lastFailureReason)
+
+        val expired = policy()
+        assertEquals(OverlayForegroundDecision.FAIL_OPEN, expired.observe(1_150L, null, false))
+        assertEquals(OverlayForegroundFailureReason.UNCERTAINTY_EXPIRED, expired.lastFailureReason)
+
+        val noAnchor = OverlayForegroundWatchdog("ig", "doom")
+        assertEquals(OverlayForegroundDecision.FAIL_OPEN, noAnchor.observe(0L, null, false))
+        assertEquals(OverlayForegroundFailureReason.NO_SAFE_ANCHOR, noAnchor.lastFailureReason)
+    }
 }

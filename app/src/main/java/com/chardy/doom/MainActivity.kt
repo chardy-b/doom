@@ -50,7 +50,11 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
     var generation by remember { mutableLongStateOf(0) }
     var remaining by remember { mutableLongStateOf(5_000) }
     var reduceMotion by remember { mutableStateOf(false) }
+    var traceRevision by remember { mutableLongStateOf(0) }
+    var resumeGeneration by remember { mutableLongStateOf(0) }
+    var traceFeedback by remember { mutableStateOf<String?>(null) }
     val systemStatic = remember { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+    fun refreshTrace() { traceRevision++ }
     fun leave(destination: DemoGate.Screen = DemoGate.Screen.HOME) {
         gate.leave(destination)
         screen = gate.screen
@@ -58,14 +62,32 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
     }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                gate.background()
-                screen = gate.screen
-                generation = gate.generation
+            when (event) {
+                Lifecycle.Event.ON_START -> refreshTrace()
+                Lifecycle.Event.ON_RESUME -> {
+                    refreshTrace()
+                    resumeGeneration++
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    gate.background()
+                    screen = gate.screen
+                    generation = gate.generation
+                }
+                else -> Unit
             }
         }
         lifecycle.lifecycle.addObserver(observer)
         onDispose { lifecycle.lifecycle.removeObserver(observer); gate.background() }
+    }
+    LaunchedEffect(Observation.consent, Observation.gateConsent) { refreshTrace() }
+    LaunchedEffect(resumeGeneration) {
+        if (lifecycle.lifecycle.currentState == Lifecycle.State.RESUMED) {
+            repeat(120) {
+                if (lifecycle.lifecycle.currentState != Lifecycle.State.RESUMED) return@LaunchedEffect
+                refreshTrace()
+                delay(500)
+            }
+        }
     }
     BackHandler(screen != DemoGate.Screen.HOME) { leave() }
     LaunchedEffect(generation, screen) {
@@ -119,6 +141,45 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
                     }
                     Text("This consent is separate from the sanitized report consent and is the only persisted gate setting.", color = Paper, fontSize = 12.sp)
                     Text("Entry gate state: ${Observation.entryGateState}", color = Jade, fontFamily = FontFamily.Monospace)
+                    val traceAvailability = remember(traceRevision) {
+                        RemovalTraceStore.process.availability()
+                    }
+                    Text("REMOVAL TRACE · ${traceAvailability.name}", color = Jade, fontFamily = FontFamily.Monospace)
+                    Text("Optional trace records one armed next gate episode in process memory only. It stores closed categories and monotonic offsets, never content, package strings, event integers, class names, node data or identifiers. Arming expires after 120 seconds; a frozen trace expires after 10 minutes. Revoking either consent or clearing destroys it.", color = Paper, fontSize = 12.sp)
+                    Text(when {
+                        !Observation.consent || !Observation.gateConsent -> "Trace unavailable · both observation consents are required"
+                        traceAvailability == RemovalTraceAvailability.ARMED -> "Trace armed · waiting for one eligible episode"
+                        traceAvailability == RemovalTraceAvailability.RECORDING -> "Trace recording · one episode only"
+                        traceAvailability == RemovalTraceAvailability.AVAILABLE -> "Trace available · process-local evidence"
+                        traceAvailability == RemovalTraceAvailability.EXPIRED -> "Trace expired · arm a new episode"
+                        else -> "No trace armed"
+                    }, color = Paper)
+                    Action(
+                        "ARM NEXT REMOVAL TRACE",
+                        enabled = Observation.consent && Observation.gateConsent &&
+                            traceAvailability != RemovalTraceAvailability.RECORDING &&
+                            traceAvailability != RemovalTraceAvailability.AVAILABLE
+                    ) {
+                        if (RemovalTraceStore.process.arm()) {
+                            traceFeedback = "Armed for the next eligible removal episode."
+                            refreshTrace()
+                        }
+                    }
+                    Text("ARM applies to the next eligible episode; admitted gates keep the unchanged 60-second cooldown.", color = Paper, fontSize = 12.sp)
+                    Action("REFRESH TRACE STATUS") { refreshTrace() }
+                    Action("COPY REMOVAL TRACE", enabled = traceAvailability == RemovalTraceAvailability.AVAILABLE) {
+                        traceFeedback = when (Observation.copyRemovalTrace(context)) {
+                            Observation.RemovalTraceCopyResult.COPIED -> "Copied removal trace to the system clipboard."
+                            Observation.RemovalTraceCopyResult.UNAVAILABLE -> "Removal trace unavailable."
+                        }
+                        refreshTrace()
+                    }
+                    Action("CLEAR REMOVAL TRACE") {
+                        RemovalTraceStore.process.clear()
+                        traceFeedback = "Removal trace cleared."
+                        refreshTrace()
+                    }
+                    traceFeedback?.let { Text(it, color = Jade, fontSize = 12.sp) }
                     Text("SANITIZED STRUCTURAL REPORT", color = Jade)
                     Text("Structure changes with scrolling and content. The sanitized report is separate from a diagnostic shadow prediction; neither blocks, protects, or controls actions; the optional entry pause is default-off and fail-open.", color = Paper)
                     Text("Optional accessibility access can expose screen content to an app. Doom receives package identifiers for window events from all apps only to detect leaving Instagram and remove the gate; it reads no foreign window tree. With fresh report consent, Doom traverses only Instagram: at most 128 nodes through depth 8. It keeps only sanitized static Instagram resource names from compile-time resource tables, normalized safe class names, depth, child count capped at 16, and clickable/scrollable/editable/selected/checked booleans in sorted aggregate rows. Previously unknown resource names are admitted only as exact com.instagram.android:id/ names: 1–64 lowercase ASCII letters/digits/underscores, starting with a letter, at most 96 raw characters. Invalid IDs and unknown classes are omitted. Reports have at most 64 unique tokens and 8,192 ASCII characters/UTF-8 bytes; omitted structure is marked truncated.", color = Paper)

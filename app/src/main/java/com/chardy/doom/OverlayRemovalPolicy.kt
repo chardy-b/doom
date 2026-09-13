@@ -10,6 +10,7 @@ internal class OverlayRemovalPolicy(private val maxAttempts: Int = 20) {
     private var attempts = 0
     private var pending: OverlayRemovalAction? = null
     private var externalActionVetoed = false
+    private var requestedExternalAction: OverlayRemovalAction? = null
 
     init {
         require(maxAttempts > 0)
@@ -19,6 +20,9 @@ internal class OverlayRemovalPolicy(private val maxAttempts: Int = 20) {
         if (externalActionVetoed && action != OverlayRemovalAction.BYPASS &&
             action != OverlayRemovalAction.RESET_OUTSIDE
         ) return
+        if (action != OverlayRemovalAction.BYPASS && action != OverlayRemovalAction.RESET_OUTSIDE) {
+            requestedExternalAction = action
+        }
         val current = pending
         if (current == null || priority(action) > priority(current)) pending = action
     }
@@ -48,6 +52,10 @@ internal class OverlayRemovalPolicy(private val maxAttempts: Int = 20) {
         }
     }
 
+    /** The explicit external action, if any, that safety/exhaustion prevented from escaping. */
+    fun vetoedExternalAction(): OverlayRemovalAction? =
+        requestedExternalAction.takeIf { externalActionVetoed }
+
     fun confirmedDetached(): OverlayRemovalAction? {
         val action = if (externalActionVetoed) {
             if (pending == OverlayRemovalAction.RESET_OUTSIDE) {
@@ -57,6 +65,7 @@ internal class OverlayRemovalPolicy(private val maxAttempts: Int = 20) {
         attempts = 0
         pending = null
         externalActionVetoed = false
+        requestedExternalAction = null
         return action
     }
 

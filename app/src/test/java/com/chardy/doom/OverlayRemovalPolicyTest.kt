@@ -87,6 +87,7 @@ class OverlayRemovalPolicyTest {
         val policy = OverlayRemovalPolicy(maxAttempts = 1)
         policy.request(OverlayRemovalAction.HOME)
         assertEquals(OverlayRemovalDecision.DISABLE_SERVICE, policy.failedAttempt())
+        assertEquals(OverlayRemovalAction.HOME, policy.vetoedExternalAction())
         assertEquals(OverlayRemovalAction.BYPASS, policy.confirmedDetached())
     }
 

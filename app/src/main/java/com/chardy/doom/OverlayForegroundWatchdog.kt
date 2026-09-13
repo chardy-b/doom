@@ -15,6 +15,10 @@ internal enum class OverlayForegroundDecision {
     FAIL_OPEN,
 }
 
+internal enum class OverlayForegroundFailureReason {
+    NONE, ROLLBACK, FOREIGN, UNCERTAINTY_EXPIRED, NO_SAFE_ANCHOR
+}
+
 internal class OverlayForegroundWatchdog(
     private val instagramPackage: String,
     private val doomPackage: String,
@@ -27,8 +31,11 @@ internal class OverlayForegroundWatchdog(
     }
 
     private var lastSafeAtMs: Long? = null
+    var lastFailureReason: OverlayForegroundFailureReason = OverlayForegroundFailureReason.NONE
+        private set
 
     fun reset(shownAtMs: Long) {
+        lastFailureReason = OverlayForegroundFailureReason.NONE
         lastSafeAtMs = shownAtMs.takeIf { it >= 0L }
     }
 
@@ -37,24 +44,39 @@ internal class OverlayForegroundWatchdog(
         packageName: String?,
         verifiedDoomReturn: Boolean,
     ): OverlayForegroundDecision {
-        if (nowMs < 0L) return OverlayForegroundDecision.FAIL_OPEN
+        lastFailureReason = OverlayForegroundFailureReason.NONE
+        if (nowMs < 0L) {
+            lastFailureReason = OverlayForegroundFailureReason.ROLLBACK
+            return OverlayForegroundDecision.FAIL_OPEN
+        }
         if (packageName == instagramPackage ||
             (packageName == doomPackage && verifiedDoomReturn)
         ) {
             val lastSafe = lastSafeAtMs
-            if (lastSafe != null && nowMs < lastSafe) return OverlayForegroundDecision.FAIL_OPEN
+            if (lastSafe != null && nowMs < lastSafe) {
+                lastFailureReason = OverlayForegroundFailureReason.ROLLBACK
+                return OverlayForegroundDecision.FAIL_OPEN
+            }
             lastSafeAtMs = nowMs
             return OverlayForegroundDecision.KEEP
         }
         if (packageName != null) {
+            lastFailureReason = OverlayForegroundFailureReason.FOREIGN
             return OverlayForegroundDecision.FAIL_OPEN
         }
 
-        val lastSafe = lastSafeAtMs ?: return OverlayForegroundDecision.FAIL_OPEN
-        if (nowMs < lastSafe) return OverlayForegroundDecision.FAIL_OPEN
+        val lastSafe = lastSafeAtMs ?: run {
+            lastFailureReason = OverlayForegroundFailureReason.NO_SAFE_ANCHOR
+            return OverlayForegroundDecision.FAIL_OPEN
+        }
+        if (nowMs < lastSafe) {
+            lastFailureReason = OverlayForegroundFailureReason.ROLLBACK
+            return OverlayForegroundDecision.FAIL_OPEN
+        }
         return if (nowMs - lastSafe < uncertaintyGraceMs) {
             OverlayForegroundDecision.KEEP_UNCERTAIN
         } else {
+            lastFailureReason = OverlayForegroundFailureReason.UNCERTAINTY_EXPIRED
             OverlayForegroundDecision.FAIL_OPEN
         }
     }

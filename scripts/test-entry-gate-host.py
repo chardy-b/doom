@@ -19,6 +19,8 @@ MAIN = [
     "EntryGateOverlayModel.kt",
     "BreathingVisuals.kt",
     "SanitizedStructuralReport.kt",
+    "OverlayRemovalTrace.kt",
+    "RemovalTraceStore.kt",
 ]
 TESTS = [
     "GatePolicyTest.kt",
@@ -30,6 +32,7 @@ TESTS = [
     "EntryGateOverlayModelTest.kt",
     "BreathingVisualsTest.kt",
     "SanitizedStructuralReportTest.kt",
+    "OverlayRemovalTraceTest.kt",
 ]
 TEST_CLASSES = [
     "com.chardy.doom.GatePolicyTest",
@@ -41,6 +44,7 @@ TEST_CLASSES = [
     "com.chardy.doom.EntryGateOverlayModelTest",
     "com.chardy.doom.BreathingVisualsTest",
     "com.chardy.doom.SanitizedStructuralReportTest",
+    "com.chardy.doom.OverlayRemovalTraceTest",
 ]
 
 
@@ -81,11 +85,18 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="doom-entry-gate-") as tmp:
         classes = Path(tmp) / "classes"
         classes.mkdir()
+        android_stub = Path(tmp) / "android/os/SystemClock.kt"
+        android_stub.parent.mkdir(parents=True)
+        android_stub.write_text(
+            "package android.os\nobject SystemClock { @JvmStatic fun elapsedRealtime(): Long = System.currentTimeMillis() }\n",
+            encoding="utf-8",
+        )
         subprocess.run([
             "java", "-cp", compiler_cp,
             "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
             "-no-stdlib", "-no-reflect", "-jvm-target", "17",
             "-classpath", source_cp, "-d", str(classes),
+            str(android_stub),
             *(str(path) for path in sources),
         ], check=True, cwd=REPO)
         runtime_cp = os.pathsep.join(map(str, (classes, junit, hamcrest, stdlib)))

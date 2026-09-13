@@ -1,5 +1,6 @@
 """Host-only source guards; Android lifecycle behavior is tested separately in CI."""
 from pathlib import Path
+import re
 import unittest
 
 
@@ -14,10 +15,14 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
     def test_other_package_events_return_before_reading_root_or_changing_samples(self):
         body = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
         guard = body.split("try {", 1)[0]
-        self.assertRegex(body, r'if \(packageName != INSTAGRAM\)\s*\{\s*resetOutside\(\)\s*return\s*\}')
+        self.assertIsNotNone(re.search(
+            r'if \(packageName != INSTAGRAM\)\s*\{.*?resetOutside\(cause = RemovalTraceMark\.EVENT_PACKAGE_RESET,.*?\)\s*return\s*\}',
+            body,
+            re.S,
+        ))
         self.assertNotIn("Observation.record", guard)
         self.assertNotIn("Observation.clear", guard)
-        self.assertGreater(body.index("rootInActiveWindow"), body.index("return"))
+        self.assertGreater(body.index("eventRoot()"), body.index("return"))
 
     def test_collector_rejects_non_instagram_roots_and_recycles_every_path(self):
         body = SERVICE.split("private fun collect", 1)[1].split("override fun onInterrupt", 1)[0]
@@ -169,8 +174,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         install = SERVICE.split("EntryGateOverlayViewFactory.create", 1)[1].split(
             "val parameters", 1
         )[0]
-        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.NAVIGATE_MESSAGES, token)", install)
-        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.HOME, token)", install)
+        self.assertIn("OverlayRemovalAction.NAVIGATE_MESSAGES", install)
+        self.assertIn("OverlayRemovalAction.HOME, token", install)
         confirmed = SERVICE.split("private fun confirmOverlayRemoved", 1)[1].split(
             "private fun cancelAndBypass", 1
         )[0]
@@ -185,15 +190,26 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("entryGate.overlayShown(shownAt, activeTicket)", SERVICE)
         self.assertIn("foregroundWatchdog.reset(shownAt)", SERVICE)
         completion = SERVICE.split("completion = Runnable", 1)[1].split("watchdog =", 1)[0]
-        self.assertIn("requestOverlayRemoval(OverlayRemovalAction.COMPLETE, token)", completion)
+        self.assertIn("OverlayRemovalAction.COMPLETE", completion)
         watchdog = SERVICE.split("watchdog = object", 1)[1].split(
             "}.also { handler.post(it) }", 1
         )[0]
-        self.assertIn("activeRoot?.recycle()", watchdog)
-        self.assertRegex(watchdog, r'catch \(_:\s*RuntimeException\)\s*\{\s*null\s*\}')
-        self.assertIn("foregroundWatchdog.observe", watchdog)
-        self.assertIn("OverlayForegroundDecision.FAIL_OPEN", watchdog)
-        self.assertIn("handler.postDelayed(this, WATCHDOG_INTERVAL_MS)", watchdog)
+        self.assertIn("runWatchdogTick(activeTicket, token, this)", watchdog)
+        tick = SERVICE.split("private fun runWatchdogTick", 1)[1].split(
+            "private fun requestOverlayRemoval", 1
+        )[0]
+        self.assertIn("readWatchdogRoot()", tick)
+        self.assertIn("handler.postDelayed(next, WATCHDOG_INTERVAL_MS)", tick)
+
+        read = SERVICE.split("private fun readWatchdogRoot", 1)[1].split(
+            "private fun traceRecord", 1
+        )[0]
+        self.assertIn("overlayPlatform.recycleRoot(activeRoot)", read)
+        self.assertIn("catch (_: RuntimeException)", read)
+        self.assertIn("RemovalTraceRoot.READ_FAILURE", read)
+        self.assertIn("foregroundWatchdog.observe", tick)
+        self.assertIn("OverlayForegroundDecision.FAIL_OPEN", tick)
+        self.assertIn("handler.postDelayed(next, WATCHDOG_INTERVAL_MS)", tick)
 
     def test_watchdog_uncertainty_is_bounded_and_foreign_roots_are_not_graced(self):
         policy = (REPO / "app/src/main/java/com/chardy/doom/OverlayForegroundWatchdog.kt").read_text()
@@ -202,10 +218,11 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("fun reset(shownAtMs: Long)", policy)
         self.assertIn("nowMs - lastSafe < uncertaintyGraceMs", policy)
         self.assertIn("if (packageName != null)", policy)
-        self.assertLess(policy.index("if (packageName != null)"), policy.index("val lastSafe = lastSafeAtMs ?: return OverlayForegroundDecision.FAIL_OPEN"))
-        install = SERVICE.split("manager.addView(box, parameters)", 1)[1].split(
-            "completion = Runnable", 1
+        self.assertLess(policy.index("if (packageName != null)"), policy.index("val lastSafe = lastSafeAtMs ?: run"))
+        install = SERVICE.split("private fun installOverlay", 1)[1].split(
+            "private fun runWatchdogTick", 1
         )[0]
+        self.assertIn("manager.addView(view, parameters)", SERVICE)
         self.assertLess(install.index("entryGate.admitForDisplay(activeTicket)"),
                         install.index("foregroundWatchdog.reset(shownAt)"))
 
@@ -225,8 +242,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(
             "private fun InstagramSurface.toGateSurface", 1
         )[0]
-        self.assertLess(event.index("packageName != INSTAGRAM"), event.index("rootInActiveWindow"))
-        self.assertIn("resetOutside()", event)
+        self.assertLess(event.index("packageName != INSTAGRAM"), event.index("eventRoot()"))
+        self.assertIn("resetOutside(cause = RemovalTraceMark.EVENT_PACKAGE_RESET", event)
         self.assertIn("Observation.record", event)
         self.assertIn("fun overlayDiagnosticStatus()", (REPO / "app/src/main/java/com/chardy/doom/Observation.kt").read_text())
         self.assertNotIn("event.text", event)
@@ -240,7 +257,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         own_events = SERVICE.split("if (packageName == applicationContext.packageName)", 1)[1].split(
             "if (packageName != INSTAGRAM)", 1
         )[0]
-        self.assertIn("OverlayRemovalAction.PRESERVE_REPORT, overlayToken", own_events)
+        self.assertIn("OverlayRemovalAction.PRESERVE_REPORT", own_events)
+        self.assertIn("RemovalTraceMark.APP_RETURN", own_events)
         self.assertNotIn("if (overlay != null)", own_events)
         preserve = SERVICE.split("OverlayRemovalAction.PRESERVE_REPORT", 1)[1].split("OverlayRemovalAction.RESET_OUTSIDE", 1)[0]
         self.assertIn("mainActivityReturnObserved", preserve)
@@ -292,7 +310,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
 
     def test_messages_route_rechecks_token_consents_and_foreground_before_exact_query(self):
         import re
-        service = SERVICE[SERVICE.rfind("OverlayRemovalAction.NAVIGATE_MESSAGES"):]
+        service = SERVICE[SERVICE.index("OverlayRemovalAction.NAVIGATE_MESSAGES", SERVICE.index("private fun confirmOverlayRemoved")):]
         self.assertIn("detachedToken?.ticket", service)
         self.assertIn("ownsDetachedEpisode", service)
         self.assertIn("Observation.gateConsent", service)
@@ -361,9 +379,9 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("pixel.visibility = View.INVISIBLE", OVERLAY_VIEW)
 
     def test_direct_return_closes_visible_callbacks_before_preserving_report(self):
-        own_events = SERVICE.split("OverlayRemovalAction.PRESERVE_REPORT, overlayToken", 1)[0]
+        own_events = SERVICE.split("RemovalTraceMark.APP_RETURN", 1)[0]
         self.assertIn("requestOverlayRemoval", own_events)
-        preserve_request = SERVICE.split("OverlayRemovalAction.PRESERVE_REPORT, overlayToken", 1)[1].split(")", 1)[0]
+        preserve_request = SERVICE.split("RemovalTraceMark.APP_RETURN", 1)[0]
         self.assertNotIn("allowClosing", preserve_request)
         self.assertIn("beginClosing", SERVICE.split("private fun requestOverlayRemoval", 1)[1].split("private fun requestSafetyCleanup", 1)[0])
 
@@ -377,24 +395,32 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(
             "@Suppress", 1
         )[0]
-        suppression = "if (Observation.gateConsent && entryGate.cooldownActive()) return"
+        suppression = "if (Observation.gateConsent && entryGate.cooldownActive())"
         self.assertIn(suppression, event)
         self.assertLess(event.index(suppression), event.index("beginInstagramSessionIfEligible"))
-        self.assertLess(event.index(suppression), event.index("rootInActiveWindow"))
+        self.assertLess(event.index(suppression), event.index("eventRoot()"))
         self.assertLess(event.index(suppression), event.index("Observation.record"))
 
     def test_cooldown_starts_only_after_real_overlay_admission(self):
         policy = (REPO / "app/src/main/java/com/chardy/doom/InstagramEntryGate.kt").read_text()
         self.assertIn("fun admitForDisplay(ticket: GateTicket)", policy)
         self.assertIn("visibleStartedAtMs == null", policy)
-        install = SERVICE.split("manager.addView(box, parameters)", 1)[1].split(
-            "completion = Runnable", 1
+        install = SERVICE.split("private fun installOverlay", 1)[1].split(
+            "private fun runWatchdogTick", 1
         )[0]
         self.assertLess(install.index("entryGate.overlayShown(shownAt, activeTicket)"),
                         install.index("entryGate.admitForDisplay(activeTicket)"))
         self.assertLess(install.index("entryGate.admitForDisplay(activeTicket)"),
                         install.index("renderOverlay(activeTicket, token)"))
-        self.assertIn("requestSafetyCleanup(OverlayRemovalAction.BYPASS)", install)
+        self.assertIn("requestSafetyCleanup(OverlayRemovalAction.BYPASS", install)
+
+    def test_install_callbacks_keep_their_physical_overlay_token(self):
+        install = SERVICE.split("private fun installOverlay", 1)[1].split(
+            "private fun runWatchdogTick", 1
+        )[0]
+        self.assertRegex(install, r'OverlayRemovalAction\.NAVIGATE_MESSAGES,\s*\n\s*token')
+        self.assertRegex(install, r'OverlayRemovalAction\.HOME, token')
+        self.assertRegex(install, r'OverlayRemovalAction\.COMPLETE,\s*\n\s*\s*token')
 
 
 if __name__ == "__main__":
