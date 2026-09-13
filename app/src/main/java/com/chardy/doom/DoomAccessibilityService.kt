@@ -15,8 +15,9 @@ import android.view.accessibility.AccessibilityNodeInfo
 internal interface OverlayPlatform {
     fun isAttached(view: View): Boolean
     fun removeImmediate(manager: WindowManager, view: View)
-    fun launchInbox(): InboxLaunchResult
-    fun currentForegroundPackage(): String?
+    fun currentRoot(): AccessibilityNodeInfo?
+    fun routeMessages(root: AccessibilityNodeInfo): MessagesRouteResult
+    fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
     fun performHome(): Boolean
 }
 
@@ -26,6 +27,7 @@ class DoomAccessibilityService : AccessibilityService() {
         private const val INSTAGRAM = "com.instagram.android"
         private const val GATE_DURATION_MS = 5_000L
         private const val WATCHDOG_INTERVAL_MS = 50L
+        private const val WATCHDOG_UNCERTAINTY_GRACE_MS = 150L
         private const val REMOVAL_RETRY_INTERVAL_MS = 50L
         private const val MAX_REMOVAL_ATTEMPTS = 20
         private var instance: DoomAccessibilityService? = null
@@ -58,18 +60,22 @@ class DoomAccessibilityService : AccessibilityService() {
     private var completion: Runnable? = null
     private var removalRetry: Runnable? = null
     private var mainActivityReturnObserved = false
+    private val foregroundWatchdog = OverlayForegroundWatchdog(
+        instagramPackage = INSTAGRAM,
+        doomPackage = "com.chardyb.doom",
+        uncertaintyGraceMs = WATCHDOG_UNCERTAINTY_GRACE_MS,
+    )
     private val removalPolicy = OverlayRemovalPolicy(MAX_REMOVAL_ATTEMPTS)
     private val callbackGuard = OverlayCallbackGuard()
     private var overlayToken: OverlayCallbackToken? = null
     private var overlayPlatform: OverlayPlatform = object : OverlayPlatform {
         override fun isAttached(view: View) = view.isAttachedToWindow
         override fun removeImmediate(manager: WindowManager, view: View) = manager.removeViewImmediate(view)
-        override fun launchInbox(): InboxLaunchResult =
-            AndroidInstagramInboxLauncher { intent -> this@DoomAccessibilityService.startActivity(intent) }.launch()
-        override fun currentForegroundPackage(): String? {
-            val root = try { rootInActiveWindow } catch (_: RuntimeException) { null } ?: return null
-            return try { root.packageName?.toString() } finally { root.recycle() }
-        }
+        override fun currentRoot(): AccessibilityNodeInfo? =
+            try { rootInActiveWindow } catch (_: RuntimeException) { null }
+        override fun routeMessages(root: AccessibilityNodeInfo): MessagesRouteResult =
+            InstagramMessagesRouter.route(root)
+        override fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
         override fun performHome(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
     }
 
@@ -267,6 +273,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 requestSafetyCleanup(OverlayRemovalAction.BYPASS)
                 return
             }
+            foregroundWatchdog.reset(shownAt)
             renderOverlay(activeTicket, token)
             publishGateState()
             completion = Runnable {
@@ -278,16 +285,22 @@ class DoomAccessibilityService : AccessibilityService() {
                 override fun run() {
                     if (overlay == null || !callbackGuard.acceptsVisible(token)) return
                     try {
-                        val activeRoot = rootInActiveWindow
                         val packageName = try {
-                            activeRoot?.packageName?.toString()
-                        } finally {
-                            activeRoot?.recycle()
+                            val activeRoot = rootInActiveWindow
+                            try {
+                                activeRoot?.packageName?.toString()
+                            } finally {
+                                activeRoot?.recycle()
+                            }
+                        } catch (_: RuntimeException) {
+                            null
                         }
-                        // if (packageName != INSTAGRAM) fails open unless this is a verified Doom return.
-                        if (packageName != INSTAGRAM &&
-                            !(packageName == applicationContext.packageName && mainActivityReturnObserved)
-                        ) {
+                        val decision = foregroundWatchdog.observe(
+                            monotonicClock(),
+                            packageName,
+                            packageName == applicationContext.packageName && mainActivityReturnObserved,
+                        )
+                        if (decision == OverlayForegroundDecision.FAIL_OPEN) {
                             failOpen()
                             return
                         }
@@ -392,20 +405,49 @@ class DoomAccessibilityService : AccessibilityService() {
             }
             OverlayRemovalAction.NAVIGATE_MESSAGES -> {
                 val routeTicket = detachedToken?.ticket
-                val routeStillAuthorized = routeTicket != null &&
-                    routeTicket == ticket &&
-                    Observation.consent && Observation.gateConsent && Observation.connected &&
-                    entryGate.state == EntryGateState.GATING &&
-                    currentInstagramForeground()
-                if (!routeStillAuthorized || !entryGate.bypass(routeTicket!!)) {
+                if (routeTicket == null ||
+                    !ownsDetachedEpisode ||
+                    routeTicket != ticket ||
+                    !Observation.consent || !Observation.gateConsent || !Observation.connected ||
+                    entryGate.state != EntryGateState.GATING
+                ) {
                     entryGate.cancel()
                     publishGateState()
                     Observation.clear()
                     return
                 }
-                publishGateState()
-                Observation.clear()
-                if (ownsDetachedEpisode) overlayPlatform.launchInbox()
+                val root = try { overlayPlatform.currentRoot() } catch (_: RuntimeException) { null }
+                if (root == null) {
+                    entryGate.cancel()
+                    publishGateState()
+                    Observation.clear()
+                    return
+                }
+                try {
+                    val instagramForeground = root.packageName?.toString() == INSTAGRAM
+                    val rechecked = ownsDetachedEpisode &&
+                        routeTicket == ticket &&
+                        Observation.consent && Observation.gateConsent && Observation.connected &&
+                        instagramForeground &&
+                        entryGate.state == EntryGateState.GATING
+                    if (!rechecked || !entryGate.bypass(routeTicket)) {
+                        entryGate.cancel()
+                        publishGateState()
+                        Observation.clear()
+                        return
+                    }
+                    publishGateState()
+                    Observation.clear()
+                    // The router is deliberately one-shot. It either observes the selected tab,
+                    // clicks the one exact actionable match, or fails closed.
+                    overlayPlatform.routeMessages(root)
+                } catch (_: RuntimeException) {
+                    entryGate.cancel()
+                    publishGateState()
+                    Observation.clear()
+                } finally {
+                    try { overlayPlatform.recycleRoot(root) } catch (_: RuntimeException) { }
+                }
             }
             OverlayRemovalAction.PRESERVE_REPORT -> {
                 if (!mainActivityReturnObserved) return
@@ -467,10 +509,6 @@ class DoomAccessibilityService : AccessibilityService() {
             overlayUi?.showCopyResult(Observation.copyCurrentReportFromOverlay(this))
             renderOverlay(activeTicket, token)
         }
-    }
-
-    private fun currentInstagramForeground(): Boolean {
-        return overlayPlatform.currentForegroundPackage() == INSTAGRAM
     }
 
     private fun publishGateState() {
