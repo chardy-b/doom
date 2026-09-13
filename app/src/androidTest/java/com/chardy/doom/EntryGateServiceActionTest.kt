@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
@@ -23,16 +24,31 @@ class EntryGateServiceActionTest {
     @get:Rule val rule = ActivityScenarioRule(MainActivity::class.java)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
 
+    private enum class RootBehavior {
+        INSTAGRAM,
+        NULL_PACKAGE,
+        FOREIGN,
+        MISSING,
+        THROW,
+        REVOKE_CONSENT,
+        REVOKE_GATE_CONSENT,
+        REVOKE_CONNECTION,
+    }
+
     private class FakePlatform(
         @Volatile var attached: Boolean,
         @Volatile var detachOnRemove: Boolean = true,
-        var foregroundPackage: String? = "com.instagram.android",
-        val launchResult: InboxLaunchResult = InboxLaunchResult.ATTEMPTED,
-        val stateAtLaunch: MutableList<EntryGateState>,
+        var rootBehavior: RootBehavior = RootBehavior.INSTAGRAM,
+        val routeResult: MessagesRouteResult = MessagesRouteResult.CLICKED,
+        val stateAtRoute: MutableList<EntryGateState>,
     ) : OverlayPlatform {
         @Volatile var removeAttempts = 0
-        @Volatile var launchCalls = 0
+        @Volatile var currentRootCalls = 0
+        @Volatile var recycledRoots = 0
+        @Volatile var routeCalls = 0
+        @Volatile var routeThrows = false
         @Volatile var homeCalls = 0
+        lateinit var revokeInsideRoot: () -> Unit
 
         override fun isAttached(view: View) = attached
 
@@ -41,14 +57,39 @@ class EntryGateServiceActionTest {
             if (detachOnRemove) attached = false
         }
 
-        override fun launchInbox(): InboxLaunchResult {
-            stateAtLaunch += stateReader()
-            // Publish the volatile count last, so test-thread reads observe the state first.
-            launchCalls++
-            return launchResult
+        override fun currentRoot(): AccessibilityNodeInfo? {
+            currentRootCalls++
+            when (rootBehavior) {
+                RootBehavior.MISSING -> return null
+                RootBehavior.THROW -> throw IllegalStateException("root unavailable")
+                else -> Unit
+            }
+            when (rootBehavior) {
+                RootBehavior.REVOKE_CONSENT,
+                RootBehavior.REVOKE_GATE_CONSENT,
+                RootBehavior.REVOKE_CONNECTION -> revokeInsideRoot()
+                else -> Unit
+            }
+            return AccessibilityNodeInfo.obtain().apply {
+                packageName = when (rootBehavior) {
+                    RootBehavior.NULL_PACKAGE -> null
+                    RootBehavior.FOREIGN -> "com.example.foreign"
+                    else -> "com.instagram.android"
+                }
+            }
         }
 
-        override fun currentForegroundPackage() = foregroundPackage
+        override fun recycleRoot(root: AccessibilityNodeInfo) {
+            recycledRoots++
+            root.recycle()
+        }
+
+        override fun routeMessages(root: AccessibilityNodeInfo): MessagesRouteResult {
+            routeCalls++
+            if (routeThrows) throw IllegalStateException("route unavailable")
+            stateAtRoute += stateReader()
+            return routeResult
+        }
 
         override fun performHome(): Boolean {
             homeCalls++
@@ -64,6 +105,7 @@ class EntryGateServiceActionTest {
         val ticket: GateTicket,
         val token: OverlayCallbackToken,
         val view: View,
+        val activity: MainActivity,
     )
 
     @After fun cleanUp() {
@@ -76,26 +118,105 @@ class EntryGateServiceActionTest {
         instrumentation.waitForIdleSync()
     }
 
-    @Test fun skipNeverLaunchesWhileAttachedAndLaunchesExactlyOnceAfterDetachAndBypass() {
+    @Test fun skipNeverRoutesWhileAttachedAndRoutesExactlyOnceAfterDetachAndBypass() {
         val fixture = fixture(attached = true, detachOnRemove = false)
         request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
         waitFor { fixture.platform.removeAttempts > 0 }
-        assertEquals(0, fixture.platform.launchCalls)
+        assertEquals(0, fixture.platform.routeCalls)
 
         rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
-        waitFor { fixture.platform.launchCalls == 1 }
-        assertEquals(1, fixture.platform.launchCalls)
-        assertEquals(listOf(EntryGateState.BYPASSED), fixture.platform.stateAtLaunch)
+        waitFor { fixture.platform.routeCalls == 1 }
+        assertEquals(1, fixture.platform.routeCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertEquals(listOf(EntryGateState.BYPASSED), fixture.platform.stateAtRoute)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
     }
 
-    @Test fun unavailableRouteLeavesSameSessionBypassedWithoutRegating() {
-        val fixture = fixture(launchResult = InboxLaunchResult.UNAVAILABLE)
+    @Test fun failedRouteLeavesSameSessionBypassedWithoutRegating() {
+        val fixture = fixture(routeResult = MessagesRouteResult.FAILED)
         request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
-        waitFor { fixture.platform.launchCalls == 1 }
+        waitFor { fixture.platform.routeCalls == 1 }
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
         assertFalse(gate(fixture.service).observeInstagram(1L, fixture.ticket))
-        assertEquals(1, fixture.platform.launchCalls)
+        assertEquals(1, fixture.platform.routeCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+    }
+
+    @Test fun missingRootFailsClosedWithoutRouteOrRootRecycle() {
+        val fixture = fixture(rootBehavior = RootBehavior.MISSING)
+        request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
+        assertEquals(1, fixture.platform.currentRootCalls)
+        assertEquals(0, fixture.platform.recycledRoots)
+        assertEquals(0, fixture.platform.routeCalls)
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+    }
+
+    @Test fun currentRootExceptionFailsClosedWithoutRouteOrRootRecycle() {
+        val fixture = fixture(rootBehavior = RootBehavior.THROW)
+        request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
+        assertEquals(1, fixture.platform.currentRootCalls)
+        assertEquals(0, fixture.platform.recycledRoots)
+        assertEquals(0, fixture.platform.routeCalls)
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+    }
+
+    @Test fun obtainedNullPackageRootIsNotMissingAndIsRecycledOnceWithoutRoute() {
+        val fixture = fixture(rootBehavior = RootBehavior.NULL_PACKAGE)
+        request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
+        assertEquals(1, fixture.platform.currentRootCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertEquals(0, fixture.platform.routeCalls)
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+    }
+
+    @Test fun routeExceptionFailsClosedAndRecyclesObtainedRootExactlyOnce() {
+        val fixture = fixture()
+        fixture.platform.routeThrows = true
+        request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
+        assertEquals(1, fixture.platform.currentRootCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertEquals(1, fixture.platform.routeCalls)
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+    }
+
+    @Test fun consentRevokedInsideCurrentRootRecheckVetoesRouteAndRecyclesOnce() {
+        val fixture = fixture(rootBehavior = RootBehavior.REVOKE_CONSENT)
+        fixture.platform.revokeInsideRoot = { Observation.accept(fixture.activity, false) }
+        request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
+        assertEquals(0, fixture.platform.routeCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+    }
+
+    @Test fun gateConsentRevokedInsideCurrentRootRecheckVetoesRouteAndRecyclesOnce() {
+        val fixture = fixture(rootBehavior = RootBehavior.REVOKE_GATE_CONSENT)
+        fixture.platform.revokeInsideRoot = { Observation.setGateConsent(fixture.activity, false) }
+        request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
+        assertEquals(0, fixture.platform.routeCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+    }
+
+    @Test fun connectionRevokedInsideCurrentRootRecheckVetoesRouteAndRecyclesOnce() {
+        val fixture = fixture(rootBehavior = RootBehavior.REVOKE_CONNECTION)
+        fixture.platform.revokeInsideRoot = { Observation.connected = false }
+        request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
+        assertEquals(0, fixture.platform.routeCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+    }
+
+    @Test fun staleSkipTokenCannotReachMessagesRoute() {
+        val fixture = fixture(attached = true, detachOnRemove = true)
+        rule.scenario.onActivity {
+            val guard = field(fixture.service, "callbackGuard").get(fixture.service) as OverlayCallbackGuard
+            val replacement = guard.open(fixture.ticket)
+            field(fixture.service, "overlayToken").set(fixture.service, replacement)
+            requestOverlayRemovalWithToken(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
+        }
+        instrumentation.waitForIdleSync()
+        assertTrue(fixture.platform.attached)
+        assertEquals(0, fixture.platform.routeCalls)
     }
 
     @Test fun staleOverlayCopyTokenCannotReachServiceCopyGuard() {
@@ -131,7 +252,7 @@ class EntryGateServiceActionTest {
         }
     }
 
-    @Test fun staleCompletionAndRetryFromOverlayACannotRemoveOrLaunchOverlayB() {
+    @Test fun staleCompletionAndRetryFromOverlayACannotRemoveOrRouteOverlayB() {
         val fixture = fixture(attached = true, detachOnRemove = false)
         val oldToken = fixture.token
         request(fixture.service, OverlayRemovalAction.COMPLETE, oldToken)
@@ -148,7 +269,7 @@ class EntryGateServiceActionTest {
         }
         instrumentation.waitForIdleSync()
         assertSame(newView, field(fixture.service, "overlay").get(fixture.service))
-        assertEquals(0, fixture.platform.launchCalls)
+        assertEquals(0, fixture.platform.routeCalls)
         assertEquals(1, fixture.platform.removeAttempts)
     }
 
@@ -161,7 +282,7 @@ class EntryGateServiceActionTest {
         }
         rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
         waitFor { !fixture.platform.attached }
-        assertEquals(0, fixture.platform.launchCalls)
+        assertEquals(0, fixture.platform.routeCalls)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
     }
 
@@ -175,7 +296,7 @@ class EntryGateServiceActionTest {
         }
         rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
         waitFor { !fixture.platform.attached }
-        assertEquals(0, fixture.platform.launchCalls)
+        assertEquals(0, fixture.platform.routeCalls)
     }
 
     @Test fun disconnectDuringPendingSkipVetoesRouteAndClearsConnection() {
@@ -184,21 +305,21 @@ class EntryGateServiceActionTest {
         rule.scenario.onActivity { fixture.service.onUnbind(null) }
         rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
         waitFor { !fixture.platform.attached }
-        assertEquals(0, fixture.platform.launchCalls)
+        assertEquals(0, fixture.platform.routeCalls)
         assertFalse(Observation.connected)
     }
 
-    @Test fun homeBeatsPendingSkipAndDoesNotLaunchMessages() {
+    @Test fun homeBeatsPendingSkipAndDoesNotRouteMessages() {
         val fixture = fixture(attached = true, detachOnRemove = false)
         request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
         request(fixture.service, OverlayRemovalAction.HOME, fixture.token)
         rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
         waitFor { fixture.platform.homeCalls == 1 }
-        assertEquals(0, fixture.platform.launchCalls)
+        assertEquals(0, fixture.platform.routeCalls)
         assertEquals(1, fixture.platform.homeCalls)
     }
 
-    @Test fun directDoomReturnBeatsSkipAndPreservesReportWithoutLaunch() {
+    @Test fun directDoomReturnBeatsSkipAndPreservesReportWithoutRoute() {
         val fixture = fixture(attached = true, detachOnRemove = false)
         request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
         rule.scenario.onActivity {
@@ -207,17 +328,18 @@ class EntryGateServiceActionTest {
         request(fixture.service, OverlayRemovalAction.PRESERVE_REPORT, fixture.token)
         rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
         waitFor { !fixture.platform.attached }
-        assertEquals(0, fixture.platform.launchCalls)
+        assertEquals(0, fixture.platform.routeCalls)
         assertEquals(EntryGateState.OUTSIDE, gate(fixture.service).state)
     }
 
     @Test fun foreignOrMissingForegroundSuppressesRouteAndHome() {
-        listOf("com.example.foreign", null).forEach { packageName ->
-            val fixture = fixture(foregroundPackage = packageName)
+        listOf(RootBehavior.FOREIGN, RootBehavior.NULL_PACKAGE).forEach { behavior ->
+            val fixture = fixture(rootBehavior = behavior)
             request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
             waitFor { !fixture.platform.attached }
-            assertEquals(0, fixture.platform.launchCalls)
+            assertEquals(0, fixture.platform.routeCalls)
             assertEquals(0, fixture.platform.homeCalls)
+            assertEquals(1, fixture.platform.recycledRoots)
         }
     }
 
@@ -257,8 +379,8 @@ class EntryGateServiceActionTest {
     private fun fixture(
         attached: Boolean = false,
         detachOnRemove: Boolean = true,
-        foregroundPackage: String? = "com.instagram.android",
-        launchResult: InboxLaunchResult = InboxLaunchResult.ATTEMPTED,
+        rootBehavior: RootBehavior = RootBehavior.INSTAGRAM,
+        routeResult: MessagesRouteResult = MessagesRouteResult.CLICKED,
     ): Fixture {
         lateinit var result: Fixture
         rule.scenario.onActivity { activity ->
@@ -274,8 +396,9 @@ class EntryGateServiceActionTest {
             entryGate.overlayShown(0L, ticket)
             val view = View(activity)
             val states = mutableListOf<EntryGateState>()
-            val platform = FakePlatform(attached, detachOnRemove, foregroundPackage, launchResult, states)
+            val platform = FakePlatform(attached, detachOnRemove, rootBehavior, routeResult, states)
             platform.stateReader = { entryGate.state }
+            platform.revokeInsideRoot = { }
             field(service, "ticket").set(service, ticket)
             field(service, "overlay").set(service, view)
             field(service, "windowManager").set(
@@ -286,7 +409,7 @@ class EntryGateServiceActionTest {
             val guard = field(service, "callbackGuard").get(service) as OverlayCallbackGuard
             val token = guard.open(ticket)
             field(service, "overlayToken").set(service, token)
-            result = Fixture(service, platform, ticket, token, view)
+            result = Fixture(service, platform, ticket, token, view, activity)
         }
         instrumentation.waitForIdleSync()
         return result

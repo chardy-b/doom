@@ -5,6 +5,7 @@ import unittest
 
 REPO = Path(__file__).resolve().parents[1]
 SERVICE = (REPO / "app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt").read_text()
+ROUTER = (REPO / "app/src/main/java/com/chardy/doom/InstagramMessagesRouter.kt").read_text()
 OBSERVATION = (REPO / "app/src/main/java/com/chardy/doom/Observation.kt").read_text()
 OVERLAY_VIEW = (REPO / "app/src/main/java/com/chardy/doom/EntryGateOverlayView.kt").read_text()
 
@@ -259,17 +260,55 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
             confirmed
         )
 
-    def test_messages_route_is_constant_and_has_no_fallback_or_node_action(self):
-        launcher = (REPO / "app/src/main/java/com/chardy/doom/InstagramInboxLauncher.kt").read_text()
-        self.assertIn('Intent.ACTION_VIEW', launcher)
-        self.assertIn('https://www.instagram.com/direct/inbox/', launcher)
-        self.assertIn('setPackage("com.instagram.android")', launcher)
-        self.assertIn('FLAG_ACTIVITY_NEW_TASK', launcher)
-        for forbidden in ("createChooser", "ACTION_SEND", "resolveActivity", "dispatchGesture",
-                          "performAction", "Uri.parse(user", "http://"):
-            self.assertNotIn(forbidden, launcher + SERVICE)
-        self.assertIn("InboxLaunchResult.ATTEMPTED", launcher)
-        self.assertIn("catch (_: RuntimeException)", launcher)
+    def test_messages_route_is_exact_id_only_and_has_no_fallback(self):
+        self.assertFalse((REPO / "app/src/main/java/com/chardy/doom/InstagramInboxLauncher.kt").exists())
+        self.assertFalse((REPO / "app/src/androidTest/java/com/chardy/doom/InstagramInboxLauncherTest.kt").exists())
+        self.assertIn('INSTAGRAM_DIRECT_TAB_ID = "com.instagram.android:id/direct_tab"', ROUTER)
+        self.assertIn("findAccessibilityNodeInfosByViewId(viewId)", ROUTER)
+        self.assertIn("AccessibilityNodeInfo.ACTION_CLICK", ROUTER)
+        self.assertEqual(1, ROUTER.count("performAction(AccessibilityNodeInfo.ACTION_CLICK)"))
+        for forbidden in ("findAccessibilityNodeInfosByText", "contentDescription", "childCount",
+                          "getChild", "dispatchGesture", "createChooser", "ACTION_VIEW",
+                          "ACTION_SEND", "resolveActivity", "Uri.parse", "http://", "https://",
+                          "startActivity", "performGlobalAction"):
+            self.assertNotIn(forbidden, ROUTER)
+        self.assertNotIn("launchInbox", SERVICE)
+
+    def test_messages_router_recycles_unique_matches_and_service_recycles_root(self):
+        self.assertIn("recycleDistinct(matches, root, recycle)", ROUTER)
+        self.assertIn("Collections.newSetFromMap(IdentityHashMap", ROUTER)
+        route = SERVICE.split("OverlayRemovalAction.NAVIGATE_MESSAGES", 1)[1]
+        self.assertIn("val root = try { overlayPlatform.currentRoot()", route)
+        self.assertIn("try { overlayPlatform.recycleRoot(root) } catch (_: RuntimeException) { }", route)
+
+    def test_messages_router_counts_before_state_reads_and_selected_short_circuits(self):
+        body = ROUTER.split("): MessagesRouteResult", 1)[1]
+        self.assertIn("matches.size != 1", body)
+        self.assertIn("readSelected(requireNotNull(match))", body)
+        self.assertIn("readActionability(requireNotNull(match))", body)
+        self.assertLess(body.index("matches.size != 1"), body.index("readSelected(requireNotNull(match))"))
+        self.assertLess(body.index("readSelected(requireNotNull(match))"), body.index("readActionability(requireNotNull(match))"))
+        self.assertLess(body.index("readActionability(requireNotNull(match))"), body.index("click(requireNotNull(match))"))
+
+    def test_messages_route_rechecks_token_consents_and_foreground_before_exact_query(self):
+        import re
+        service = SERVICE[SERVICE.rfind("OverlayRemovalAction.NAVIGATE_MESSAGES"):]
+        self.assertIn("detachedToken?.ticket", service)
+        self.assertIn("ownsDetachedEpisode", service)
+        self.assertIn("Observation.gateConsent", service)
+        self.assertIn("Observation.consent", service)
+        self.assertIn("Observation.connected", service)
+        self.assertIn("currentRoot()", service)
+        self.assertIn("root.packageName?.toString() == INSTAGRAM", service)
+        self.assertLess(service.index("routeTicket != ticket"), service.index("currentRoot()"))
+        self.assertLess(service.index("currentRoot()"), service.index("routeMessages(root)"))
+        route_only = service.split("OverlayRemovalAction.NAVIGATE_MESSAGES", 1)[1].split(
+            "OverlayRemovalAction.PRESERVE_REPORT", 1
+        )[0]
+        for forbidden in ("viewIdResourceName", "contentDescription", "childCount",
+                          "getChild", "findAccessibilityNodeInfosByText", "dispatchGesture"):
+            self.assertNotIn(forbidden, route_only)
+        self.assertIsNone(re.search(r"\.text\b|getText\s*\(", route_only))
 
     def test_overlay_callbacks_are_scoped_and_service_has_no_compose_or_animation_clock(self):
         guard = (REPO / "app/src/main/java/com/chardy/doom/OverlayCallbackGuard.kt").read_text()
@@ -320,15 +359,6 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("lastStatus", OVERLAY_VIEW)
         self.assertIn("lastCopyVisibility", OVERLAY_VIEW)
         self.assertIn("pixel.visibility = View.INVISIBLE", OVERLAY_VIEW)
-
-    def test_messages_route_rechecks_token_consents_and_foreground_before_launch(self):
-        service = SERVICE[SERVICE.rfind("OverlayRemovalAction.NAVIGATE_MESSAGES"):]
-        self.assertIn("detachedToken?.ticket", service)
-        self.assertIn("Observation.gateConsent", service)
-        self.assertIn("Observation.consent", service)
-        self.assertIn("Observation.connected", service)
-        self.assertIn("currentInstagramForeground()", service)
-        self.assertIn("overlayPlatform.launchInbox()", service)
 
     def test_direct_return_closes_visible_callbacks_before_preserving_report(self):
         own_events = SERVICE.split("OverlayRemovalAction.PRESERVE_REPORT, overlayToken", 1)[0]
