@@ -40,11 +40,13 @@ class StructuralDiagnosticUiTest {
     }
 
     @Before fun reset() = rule.runOnIdle {
+        RemovalTraceStore.process.clear()
         Observation.setGateConsent(rule.activity, false)
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
     }
     @After fun cleanup() = rule.runOnIdle {
+        RemovalTraceStore.process = RemovalTraceStore()
         Observation.setGateConsent(rule.activity, false)
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
@@ -73,6 +75,42 @@ class StructuralDiagnosticUiTest {
     private fun assertActionsDisabled() {
         rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().assertIsNotEnabled()
         rule.onNodeWithText("COPY REVIEWED REPORT").performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test fun removalTraceControlsShowTruthfulStatesAndRefreshIsNonDestructive() {
+        var now = 90_000L
+        RemovalTraceStore.process = RemovalTraceStore({ now })
+        rule.runOnIdle {
+            Observation.accept(rule.activity, true)
+            Observation.setGateConsent(rule.activity, true)
+            RemovalTraceStore.process.arm(now)
+        }
+        shown("REMOVAL TRACE · ARMED")
+        rule.onNodeWithText("ARM NEXT REMOVAL TRACE").performScrollTo().assertIsEnabled()
+
+        rule.runOnIdle {
+            RemovalTraceStore.process.beginEligibleEpisode(now + 1L)
+            RemovalTraceStore.process.record(now + 2L, RemovalTraceMark.SHOWN)
+        }
+        rule.onNodeWithText("REFRESH TRACE STATUS").performScrollTo().performClick()
+        shown("REMOVAL TRACE · RECORDING")
+        rule.onNodeWithText("Trace recording · one episode only").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("ARM NEXT REMOVAL TRACE").performScrollTo().assertIsNotEnabled()
+        rule.runOnIdle {
+            assertEquals(RemovalTraceAvailability.RECORDING, RemovalTraceStore.process.availability(now + 2L))
+        }
+
+        rule.runOnIdle {
+            now += 1L
+            RemovalTraceStore.process.finish(now, RemovalTraceMark.DETACHED, detached = true)
+        }
+        rule.onNodeWithText("REFRESH TRACE STATUS").performScrollTo().performClick()
+        shown("REMOVAL TRACE · AVAILABLE")
+        rule.onNodeWithText("Trace available · process-local evidence").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("ARM NEXT REMOVAL TRACE").performScrollTo().assertIsNotEnabled()
+        val beforeRefresh = rule.runOnIdle { RemovalTraceStore.process.snapshot() }
+        rule.onNodeWithText("REFRESH TRACE STATUS").performScrollTo().performClick()
+        rule.runOnIdle { assertEquals(beforeRefresh, RemovalTraceStore.process.snapshot()) }
     }
     private fun revealAndCopy() {
         tap("REVEAL LOCAL REPORT")

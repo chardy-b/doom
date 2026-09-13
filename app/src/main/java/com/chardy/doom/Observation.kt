@@ -57,7 +57,10 @@ object Observation {
         context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
             .putBoolean(ENTRY_GATE_CONSENT_KEY, accepted).apply()
         gateConsent = accepted
-        if (!accepted) DoomAccessibilityService.cancelEntryGate()
+        if (!accepted) {
+            RemovalTraceStore.process.clear()
+            DoomAccessibilityService.cancelEntryGate()
+        }
     }
 
     fun accept(context: Context, accepted: Boolean) {
@@ -65,7 +68,10 @@ object Observation {
             .remove("accepted").remove("structural_fingerprints_v1").putBoolean(CONSENT_KEY, accepted).apply()
         if (consent != accepted) clear()
         consent = accepted
-        if (!accepted) DoomAccessibilityService.disableObservation()
+        if (!accepted) {
+            RemovalTraceStore.process.clear()
+            DoomAccessibilityService.disableObservation()
+        }
     }
 
     internal fun record(sample: SanitizedStructuralReport?) {
@@ -85,6 +91,19 @@ object Observation {
         writeClipboard(context, current, markReviewedCopy = true)
     }
 
+    internal enum class RemovalTraceCopyResult { COPIED, UNAVAILABLE }
+
+    /** Explicit, typed trace copy. It does not require service connectivity. */
+    internal fun copyRemovalTrace(context: Context): RemovalTraceCopyResult {
+        if (!consent || !gateConsent) return RemovalTraceCopyResult.UNAVAILABLE
+        val snapshot = RemovalTraceStore.process.snapshot() ?: return RemovalTraceCopyResult.UNAVAILABLE
+        return if (writeSensitiveClipboard(context, "Doom removal trace", snapshot.serializeAscii())) {
+            RemovalTraceCopyResult.COPIED
+        } else {
+            RemovalTraceCopyResult.UNAVAILABLE
+        }
+    }
+
     /** Explicit overlay action. It never reveals the report or changes the reviewed-copy state. */
     internal fun copyCurrentReportFromOverlay(context: Context): OverlayCopyResult {
         if (!consent || !connected) return OverlayCopyResult.UNAVAILABLE
@@ -97,15 +116,18 @@ object Observation {
         context: Context,
         current: SanitizedStructuralReport,
         markReviewedCopy: Boolean
-    ): Boolean = try {
+    ): Boolean = writeSensitiveClipboard(context, "Doom sanitized structural report", current.text).also {
+        if (it && markReviewedCopy) copied = true
+    }
+
+    private fun writeSensitiveClipboard(context: Context, label: String, text: String): Boolean = try {
         val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return false
-        val clip = ClipData.newPlainText("Doom sanitized structural report", current.text)
+        val clip = ClipData.newPlainText(label, text)
         // Suppress supported system clipboard previews; this does not keep the copy in Doom.
         clip.description.extras = PersistableBundle().apply {
             putBoolean("android.content.extra.IS_SENSITIVE", true)
         }
         clipboard.setPrimaryClip(clip)
-        if (markReviewedCopy) copied = true
         true
     } catch (_: RuntimeException) {
         false
