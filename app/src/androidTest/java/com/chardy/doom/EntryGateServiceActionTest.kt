@@ -709,7 +709,10 @@ class EntryGateServiceActionTest {
                 val roots = fresh.platform.currentRootCalls
                 val removes = fresh.platform.removeAttempts
                 val generation = gate(fresh.service).generation
-                Observation.record(SanitizedStructuralReport.Builder().build())
+                Observation.record(SanitizedStructuralReport.Builder().apply {
+                    add(0, "com.instagram.android:id/feed", "android.widget.TextView",
+                        0, false, false, false, false, false)
+                }.build())
                 val report = requireNotNull(Observation.report)
                 fresh.platform.rootBehavior = RootBehavior.THROW
                 repeat(3) {

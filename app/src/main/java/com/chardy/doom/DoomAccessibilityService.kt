@@ -621,7 +621,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 if (routeTicket == null || !ownsDetachedEpisode ||
                     !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)
                 ) {
-                    if (routeTicket == ticket && entryGate.state == EntryGateState.GATING) entryGate.cancel()
+                    routeTicket?.let(::cancelCurrentGatingTicket)
                     publishGateState()
                     Observation.clear()
                     detachedToken?.let(callbackGuard::consumeDetached)
@@ -629,7 +629,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 }
                 val root = try { overlayPlatform.currentRoot() } catch (_: RuntimeException) { null }
                 if (root == null) {
-                    if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) entryGate.cancel()
+                    cancelCurrentGatingTicket(routeTicket)
                     publishGateState()
                     Observation.clear()
                     callbackGuard.consumeDetached(detachedToken)
@@ -641,7 +641,7 @@ class DoomAccessibilityService : AccessibilityService() {
                         !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
                         !entryGate.beginMessagesRoute(routeTicket)
                     ) {
-                        if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) entryGate.cancel()
+                        cancelCurrentGatingTicket(routeTicket)
                         publishGateState()
                         Observation.clear()
                         return
@@ -662,8 +662,10 @@ class DoomAccessibilityService : AccessibilityService() {
                         entryGate.finishMessagesRoute(
                             monotonicClock(), routeTicket, MessagesRouteResult.FAILED
                         )
-                    } else if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) {
-                        entryGate.cancel()
+                    } else if (routeTicket == ticket && entryGate.state == EntryGateState.BYPASSED) {
+                        entryGate.bypass(routeTicket)
+                    } else {
+                        cancelCurrentGatingTicket(routeTicket)
                     }
                     publishGateState()
                     Observation.clear()
@@ -690,14 +692,14 @@ class DoomAccessibilityService : AccessibilityService() {
                 if (completeTicket == null || !ownsDetachedEpisode ||
                     !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)
                 ) {
-                    if (completeTicket == ticket && entryGate.state == EntryGateState.GATING) entryGate.cancel()
+                    completeTicket?.let(::cancelCurrentGatingTicket)
                     publishGateState()
                     detachedToken?.let(callbackGuard::consumeDetached)
                     return
                 }
                 val root = try { overlayPlatform.currentRoot() } catch (_: RuntimeException) { null }
                 if (root == null) {
-                    if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) entryGate.cancel()
+                    cancelCurrentGatingTicket(completeTicket)
                     publishGateState()
                     callbackGuard.consumeDetached(detachedToken)
                     return
@@ -707,11 +709,11 @@ class DoomAccessibilityService : AccessibilityService() {
                     if (!validRoot || !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
                         !entryGate.complete(monotonicClock(), completeTicket)
                     ) {
-                        if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) entryGate.cancel()
+                        cancelCurrentGatingTicket(completeTicket)
                     }
                     publishGateState()
                 } catch (_: RuntimeException) {
-                    if (hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) entryGate.cancel()
+                    cancelCurrentGatingTicket(completeTicket)
                     publishGateState()
                 } finally {
                     try { overlayPlatform.recycleRoot(root) } catch (_: RuntimeException) { }
@@ -736,6 +738,12 @@ class DoomAccessibilityService : AccessibilityService() {
         token.ticket == ticket && token.ticket.generation == entryGate.generation &&
         Observation.consent && Observation.gateConsent && Observation.connected &&
         entryGate.state == expectedState
+
+    /** Abandon only the detached action's own still-current gate after authority is lost. */
+    private fun cancelCurrentGatingTicket(candidate: GateTicket) {
+        if (candidate != ticket || entryGate.state != EntryGateState.GATING) return
+        entryGate.cancel()
+    }
 
     private fun cancelAndBypass() {
         requestSafetyCleanup(OverlayRemovalAction.BYPASS, RemovalTraceMark.SAFETY_OVERRIDE)
