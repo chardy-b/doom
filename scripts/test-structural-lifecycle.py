@@ -12,6 +12,14 @@ OVERLAY_VIEW = (REPO / "app/src/main/java/com/chardy/doom/EntryGateOverlayView.k
 
 
 class StructuralLifecycleSourceTest(unittest.TestCase):
+    def test_instagram_events_preserve_installed_or_closing_gate_before_new_session_work(self):
+        event = SERVICE.split("// Suppression is checked", 1)[1].split('@Suppress', 1)[0]
+        keep = event.index("if (overlay != null) return")
+        self.assertLess(event.index("entryGate.cooldownActive()"), keep)
+        self.assertLess(event.index("!Observation.consent || !Observation.connected"), keep)
+        for operation in ("beginInstagramSessionIfEligible()", "overlayPlatform.eventRoot()", "collect(root)"):
+            self.assertLess(keep, event.index(operation))
+
     def test_revocation_preflight_is_limited_to_a_visible_overlay(self):
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
         preflight = event.split("// Doom's own", 1)[0]
@@ -248,8 +256,9 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
             "private fun runWatchdogTick", 1
         )[0]
         self.assertIn("manager.addView(view, parameters)", SERVICE)
-        self.assertLess(install.index("entryGate.admitForDisplay(activeTicket)"),
+        self.assertLess(install.index("entryGate.overlayShown(shownAt, activeTicket)"),
                         install.index("foregroundWatchdog.reset(shownAt)"))
+        self.assertNotIn("recordTerminal", install)
 
     def test_overlay_actions_wait_for_confirmed_physical_detachment(self):
         removal = SERVICE.split("private fun requestOverlayRemoval", 1)[1].split(
@@ -348,7 +357,10 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("Observation.connected", service)
         self.assertIn("currentRoot()", service)
         self.assertIn("root.packageName?.toString() == INSTAGRAM", service)
-        self.assertLess(service.index("routeTicket != ticket"), service.index("currentRoot()"))
+        self.assertLess(service.index("hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)"), service.index("currentRoot()"))
+        authority = SERVICE.split("private fun hasDetachedTerminalAuthority", 1)[1]
+        self.assertIn("token.ticket == ticket", authority)
+        self.assertIn("callbackGuard.acceptsDetached(token)", authority)
         self.assertLess(service.index("currentRoot()"), service.index("routeMessages(root)"))
         route_only = service.split("OverlayRemovalAction.NAVIGATE_MESSAGES", 1)[1].split(
             "OverlayRemovalAction.PRESERVE_REPORT", 1
@@ -419,7 +431,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         policy = (REPO / "app/src/main/java/com/chardy/doom/InstagramEntryGate.kt").read_text()
         self.assertIn("INSTAGRAM_ENTRY_COOLDOWN_MS = 60_000L", policy)
         self.assertIn("monotonicNowMs: () -> Long", policy)
-        self.assertIn("return nowMs - admittedAt < durationMs", policy)
+        self.assertIn("return nowMs - terminalAt < durationMs", policy)
         self.assertNotIn("System.currentTimeMillis", SERVICE + policy)
         self.assertEqual(1, SERVICE.count("SystemClock.elapsedRealtime()"))
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(
@@ -432,16 +444,19 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertLess(instagram.index(suppression), instagram.index("eventRoot()"))
         self.assertLess(instagram.index(suppression), instagram.index("Observation.record"))
 
-    def test_cooldown_starts_only_after_real_overlay_admission(self):
+    def test_cooldown_is_owned_only_by_terminal_policy_operations(self):
         policy = (REPO / "app/src/main/java/com/chardy/doom/InstagramEntryGate.kt").read_text()
-        self.assertIn("fun admitForDisplay(ticket: GateTicket)", policy)
-        self.assertIn("visibleStartedAtMs == null", policy)
+        self.assertNotIn("fun admitForDisplay", policy)
+        self.assertIn("cooldown.recordTerminal(ticket, nowMs)", policy)
+        self.assertIn("fun beginMessagesRoute", policy)
+        self.assertIn("fun finishMessagesRoute", policy)
+        self.assertIn("result == MessagesRouteResult.FAILED", policy)
         install = SERVICE.split("private fun installOverlay", 1)[1].split(
             "private fun runWatchdogTick", 1
         )[0]
+        self.assertNotIn("recordTerminal", install)
+        self.assertNotIn("admitForDisplay", install)
         self.assertLess(install.index("entryGate.overlayShown(shownAt, activeTicket)"),
-                        install.index("entryGate.admitForDisplay(activeTicket)"))
-        self.assertLess(install.index("entryGate.admitForDisplay(activeTicket)"),
                         install.index("renderOverlay(activeTicket, token)"))
         self.assertIn("requestSafetyCleanup(OverlayRemovalAction.BYPASS", install)
 

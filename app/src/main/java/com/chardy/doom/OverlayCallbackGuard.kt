@@ -33,12 +33,18 @@ internal class OverlayCallbackGuard {
         if (token == current) {
             detached = true
             closing = true
-            current = null
         }
     }
 
+    fun acceptsDetached(token: OverlayCallbackToken): Boolean =
+        token == current && closing && detached
+
+    fun consumeDetached(token: OverlayCallbackToken) {
+        if (acceptsDetached(token)) current = null
+    }
+
     fun invalidateVisible() {
-        if (!detached) closing = true
+        if (!detached) closing = true else current = null
     }
 
 }

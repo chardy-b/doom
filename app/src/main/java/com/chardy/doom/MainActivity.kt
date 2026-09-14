@@ -134,7 +134,7 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
                         !Observation.connected -> "Observation off · service disconnected"
                         else -> "Observer connected · mapping unverified"
                     }, color = Paper, fontSize = 18.sp)
-                    Text("Diagnostic entry breathing gate · OFF by default. Unverified; does not claim protection. An admitted production gate cannot repeat for one minute; cooldown is in memory only.", color = Rust)
+                    Text("Diagnostic entry breathing gate · OFF by default. Unverified; does not claim protection. Only completion or a successful exact Messages result starts the one-minute in-memory cooldown; display, Leave, and failed routing do not.", color = Rust)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = Observation.gateConsent, onCheckedChange = { Observation.setGateConsent(context, it) }, modifier = Modifier.semantics { contentDescription = "Diagnostic Instagram entry gate opt in" })
                         Text("Allow diagnostic Instagram entry pause", color = Paper, modifier = Modifier.weight(1f))
@@ -165,7 +165,7 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
                             refreshTrace()
                         }
                     }
-                    Text("ARM applies to the next eligible episode; admitted gates keep the unchanged 60-second cooldown.", color = Paper, fontSize = 12.sp)
+                    Text("ARM applies to the next eligible episode; terminal successes keep the unchanged 60-second cooldown.", color = Paper, fontSize = 12.sp)
                     Action("REFRESH TRACE STATUS") { refreshTrace() }
                     Action("COPY REMOVAL TRACE", enabled = traceAvailability == RemovalTraceAvailability.AVAILABLE) {
                         traceFeedback = when (Observation.copyRemovalTrace(context)) {

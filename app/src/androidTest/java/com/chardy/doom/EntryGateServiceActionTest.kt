@@ -58,6 +58,7 @@ class EntryGateServiceActionTest {
         val platformCalls = Collections.synchronizedList(mutableListOf<String>())
         lateinit var revokeInsideRoot: () -> Unit
         var rootReadHook: () -> Unit = {}
+        var beforeRouteReturns: () -> Unit = {}
 
         override fun isAttached(view: View) = attached
 
@@ -109,6 +110,7 @@ class EntryGateServiceActionTest {
             routeCalls++
             if (routeThrows) throw IllegalStateException("route unavailable")
             stateAtRoute += stateReader()
+            beforeRouteReturns()
             return routeResult
         }
 
@@ -178,6 +180,19 @@ class EntryGateServiceActionTest {
         assertEquals(1, fixture.platform.recycledRoots)
         assertEquals(listOf(EntryGateState.BYPASSED), fixture.platform.stateAtRoute)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertTrue(gate(fixture.service).cooldownActive())
+    }
+
+    @Test fun alreadySelectedMessagesResultArmsCooldownOnlyAfterRoutingReturns() {
+        val fixture = fixture(routeResult = MessagesRouteResult.ALREADY_SELECTED)
+        fixture.platform.beforeRouteReturns = {
+            assertFalse(gate(fixture.service).cooldownActive())
+        }
+        assertFalse(gate(fixture.service).cooldownActive())
+        request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
+        assertEquals(1, fixture.platform.routeCalls)
+        assertTrue(gate(fixture.service).cooldownActive())
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
     }
 
     @Test fun failedRouteLeavesSameSessionBypassedWithoutRegating() {
@@ -188,6 +203,7 @@ class EntryGateServiceActionTest {
         assertFalse(gate(fixture.service).observeInstagram(1L, fixture.ticket))
         assertEquals(1, fixture.platform.routeCalls)
         assertEquals(1, fixture.platform.recycledRoots)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun missingRootFailsClosedWithoutRouteOrRootRecycle() {
@@ -197,6 +213,7 @@ class EntryGateServiceActionTest {
         assertEquals(0, fixture.platform.recycledRoots)
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun currentRootExceptionFailsClosedWithoutRouteOrRootRecycle() {
@@ -206,6 +223,7 @@ class EntryGateServiceActionTest {
         assertEquals(0, fixture.platform.recycledRoots)
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun obtainedNullPackageRootIsNotMissingAndIsRecycledOnceWithoutRoute() {
@@ -215,6 +233,7 @@ class EntryGateServiceActionTest {
         assertEquals(1, fixture.platform.recycledRoots)
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun routeExceptionFailsClosedAndRecyclesObtainedRootExactlyOnce() {
@@ -225,6 +244,7 @@ class EntryGateServiceActionTest {
         assertEquals(1, fixture.platform.recycledRoots)
         assertEquals(1, fixture.platform.routeCalls)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun consentRevokedInsideCurrentRootRecheckVetoesRouteAndRecyclesOnce() {
@@ -234,6 +254,7 @@ class EntryGateServiceActionTest {
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(1, fixture.platform.recycledRoots)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun gateConsentRevokedInsideCurrentRootRecheckVetoesRouteAndRecyclesOnce() {
@@ -243,6 +264,7 @@ class EntryGateServiceActionTest {
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(1, fixture.platform.recycledRoots)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun connectionRevokedInsideCurrentRootRecheckVetoesRouteAndRecyclesOnce() {
@@ -252,6 +274,7 @@ class EntryGateServiceActionTest {
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(1, fixture.platform.recycledRoots)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun closingForeignEventVetoesPendingHomeWithoutReadingARoot() {
@@ -276,6 +299,7 @@ class EntryGateServiceActionTest {
         assertTrue(requireNotNull(RemovalTraceStore.process.snapshot()).records.any {
             it.mark == RemovalTraceMark.ACTION_VETOED && it.action == RemovalTraceAction.HOME
         })
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun staleSkipTokenCannotReachMessagesRoute() {
@@ -289,6 +313,7 @@ class EntryGateServiceActionTest {
         instrumentation.waitForIdleSync()
         assertTrue(fixture.platform.attached)
         assertEquals(0, fixture.platform.routeCalls)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun staleOverlayCopyTokenCannotReachServiceCopyGuard() {
@@ -343,6 +368,7 @@ class EntryGateServiceActionTest {
         assertSame(newView, field(fixture.service, "overlay").get(fixture.service))
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(1, fixture.platform.removeAttempts)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun safetyInterruptAndReacceptCannotReleasePendingSkip() {
@@ -356,6 +382,7 @@ class EntryGateServiceActionTest {
         waitFor { !fixture.platform.attached }
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun consentRevocationDuringPendingSkipVetoesRouteEvenAfterReacceptance() {
@@ -369,6 +396,7 @@ class EntryGateServiceActionTest {
         rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
         waitFor { !fixture.platform.attached }
         assertEquals(0, fixture.platform.routeCalls)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun disconnectDuringPendingSkipVetoesRouteAndClearsConnection() {
@@ -379,6 +407,7 @@ class EntryGateServiceActionTest {
         waitFor { !fixture.platform.attached }
         assertEquals(0, fixture.platform.routeCalls)
         assertFalse(Observation.connected)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun homeBeatsPendingSkipAndDoesNotRouteMessages() {
@@ -393,6 +422,7 @@ class EntryGateServiceActionTest {
         assertEquals(1, fixture.platform.homeCalls)
         assertTrue(fixture.platform.platformCalls.indexOf("removeImmediate") <
             fixture.platform.platformCalls.indexOf("performHome"))
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun directDoomReturnBeatsSkipAndPreservesReportWithoutRoute() {
@@ -406,6 +436,7 @@ class EntryGateServiceActionTest {
         waitFor { !fixture.platform.attached }
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(EntryGateState.OUTSIDE, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun messagesRouteRejectsForeignOrUnattributedRootAfterDetach() {
@@ -417,6 +448,7 @@ class EntryGateServiceActionTest {
             assertEquals(0, fixture.platform.routeCalls)
             assertEquals(0, fixture.platform.homeCalls)
             assertEquals(1, fixture.platform.recycledRoots)
+            assertFalse(gate(fixture.service).cooldownActive())
         }
     }
 
@@ -427,27 +459,45 @@ class EntryGateServiceActionTest {
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(1, fresh.installs)
                 assertTrue(fresh.platform.attached)
-                assertTrue(gate(fresh.service).cooldownActive())
-                val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
-                requestOverlayRemovalWithToken(fresh.service, OverlayRemovalAction.HOME, token)
+                assertFalse(gate(fresh.service).cooldownActive())
+                fresh.now[0] = 15_000L
+                (field(fresh.service, "completion").get(fresh.service) as Runnable).run()
                 assertFalse(fresh.platform.attached)
-                assertEquals(1, fresh.platform.homeCalls)
+                assertTrue(gate(fresh.service).cooldownActive())
+                assertEquals(0, fresh.platform.homeCalls)
                 assertEquals(0, fresh.platform.routeCalls)
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
                 val roots = fresh.platform.currentRootCalls
                 val generation = gate(fresh.service).generation
-                fresh.now[0] = 69_999L
+                fresh.now[0] = 74_999L
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(roots, fresh.platform.currentRootCalls)
                 assertEquals(1, fresh.installs)
                 assertEquals(generation, gate(fresh.service).generation)
                 assertEquals(null, field(fresh.service, "ticket").get(fresh.service))
-                fresh.now[0] = 70_000L
+                fresh.now[0] = 75_000L
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(roots + 1, fresh.platform.currentRootCalls)
                 assertEquals(2, fresh.installs)
                 assertTrue(fresh.platform.attached)
                 assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun homeAfterDisplayedOverlayDoesNotArmCooldownAndAllowsReentry() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
+                requestOverlayRemovalWithToken(fresh.service, OverlayRemovalAction.HOME, token)
+                assertFalse(gate(fresh.service).cooldownActive())
+                assertEquals(1, fresh.platform.homeCalls)
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertEquals(2, fresh.installs)
+                assertTrue(fresh.platform.attached)
             } finally { destroyFresh(fresh) }
         }
     }
@@ -465,7 +515,7 @@ class EntryGateServiceActionTest {
                 fresh.installMode = InstallMode.SUCCEED
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertTrue(fresh.platform.attached)
-                assertTrue(gate(fresh.service).cooldownActive())
+                assertFalse(gate(fresh.service).cooldownActive())
             } finally { destroyFresh(fresh) }
         }
     }
@@ -487,7 +537,7 @@ class EntryGateServiceActionTest {
                 fresh.installMode = InstallMode.SUCCEED
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertTrue(fresh.platform.attached)
-                assertTrue(gate(fresh.service).cooldownActive())
+                assertFalse(gate(fresh.service).cooldownActive())
             } finally { destroyFresh(fresh) }
         }
     }
@@ -498,13 +548,15 @@ class EntryGateServiceActionTest {
             var second: FreshService? = null
             try {
                 sendEvent(first.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                first.now[0] = 15_000L
+                (field(first.service, "completion").get(first.service) as Runnable).run()
                 assertTrue(gate(first.service).cooldownActive())
                 destroyFresh(first)
                 second = freshService(activity, 10_000L)
                 sendEvent(second.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(1, second.installs)
                 assertTrue(second.platform.attached)
-                assertTrue(gate(second.service).cooldownActive())
+                assertFalse(gate(second.service).cooldownActive())
             } finally { second?.let(::destroyFresh) }
         }
     }
@@ -543,7 +595,6 @@ class EntryGateServiceActionTest {
                 } else {
                     RemovalTraceStore.process.clear()
                 }
-                assertTrue(gate(fixture.service).admitForDisplay(fixture.ticket))
                 val watchdog = field(fixture.service, "foregroundWatchdog")
                     .get(fixture.service) as OverlayForegroundWatchdog
                 watchdog.reset(now)
@@ -616,20 +667,19 @@ class EntryGateServiceActionTest {
         })
     }
 
-    @Test fun actualAccessibilityEventRootAndOwnEventGuardsRemainFailOpen() {
+    @Test fun actualAccessibilityEventVisibleGateAndOwnEventGuardsRemainFailOpen() {
         listOf(RootBehavior.MISSING, RootBehavior.NULL_PACKAGE, RootBehavior.FOREIGN, RootBehavior.THROW)
             .forEach { behavior ->
                 val fixture = fixture(attached = true, rootBehavior = behavior)
                 rule.scenario.onActivity {
-                    val now = android.os.SystemClock.elapsedRealtime()
-                    RemovalTraceStore.process.arm(now)
-                    RemovalTraceStore.process.beginEligibleEpisode(now)
                     sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
                         "com.instagram.android")
                 }
-                waitFor { !fixture.platform.attached }
+                assertTrue(fixture.platform.attached)
+                assertEquals(0, fixture.platform.currentRootCalls)
+                assertEquals(0, fixture.platform.removeAttempts)
                 assertEquals(0, fixture.platform.routeCalls)
-                assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+                assertEquals(EntryGateState.GATING, gate(fixture.service).state)
             }
 
         val own = fixture(attached = true)
@@ -642,16 +692,184 @@ class EntryGateServiceActionTest {
     }
 
     @Test fun actualAccessibilityCooldownSuppressesBeforeRootAndCollection() {
-        val fixture = fixture(attached = true)
-        rule.scenario.onActivity {
-            val entryGate = gate(fixture.service)
-            assertTrue(entryGate.admitForDisplay(fixture.ticket))
-            sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-                "com.instagram.android")
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertEquals(1, fresh.installs)
+                assertTrue(fresh.platform.attached)
+                assertFalse(gate(fresh.service).cooldownActive())
+                fresh.now[0] = 15_000L
+                (field(fresh.service, "completion").get(fresh.service) as Runnable).run()
+                assertFalse(fresh.platform.attached)
+                assertEquals(EntryGateState.GRANTED, gate(fresh.service).state)
+                assertTrue(gate(fresh.service).cooldownActive())
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                val roots = fresh.platform.currentRootCalls
+                val removes = fresh.platform.removeAttempts
+                val generation = gate(fresh.service).generation
+                Observation.record(SanitizedStructuralReport.Builder().apply {
+                    add(0, "com.instagram.android:id/feed", "android.widget.TextView",
+                        0, false, false, false, false, false)
+                }.build())
+                val report = requireNotNull(Observation.report)
+                fresh.platform.rootBehavior = RootBehavior.THROW
+                repeat(3) {
+                    sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android")
+                }
+                assertEquals(roots, fresh.platform.currentRootCalls)
+                assertEquals(removes, fresh.platform.removeAttempts)
+                assertEquals(1, fresh.installs)
+                assertEquals(generation, gate(fresh.service).generation)
+                assertEquals(null, field(fresh.service, "ticket").get(fresh.service))
+                assertSame(report, Observation.report)
+            } finally { destroyFresh(fresh) }
         }
-        assertTrue(fixture.platform.attached)
-        assertEquals(0, fixture.platform.currentRootCalls)
-        assertEquals(0, fixture.platform.removeAttempts)
+    }
+
+    @Test fun installedGateIgnoresRepeatedInstagramRootsWhileVisibleAndClosing() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val view = requireNotNull(field(fresh.service, "overlay").get(fresh.service))
+                val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
+                val report = requireNotNull(Observation.report)
+                val roots = fresh.platform.currentRootCalls
+                val completion = field(fresh.service, "completion").get(fresh.service)
+                fun repeatedEvents() {
+                    listOf(RootBehavior.INSTAGRAM, RootBehavior.MISSING, RootBehavior.FOREIGN,
+                        RootBehavior.NULL_PACKAGE, RootBehavior.THROW).forEach { behavior ->
+                        fresh.platform.rootBehavior = behavior
+                        repeat(3) {
+                            sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android")
+                            sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                        }
+                        assertEquals(roots, fresh.platform.currentRootCalls)
+                        assertSame(view, field(fresh.service, "overlay").get(fresh.service))
+                        assertEquals(token, field(fresh.service, "overlayToken").get(fresh.service))
+                        assertEquals(token.ticket, field(fresh.service, "ticket").get(fresh.service))
+                        assertSame(report, Observation.report)
+                        assertTrue(fresh.platform.attached)
+                        assertEquals(1, fresh.installs)
+                        assertFalse(gate(fresh.service).cooldownActive())
+                    }
+                }
+                repeatedEvents()
+                assertSame(completion, field(fresh.service, "completion").get(fresh.service))
+                assertEquals(0, fresh.platform.removeAttempts)
+                fresh.platform.detachOnRemove = false
+                requestOverlayRemovalWithToken(fresh.service, OverlayRemovalAction.NAVIGATE_MESSAGES, token)
+                val removes = fresh.platform.removeAttempts
+                repeatedEvents()
+                assertEquals(removes, fresh.platform.removeAttempts)
+                assertEquals(0, fresh.platform.routeCalls)
+                fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
+                fresh.platform.detachOnRemove = true
+                invoke(fresh.service, "attemptOverlayRemoval", token)
+                assertFalse(fresh.platform.attached)
+                assertEquals(1, fresh.platform.routeCalls)
+                assertTrue(gate(fresh.service).cooldownActive())
+            } finally {
+                fresh.platform.detachOnRemove = true
+                destroyFresh(fresh)
+            }
+        }
+    }
+
+    @Test fun installedGateWatchdogOwnsMissingRootBound() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
+                fresh.platform.rootBehavior = RootBehavior.MISSING
+                fresh.now[0] = 10_149L
+                invoke(fresh.service, "runWatchdogTick", token.ticket, token, Runnable {})
+                assertTrue(fresh.platform.attached)
+                fresh.now[0] = 10_150L
+                invoke(fresh.service, "runWatchdogTick", token.ticket, token, Runnable {})
+                assertFalse(fresh.platform.attached)
+                assertFalse(gate(fresh.service).cooldownActive())
+                assertEquals(0, fresh.platform.routeCalls)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun clickedResultWithAuthorityLostDuringRoutingNeverArmsCooldown() {
+        listOf("report consent", "gate consent", "replace token", "invalidate token").forEach { loss ->
+            rule.scenario.onActivity { activity ->
+                val fresh = freshService(activity, 10_000L)
+                try {
+                    sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                    val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
+                    fresh.platform.beforeRouteReturns = {
+                        assertFalse(fresh.platform.attached)
+                        assertFalse(gate(fresh.service).cooldownActive())
+                        val guard = field(fresh.service, "callbackGuard").get(fresh.service) as OverlayCallbackGuard
+                        when (loss) {
+                            "report consent" -> Observation.accept(activity, false)
+                            "gate consent" -> Observation.setGateConsent(activity, false)
+                            "replace token" -> guard.open(token.ticket)
+                            "invalidate token" -> guard.invalidateVisible()
+                            else -> error("unexpected authority loss")
+                        }
+                    }
+                    requestOverlayRemovalWithToken(fresh.service, OverlayRemovalAction.NAVIGATE_MESSAGES, token)
+                    assertEquals(1, fresh.platform.routeCalls)
+                    assertEquals(1, fresh.platform.recycledRoots)
+                    assertFalse(gate(fresh.service).cooldownActive())
+                    assertEquals(0, fresh.platform.homeCalls)
+                    requestOverlayRemovalWithToken(fresh.service, OverlayRemovalAction.NAVIGATE_MESSAGES, token)
+                    assertEquals(1, fresh.platform.routeCalls)
+                    assertFalse(gate(fresh.service).cooldownActive())
+                } finally { destroyFresh(fresh) }
+            }
+        }
+    }
+
+    @Test fun completionRejectsMissingForeignAndInvalidRootsWithoutCooldown() {
+        listOf(RootBehavior.MISSING, RootBehavior.FOREIGN, RootBehavior.NULL_PACKAGE,
+            RootBehavior.THROW).forEach { behavior ->
+            rule.scenario.onActivity { activity ->
+                val fresh = freshService(activity, 10_000L)
+                try {
+                    sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                    fresh.platform.rootBehavior = behavior
+                    fresh.now[0] = 15_000L
+                    (field(fresh.service, "completion").get(fresh.service) as Runnable).run()
+                    assertFalse(fresh.platform.attached)
+                    assertEquals(EntryGateState.BYPASSED, gate(fresh.service).state)
+                    assertFalse(gate(fresh.service).cooldownActive())
+                    assertEquals(2, fresh.platform.currentRootCalls)
+                    assertEquals(if (behavior == RootBehavior.MISSING || behavior == RootBehavior.THROW) 0 else 1,
+                        fresh.platform.recycledRoots)
+                    assertEquals(0, fresh.platform.routeCalls)
+                    assertEquals(0, fresh.platform.homeCalls)
+                } finally { destroyFresh(fresh) }
+            }
+        }
+    }
+
+    @Test fun foreignAppSwitchThenImmediateInstagramReentryInstallsAnotherGate() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val firstToken = field(fresh.service, "overlayToken").get(fresh.service)
+                fresh.platform.rootBehavior = RootBehavior.FOREIGN
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                assertFalse(fresh.platform.attached)
+                assertEquals(EntryGateState.OUTSIDE, gate(fresh.service).state)
+                assertFalse(gate(fresh.service).cooldownActive())
+                fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertEquals(2, fresh.installs)
+                assertTrue(fresh.platform.attached)
+                assertFalse(firstToken == field(fresh.service, "overlayToken").get(fresh.service))
+                assertFalse(gate(fresh.service).cooldownActive())
+            } finally { destroyFresh(fresh) }
+        }
     }
 
     @Test fun otherStateOverInstagramRootKeepsTheCurrentAdmittedGate() {
@@ -660,7 +878,6 @@ class EntryGateServiceActionTest {
         rule.scenario.onActivity {
             val now = android.os.SystemClock.elapsedRealtime()
             field(fixture.service, "monotonicClock").set(fixture.service, { now + 10L })
-            assertTrue(gate(fixture.service).admitForDisplay(fixture.ticket))
             val watchdog = field(fixture.service, "foregroundWatchdog")
                 .get(fixture.service) as OverlayForegroundWatchdog
             watchdog.reset(now)
@@ -703,7 +920,6 @@ class EntryGateServiceActionTest {
                     RemovalTraceStore.process.beginEligibleEpisode(now)
                     RemovalTraceStore.process.record(now, RemovalTraceMark.SHOWN)
                 } else RemovalTraceStore.process.clear()
-                assertTrue(gate(fixture.service).admitForDisplay(fixture.ticket))
                 val watchdog = field(fixture.service, "foregroundWatchdog")
                     .get(fixture.service) as OverlayForegroundWatchdog
                 watchdog.reset(now)
@@ -1116,6 +1332,7 @@ class EntryGateServiceActionTest {
         rule.scenario.onActivity { fixture.platform.attached = false }
         rule.scenario.onActivity { invoke(fixture.service, "attemptOverlayRemoval", fixture.token) }
         assertEquals(0, fixture.platform.homeCalls)
+        assertFalse(gate(fixture.service).cooldownActive())
     }
 
     @Test fun enabledTraceUsesTheRealRemovalBoundaryWithoutChangingReleasedAction() {
@@ -1162,19 +1379,22 @@ class EntryGateServiceActionTest {
     }
 
     private fun runEventOutcome(trace: Boolean, behavior: RootBehavior): Outcome {
-        val fixture = fixture(attached = true, rootBehavior = behavior)
-        rule.scenario.onActivity {
-            RemovalTraceStore.process.clear()
-            if (trace) {
-                val now = android.os.SystemClock.elapsedRealtime()
-                RemovalTraceStore.process.arm(now)
-                RemovalTraceStore.process.beginEligibleEpisode(now)
-            }
-            sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-                "com.instagram.android")
+        lateinit var result: Outcome
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                RemovalTraceStore.process.clear()
+                if (trace) RemovalTraceStore.process.arm(fresh.now[0])
+                fresh.platform.rootBehavior = behavior
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                    "com.instagram.android")
+                assertEquals(0, fresh.installs)
+                assertFalse(fresh.platform.attached)
+                assertFalse(gate(fresh.service).cooldownActive())
+                result = outcome(fresh.service, fresh.platform)
+            } finally { destroyFresh(fresh) }
         }
-        waitFor { !fixture.platform.attached }
-        return outcome(fixture.service, fixture.platform)
+        return result
     }
 
     private fun runWatchdogOutcome(trace: Boolean): Outcome {

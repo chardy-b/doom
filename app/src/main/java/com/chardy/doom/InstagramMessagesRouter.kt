@@ -35,8 +35,6 @@ internal object InstagramMessagesRoutingPolicy {
     }
 }
 
-internal enum class MessagesRouteResult { FAILED, ALREADY_SELECTED, CLICKED }
-
 /** Exact-ID Android adapter. The caller owns and recycles the root. */
 internal object InstagramMessagesRouter {
     fun route(
