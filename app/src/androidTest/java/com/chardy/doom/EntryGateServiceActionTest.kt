@@ -667,20 +667,19 @@ class EntryGateServiceActionTest {
         })
     }
 
-    @Test fun actualAccessibilityEventRootAndOwnEventGuardsRemainFailOpen() {
+    @Test fun actualAccessibilityEventVisibleGateAndOwnEventGuardsRemainFailOpen() {
         listOf(RootBehavior.MISSING, RootBehavior.NULL_PACKAGE, RootBehavior.FOREIGN, RootBehavior.THROW)
             .forEach { behavior ->
                 val fixture = fixture(attached = true, rootBehavior = behavior)
                 rule.scenario.onActivity {
-                    val now = android.os.SystemClock.elapsedRealtime()
-                    RemovalTraceStore.process.arm(now)
-                    RemovalTraceStore.process.beginEligibleEpisode(now)
                     sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
                         "com.instagram.android")
                 }
-                waitFor { !fixture.platform.attached }
+                assertTrue(fixture.platform.attached)
+                assertEquals(0, fixture.platform.currentRootCalls)
+                assertEquals(0, fixture.platform.removeAttempts)
                 assertEquals(0, fixture.platform.routeCalls)
-                assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+                assertEquals(EntryGateState.GATING, gate(fixture.service).state)
             }
 
         val own = fixture(attached = true)
