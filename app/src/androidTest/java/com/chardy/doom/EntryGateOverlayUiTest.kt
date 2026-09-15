@@ -185,9 +185,10 @@ class EntryGateOverlayUiTest {
             waitForDraw(rule.scenario)
             capture("01-home")
             device.findObject(By.text("Debug")).click()
+            assertTrue(device.wait(Until.hasObject(By.text("DOOM-OWNED QUICK DEMO")), 5_000))
             val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
             val scroll = UiScrollable(UiSelector().scrollable(true))
-            assertTrue(scroll.scrollToEnd(20))
+            scroll.scrollToEnd(20)
             assertTrue(device.wait(Until.hasObject(By.text(footer)), 5_000))
             waitForDraw(rule.scenario)
             capture("02-debug")

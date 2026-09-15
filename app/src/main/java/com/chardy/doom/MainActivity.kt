@@ -2,6 +2,7 @@ package com.chardy.doom
 
 import android.content.ComponentName
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
@@ -42,6 +43,19 @@ import kotlinx.coroutines.delay
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        @Suppress("DEPRECATION")
+        window.statusBarColor = BreathingVisuals.INK
+        window.decorView.setBackgroundColor(BreathingVisuals.INK)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.setSystemBarsAppearance(
+                0,
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility =
+                window.decorView.systemUiVisibility and android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+        }
         Observation.load(this)
         setContent { DoomTheme { DoomScreen() } }
     }
@@ -208,6 +222,7 @@ fun DoomScreen() {
                             systemStatic,
                         )
                     }
+                    Spacer(Modifier.height(48.dp))
                 }
             }
         }

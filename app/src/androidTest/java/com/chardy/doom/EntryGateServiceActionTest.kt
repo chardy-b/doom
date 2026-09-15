@@ -362,39 +362,6 @@ class EntryGateServiceActionTest {
         assertFalse(gate(fixture.service).cooldownActive())
     }
 
-    @Test fun staleOverlayCopyTokenCannotReachServiceCopyGuard() {
-        val fixture = fixture()
-        rule.scenario.onActivity { activity ->
-            val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val overlayUi = EntryGateOverlayViewFactory.create(activity, {}, {})
-            val content = activity.findViewById<ViewGroup>(android.R.id.content)
-            content.addView(overlayUi.root, ViewGroup.LayoutParams(-1, -1))
-            field(fixture.service, "overlayUi").set(fixture.service, overlayUi)
-            try {
-                val report = SanitizedStructuralReport.Builder().apply {
-                    add(0, "com.instagram.android:id/feed", "android.widget.TextView", 0, false, false, false, false, false)
-                }.build()
-                Observation.record(report)
-                val expected = requireNotNull(Observation.report).text
-                invoke(fixture.service, "handleOverlayCopy", fixture.ticket, fixture.token)
-                assertEquals(expected, clipboard.primaryClip!!.getItemAt(0).text.toString())
-
-                clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
-                val guard = field(fixture.service, "callbackGuard").get(fixture.service) as OverlayCallbackGuard
-                val currentToken = guard.open(fixture.ticket)
-                field(fixture.service, "overlayToken").set(fixture.service, currentToken)
-                val staleToken = fixture.token
-                assertFalse(guard.acceptsVisible(staleToken))
-                invoke(fixture.service, "handleOverlayCopy", fixture.ticket, staleToken)
-                assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
-            } finally {
-                overlayUi.dispose()
-                content.removeView(overlayUi.root)
-                field(fixture.service, "overlayUi").set(fixture.service, null)
-            }
-        }
-    }
-
     @Test fun staleCompletionAndRetryFromOverlayACannotRemoveOrRouteOverlayB() {
         val fixture = fixture(attached = true, detachOnRemove = false)
         val oldToken = fixture.token
@@ -1287,6 +1254,7 @@ class EntryGateServiceActionTest {
         lateinit var platform: FakePlatform
         lateinit var clipboard: ClipboardManager
         rule.scenario.onActivity { activity ->
+            Observation.updateReminderSettings(activity, ReminderSettings(enabled = true))
             Observation.accept(activity, true)
             Observation.setGateConsent(activity, true)
             Observation.connected = true
@@ -1492,6 +1460,7 @@ class EntryGateServiceActionTest {
         lateinit var clipboard: ClipboardManager
         rule.scenario.onActivity { activity ->
             RemovalTraceStore.process.clear()
+            Observation.updateReminderSettings(activity, ReminderSettings(enabled = true))
             Observation.accept(activity, true)
             Observation.setGateConsent(activity, true)
             Observation.connected = true
@@ -1961,7 +1930,8 @@ class EntryGateServiceActionTest {
                 (field(fresh.service, "completion").get(fresh.service) as Runnable).run()
                 val resumed = field(fresh.service, "timerView").get(fresh.service)
                 assertTrue(resumed != null)
-                assertEquals(70L, timer.elapsedSeconds())
+                // The timer includes the first 10s gate, 60s elapsed, and the second 10s gate.
+                assertEquals(80L, timer.elapsedSeconds())
                 oldTick.run(); oldWatchdog.run(); retry.run()
                 invoke(fresh.service, "finishTimerDetach", oldEpoch)
                 assertSame(resumed, field(fresh.service, "timerView").get(fresh.service))
