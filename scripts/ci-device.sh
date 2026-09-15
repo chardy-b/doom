@@ -34,3 +34,4 @@ python3 scripts/validate-android-junit.py canonical app/build/outputs/androidTes
 timeout 15s adb -s "$serial" pull /sdcard/Download/doom-ci-evidence/. evidence/screenshots/ >/dev/null 2>&1
 cp app/build/outputs/apk/debug/app-debug.apk evidence/doom-diagnostic.apk
 python3 scripts/evidence-manifest.py
+trap - EXIT

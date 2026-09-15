@@ -90,7 +90,7 @@ class ReadinessTests(unittest.TestCase):
 """
 
     def run_gate(self, policy=None, activities="topResumedActivity=ActivityRecord{x com.chardyb.doom/.MainActivity t1}\n",
-                 boot=None, qemu=("1\n", "\n")):
+                 boot=None, qemu=("1\n", "\n"), _sleep=None):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             apk = root / "app/build/outputs/apk/debug/app-debug.apk"
@@ -119,7 +119,9 @@ class ReadinessTests(unittest.TestCase):
                 return Completed()
 
             env = {"GITHUB_ACTIONS": "true", "EMULATOR_PORT": "5554"}
-            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(readiness.subprocess, "run", run), mock.patch.object(readiness.time, "sleep"):
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(readiness.subprocess, "run", run), \
+                 mock.patch.object(readiness.time, "sleep", side_effect=_sleep):
                 old = Path.cwd()
                 os.chdir(root)
                 try:
@@ -155,10 +157,22 @@ class ReadinessTests(unittest.TestCase):
 
     def test_keyguard_parser_is_scoped_and_conflicts_fail_closed(self):
         self.assertFalse(readiness.keyguard_is_unlocked("random showing=false"))
+        realistic = """WINDOW MANAGER POLICY STATE (dumpsys window policy)
+  KeyguardServiceDelegate
+    showing=false
+    secure=true
+  StatusBarController:
+    state=NORMAL
+    showing=true
+"""
+        self.assertTrue(readiness.keyguard_is_unlocked(realistic))
         for active in ("isStatusBarKeyguard=true", "mShowingLockscreen=true",
                        "mKeyguardShowing=true", "keyguardShowing=true"):
-            self.assertFalse(readiness.keyguard_is_unlocked(self.POLICY_UNLOCKED + active))
+            self.assertFalse(readiness.keyguard_is_unlocked(realistic + active))
         self.assertFalse(readiness.keyguard_is_unlocked("  KeyguardServiceDelegate\n    showing=true\n"))
+        self.assertFalse(readiness.keyguard_is_unlocked("  KeyguardServiceDelegate\n    secure=true\n"))
+        self.assertFalse(readiness.keyguard_is_unlocked(
+            "  KeyguardServiceDelegate\n    showing=false\n    showing=true\n"))
 
     def test_both_api35_emulator_properties_and_neither(self):
         self.assertEqual(0, self.run_gate(qemu=("1\n", "\n"))[0])
@@ -185,9 +199,45 @@ class ReadinessTests(unittest.TestCase):
         self.assertGreater(readiness.INSTALL_SECONDS, readiness.COMMAND_SECONDS)
 
     def test_missing_apk_is_independent_of_valid_port(self):
-        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "EMULATOR_PORT": "5554"}, clear=True):
-            with self.assertRaisesRegex(readiness.NotReady, "APK"):
-                readiness.main(["emulator-readiness.py", "app/build/outputs/apk/debug/app-debug.apk"])
+        with tempfile.TemporaryDirectory() as td:
+            old = Path.cwd()
+            os.chdir(td)
+            try:
+                env = {"GITHUB_ACTIONS": "true", "EMULATOR_PORT": "5554"}
+                with mock.patch.dict(os.environ, env, clear=True), \
+                     mock.patch.object(readiness.subprocess, "run") as run, \
+                     mock.patch.object(readiness.time, "monotonic") as monotonic, \
+                     mock.patch.object(readiness.time, "sleep") as sleep:
+                    with self.assertRaisesRegex(readiness.NotReady, "APK"):
+                        readiness.main(["emulator-readiness.py",
+                                        "app/build/outputs/apk/debug/app-debug.apk"])
+                    run.assert_not_called(); monotonic.assert_not_called(); sleep.assert_not_called()
+            finally:
+                os.chdir(old)
+
+    def test_keyguard_remaining_locked_expires_at_unlock_stage_without_io_leak(self):
+        self.assert_deadline_stage(
+            "unlock", policy="  KeyguardServiceDelegate\n    showing=true\n")
+
+    def test_launcher_remaining_foreground_expires_at_foreground_stage(self):
+        self.assert_deadline_stage(
+            "foreground", activities="topResumedActivity=com.android.launcher/.Launcher\n")
+
+    def assert_deadline_stage(self, stage, **gate_kwargs):
+        clock = [0.0]
+
+        def monotonic():
+            return clock[0]
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        with mock.patch.object(readiness.time, "monotonic", monotonic), \
+             mock.patch.object(readiness.time, "sleep", sleep):
+            with self.assertRaisesRegex(readiness.NotReady,
+                                        rf"^{stage}: hard readiness deadline expired$"):
+                self.run_gate(_sleep=sleep, **gate_kwargs)
+        self.assertLessEqual(clock[0], readiness.TOTAL_SECONDS)
 
     def test_command_timeout_is_sanitized_and_fails_closed(self):
         with tempfile.TemporaryDirectory() as td:
@@ -206,7 +256,9 @@ class ReadinessTests(unittest.TestCase):
             try:
                 clock = iter([0.0, 0.0, 119.5, 120.0])
                 with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(readiness.subprocess, "run", timeout), mock.patch.object(readiness.time, "monotonic", side_effect=lambda: next(clock)), mock.patch.object(readiness.time, "sleep"):
-                    with self.assertRaisesRegex(readiness.NotReady, "deadline") as failure:
+                    with self.assertRaisesRegex(
+                            readiness.NotReady,
+                            r"^online: hard readiness deadline expired$") as failure:
                         readiness.main(["emulator-readiness.py", "app/build/outputs/apk/debug/app-debug.apk"])
             finally:
                 os.chdir(old)
@@ -214,6 +266,16 @@ class ReadinessTests(unittest.TestCase):
 
 
 class PlacementTests(unittest.TestCase):
+    @staticmethod
+    def top_level_commands(name):
+        commands, depth = [], 0
+        for line in (ROOT / "scripts" / name).read_text().splitlines():
+            stripped = line.strip()
+            if depth == 0 and stripped and not stripped.startswith("#"):
+                commands.append(stripped)
+            depth += line.count("{") - line.count("}")
+        return commands
+
     def test_entry_scripts_use_present_tracked_helpers_before_adb(self):
         helpers = ("scripts/ci-provenance.sh", "scripts/emulator-readiness.py")
         tracked = set(subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True).splitlines())
@@ -237,6 +299,20 @@ class PlacementTests(unittest.TestCase):
             self.assertLess(text.index("trap "), text.index("python3 scripts/emulator-readiness.py"))
             self.assertIn("timeout 8s adb -s \"$serial\"", text)
             self.assertNotIn("adb shell", text)
+
+    def test_entry_traps_collect_failures_but_are_disarmed_after_success_artifacts(self):
+        expected_last_work = {
+            "ci-device.sh": "python3 scripts/evidence-manifest.py",
+            "ci-overlay.sh": "python3 scripts/overlay-evidence-manifest.py",
+        }
+        for name, last_work in expected_last_work.items():
+            commands = self.top_level_commands(name)
+            readiness_command = next(i for i, command in enumerate(commands)
+                                     if "python3 scripts/emulator-readiness.py" in command)
+            self.assertLess(commands.index("trap collect_diagnostics EXIT") if name == "ci-device.sh"
+                            else commands.index("trap collect EXIT"), readiness_command)
+            self.assertLess(commands.index(last_work), commands.index("trap - EXIT"))
+            self.assertEqual("trap - EXIT", commands[-1])
 
     def test_workflows_build_exact_apk_before_pinned_port_runner(self):
         for name in ("android.yml", "android-supplemental.yml"):

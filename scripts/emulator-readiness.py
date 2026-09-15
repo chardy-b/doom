@@ -39,9 +39,22 @@ def keyguard_is_unlocked(policy: str) -> bool:
     )
     if any(re.search(pattern, policy) for pattern in active):
         return False
-    delegate_blocks = re.findall(
-        r"(?ms)^\s*KeyguardServiceDelegate\b.*?(?=^\S|\Z)", policy
-    )
+    lines = policy.splitlines()
+    delegate_blocks = []
+    for index, line in enumerate(lines):
+        match = re.match(r"^(\s*)KeyguardServiceDelegate\b", line)
+        if match is None:
+            continue
+        indentation = len(match.group(1).expandtabs(8))
+        block = [line]
+        for following in lines[index + 1:]:
+            if following.strip():
+                prefix = following[:len(following) - len(following.lstrip())]
+                following_indent = len(prefix.expandtabs(8))
+                if following_indent <= indentation:
+                    break
+            block.append(following)
+        delegate_blocks.append("\n".join(block))
     if any(re.search(r"\bshowing\s*=\s*true\b", block) for block in delegate_blocks):
         return False
     unlocked = (
@@ -91,10 +104,18 @@ def main(argv: list[str]) -> int:
 
     def poll(description: str, probe):
         while True:
-            value = probe()
+            try:
+                value = probe()
+            except NotReady as exc:
+                if "deadline" in str(exc):
+                    raise NotReady(f"{description}: hard readiness deadline expired") from None
+                raise
             if value:
                 return value
-            left = remaining()
+            try:
+                left = remaining()
+            except NotReady:
+                raise NotReady(f"{description}: hard readiness deadline expired") from None
             time.sleep(min(POLL_SECONDS, left))
 
     poll("online", lambda: (adb("get-state") or "").strip() == "device")
@@ -117,8 +138,8 @@ def main(argv: list[str]) -> int:
                 return False
         return keyguard_is_unlocked(adb("shell", "dumpsys", "window", "policy") or "")
 
-    poll("unlocked keyguard", wake_and_unlock)
-    poll("APK install", lambda: adb("install", "-r", str(apk), install=True) is not None)
+    poll("unlock", wake_and_unlock)
+    poll("install", lambda: adb("install", "-r", str(apk), install=True) is not None)
 
     def launch_and_prove():
         if adb("shell", "am", "start", "-W", "-n", ACTIVITY) is None:
@@ -126,10 +147,10 @@ def main(argv: list[str]) -> int:
         activities = adb("shell", "dumpsys", "activity", "activities") or ""
         return re.search(r"topResumedActivity=.*com\.chardyb\.doom/\.MainActivity\b", activities) is not None
 
-    poll("Doom foreground", launch_and_prove)
+    poll("foreground", launch_and_prove)
     # Instrumentation must start from a fresh package after the launch proof.
-    poll("clear Doom data", lambda: adb("shell", "pm", "clear", PACKAGE) is not None)
-    poll("stop Doom", lambda: adb("shell", "am", "force-stop", PACKAGE) is not None)
+    poll("clear", lambda: adb("shell", "pm", "clear", PACKAGE) is not None)
+    poll("stop", lambda: adb("shell", "am", "force-stop", PACKAGE) is not None)
     print("Emulator readiness passed (API 35, unlocked, Doom top-resumed, app data cleared).")
     return 0
 
