@@ -5,8 +5,6 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.UiScrollable
-import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
 import org.junit.Rule
@@ -42,7 +40,11 @@ class DoomUiTest {
  }
  private fun visible(text:String,timeoutMs:Long=5_000)=assertTrue("Missing $text",device.wait(Until.hasObject(By.text(text)),timeoutMs))
  private fun scrollTo(text:String){
-  if(!device.wait(Until.hasObject(By.text(text)),1_000)) UiScrollable(UiSelector().scrollable(true)).scrollTextIntoView(text)
+  if(device.wait(Until.hasObject(By.text(text)),1_000)) return
+  repeat(20){
+   device.swipe(device.displayWidth/2,device.displayHeight*3/4,device.displayWidth/2,device.displayHeight/4,20)
+   if(device.wait(Until.hasObject(By.text(text)),500)) return
+  }
   visible(text)
  }
  private fun click(text:String){scrollTo(text);device.findObject(By.text(text)).click()}
