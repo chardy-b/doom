@@ -2,6 +2,7 @@ package com.chardy.doom
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.drawable.GradientDrawable
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -35,6 +36,8 @@ internal class EntryGateOverlayUi(val root:View,val phaseLabel:TextView,val skip
 internal object EntryGateOverlayViewFactory{
  fun create(context:Context,onSkipToMessages:()->Unit,onLeaveInstagram:()->Unit):EntryGateOverlayUi{
   fun dp(v:Int)=(v*context.resources.displayMetrics.density).toInt()
+  val compactLandscape=context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE
+  val verticalPadding=if(compactLandscape)8 else 20
   fun label(value:String,size:Float)=TextView(context).apply{ text=value; textSize=size; setTextColor(BreathingVisuals.PAPER); gravity=Gravity.CENTER }
   val scroll=ScrollView(context).apply {
    setBackgroundColor(BreathingVisuals.INK); isFillViewport=true
@@ -44,16 +47,16 @@ internal object EntryGateOverlayViewFactory{
     view.setPadding(maxOf(insets.systemWindowInsetLeft,cutout?.get(0)?:0),maxOf(insets.systemWindowInsetTop,cutout?.get(1)?:0),maxOf(insets.systemWindowInsetRight,cutout?.get(2)?:0),maxOf(insets.systemWindowInsetBottom,cutout?.get(3)?:0)); insets
    }
   }
-  val body=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;setPadding(dp(20),dp(20),dp(20),dp(20))};scroll.addView(body,FrameLayout.LayoutParams(-1,-2))
-  val phase=label("Breathe in",32f).apply{
-   minHeight=dp(48);isFocusable=true
+  val body=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;setPadding(dp(20),dp(verticalPadding),dp(20),dp(verticalPadding))};scroll.addView(body,FrameLayout.LayoutParams(-1,-2))
+  val phase=label("Breathe in",if(compactLandscape)24f else 32f).apply{
+   minHeight=dp(if(compactLandscape)40 else 48);isFocusable=true
    if(Build.VERSION.SDK_INT>=28)isAccessibilityHeading=true
   };body.addView(phase,LinearLayout.LayoutParams(-1,-2))
-  val pixel=PixelBreathingView(context).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO};body.addView(pixel,LinearLayout.LayoutParams(-1,dp(260)).apply{weight=1f})
-  val progress=SegmentedBreathProgressView(context);body.addView(progress,LinearLayout.LayoutParams(-1,dp(10)))
+  val pixel=PixelBreathingView(context).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO};body.addView(pixel,LinearLayout.LayoutParams(-1,dp(if(compactLandscape)96 else 260)).apply{weight=1f})
+  val progress=SegmentedBreathProgressView(context);body.addView(progress,LinearLayout.LayoutParams(-1,dp(if(compactLandscape)8 else 10)))
   val skip=button(context,"Skip to Messages",BreathingVisuals.INK,BreathingVisuals.GOLD,dp(52)).apply{setOnClickListener{onSkipToMessages()}}
   val leave=button(context,"Leave Instagram",BreathingVisuals.PAPER,BreathingVisuals.PANEL,dp(48)).apply{setOnClickListener{onLeaveInstagram()}}
-  body.addView(skip,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(16)});body.addView(leave,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(8)})
+  body.addView(skip,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(if(compactLandscape)6 else 16)});body.addView(leave,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(if(compactLandscape)4 else 8)})
   return EntryGateOverlayUi(scroll,phase,skip,leave,pixel,progress)
  }
  private fun button(c:Context,label:String,text:Int,fill:Int,height:Int)=Button(c).apply{this.text=label;textSize=16f;minHeight=height;minimumHeight=height;isAllCaps=false;setTextColor(ColorStateList.valueOf(text));background=GradientDrawable().apply{setColor(fill);setStroke(2,BreathingVisuals.GOLD);cornerRadius=4f};stateListAnimator=null}

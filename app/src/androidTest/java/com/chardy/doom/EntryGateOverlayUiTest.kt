@@ -82,6 +82,10 @@ class EntryGateOverlayUiTest {
                 assertTrue(ui.leaveInstagram.measuredHeight >= (48 * density).toInt())
                 val scroll = ui.root as ScrollView
                 val body = scroll.getChildAt(0) as ViewGroup
+                if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                    assertTrue(ui.skipToMessages.bottom <= scroll.height - scroll.paddingBottom)
+                    assertTrue(ui.leaveInstagram.bottom <= scroll.height - scroll.paddingBottom)
+                }
                 fun assertReachable(action: View) {
                     val topInContent = body.top + action.top
                     val bottomInContent = body.top + action.bottom
