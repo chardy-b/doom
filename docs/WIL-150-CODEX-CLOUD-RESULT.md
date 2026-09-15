@@ -1,5 +1,7 @@
 # WIL-150 Codex Cloud result
 
+> Historical repair record for the candidate based on `a5196e70c0b5c5c80e8abc2d0b044498bdef577a`; later exact-head preflight supersedes these counts and artifact hashes.
+
 ## Repaired candidate
 
 The WIL-150 candidate based on exact starting commit `a5196e70c0b5c5c80e8abc2d0b044498bdef577a` was repaired after independent review. The repair restores the canonical four-image Doom-owned product evidence flow, fixes independent reminder-setting cleanup and supplemental capture lifecycle, restores Debug-only diagnostic disclosures, makes custom settings dialogs cancellable, and replaces per-frame progress hierarchy rebuilding with one stable drawing view. WIL-180 session timing and WIL-184 terminal-only cooldown, admission snapshots, and exact Messages-route lifecycle remain in place.
