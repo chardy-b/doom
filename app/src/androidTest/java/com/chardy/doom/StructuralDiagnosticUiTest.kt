@@ -45,6 +45,9 @@ class StructuralDiagnosticUiTest {
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
     }
+    @Before fun openDebug() {
+        rule.onNodeWithText("Debug").performClick()
+    }
     @After fun cleanup() = rule.runOnIdle {
         RemovalTraceStore.process = RemovalTraceStore()
         Observation.setGateConsent(rule.activity, false)

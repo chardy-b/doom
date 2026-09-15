@@ -11,6 +11,7 @@ import androidx.test.uiautomator.Until
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 
 class DoomUiTest {
@@ -19,7 +20,11 @@ class DoomUiTest {
  @Before fun resetReminderSettings(){
   InstrumentationRegistry.getInstrumentation().targetContext
    .getSharedPreferences("reminder_settings_v1",android.content.Context.MODE_PRIVATE).edit().clear().commit()
-  rule.scenario.recreate()
+ rule.scenario.recreate()
+ }
+ @After fun clearReminderSettings(){
+  InstrumentationRegistry.getInstrumentation().targetContext
+   .getSharedPreferences("reminder_settings_v1",android.content.Context.MODE_PRIVATE).edit().clear().commit()
  }
  private fun capture(name:String){
   val resumed=Regex("(?:topResumedActivity|mResumedActivity)[=:]\\s*ActivityRecord\\{[^\\n]*\\scom\\.chardyb\\.doom/com\\.chardy\\.doom\\.MainActivity(?:\\s|\\})")
@@ -40,11 +45,20 @@ class DoomUiTest {
  @Test fun canonicalDoomOwnedProductFlowCapturesExactRequiredScreens(){
   visible("Breathing reminders");capture("01-doom-dashboard-demo")
   click("Preview breathing reminder");visible("Breathe in");capture("02-doom-breathing-demo")
-  click("Debug");click("Demo messages — no wait");visible("Messages stay open. This is a simulated inbox.");capture("03-doom-messages-demo")
+  click("Debug");click("Demo messages — no wait");visible("Messages stay open.");capture("03-doom-messages-demo")
   click("Try the breathing demo");visible("Breathe in");visible("A deliberate start.",15_000);capture("04-doom-completed-demo")
  }
  @Test fun homeDefaultsNavigationAndDebugIsolation(){visible("Breathing reminders");visible("10s");visible("1m");visible("Accessibility: Not enabled");assertFalse(device.hasObject(By.text("SANITIZED STRUCTURAL REPORT")));click("Debug");visible("SANITIZED STRUCTURAL REPORT");visible("DOOM-OWNED QUICK DEMO");click("Home");assertFalse(device.hasObject(By.text("SANITIZED STRUCTURAL REPORT")))}
- @Test fun presetsCustomDialogsAndPersistenceAfterRecreation(){click("20s");click("5m");rule.scenario.recreate();visible("20s");visible("5m");click("Custom");visible("Custom duration");device.pressBack();visible("Duration")}
+ @Test fun customCancelDismissesWithoutSaving(){
+  click("Custom");visible("Custom duration");device.findObject(By.clazz("android.widget.EditText")).text="27"
+  click("Cancel");visible("10s");rule.scenario.recreate();visible("10s");visible("1m")
+ }
+ @Test fun customSaveNormalizesDurationAndPreservesIndependentSuppression(){
+  click("5m");click("Custom");visible("Custom duration")
+  val field=device.findObject(By.clazz("android.widget.EditText"));field.text="27";click("Save")
+  rule.scenario.recreate();visible("Custom");visible("5m")
+  rule.scenario.onActivity { assertEquals(ReminderSettings(false,30,5),ReminderSettingsStore.read(it)) }
+ }
  @Test fun previewRequiresTapAndContainsOnlyBreathingPresentation(){assertFalse(device.hasObject(By.text("Breathe in")));click("Preview breathing reminder");visible("Breathe in");assertFalse(device.hasObject(By.textContains("remaining")));assertFalse(device.hasObject(By.textContains("report")))}
  @Test @SupplementalEvidence fun buildFooterIsReachableAfterScrollingToTheEnd(){
   visible("Breathing reminders");click("Debug")

@@ -171,6 +171,7 @@ class EntryGateServiceActionTest {
         rule.scenario.onActivity {
             Observation.setGateConsent(it, false)
             Observation.accept(it, false)
+            Observation.updateReminderSettings(it, ReminderSettings())
             Observation.connected = false
             Observation.clear()
             RemovalTraceStore.process.clear()
@@ -194,6 +195,20 @@ class EntryGateServiceActionTest {
         assertEquals(listOf(EntryGateState.BYPASSED), fixture.platform.stateAtRoute)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
         assertTrue(gate(fixture.service).cooldownActive())
+    }
+
+    @Test fun disablingRemindersRemovesLiveOverlayWithoutCooldownCredit() {
+        val fixture = fixture(attached = true, detachOnRemove = true)
+
+        rule.scenario.onActivity {
+            Observation.updateReminderSettings(it, ReminderSettings(enabled = false))
+        }
+        waitFor { !fixture.platform.attached }
+
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
+        assertEquals(0, fixture.platform.routeCalls)
+        assertEquals(0, fixture.platform.homeCalls)
     }
 
     @Test fun alreadySelectedMessagesResultArmsCooldownOnlyAfterRoutingReturns() {
@@ -477,11 +492,11 @@ class EntryGateServiceActionTest {
                 startBubble(fresh)
                 assertTrue(gate(fresh.service).cooldownActive())
                 val oldTicket = field(fresh.service, "ticket").get(fresh.service)
-                fresh.now[0] = 74_999L
+                fresh.now[0] = 79_999L
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(oldTicket, field(fresh.service, "ticket").get(fresh.service))
                 assertEquals(2, fresh.installs)
-                fresh.now[0] = 75_000L
+                fresh.now[0] = 80_000L
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(3, fresh.installs)
                 assertEquals(EntryGateState.GATING, gate(fresh.service).state)
@@ -586,7 +601,7 @@ class EntryGateServiceActionTest {
             var second: FreshService? = null
             try {
                 sendEvent(first.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
-                first.now[0] = 15_000L
+                first.now[0] += field(gate(first.service), "activeDurationMs").getLong(gate(first.service))
                 (field(first.service, "completion").get(first.service) as Runnable).run()
                 assertTrue(gate(first.service).cooldownActive())
                 destroyFresh(first)
@@ -867,7 +882,7 @@ class EntryGateServiceActionTest {
                     val rootsBeforeCompletion = fresh.platform.currentRootCalls
                     val recycledBeforeCompletion = fresh.platform.recycledRoots
                     fresh.platform.rootBehavior = behavior
-                    fresh.now[0] = 15_000L
+                    fresh.now[0] += field(gate(fresh.service), "activeDurationMs").getLong(gate(fresh.service))
                     (field(fresh.service, "completion").get(fresh.service) as Runnable).run()
                     assertFalse(fresh.platform.attached)
                     assertEquals(EntryGateState.BYPASSED, gate(fresh.service).state)
@@ -1840,7 +1855,7 @@ class EntryGateServiceActionTest {
 
     private fun startBubble(fresh: FreshService): InstagramSessionTimer {
         sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
-        fresh.now[0] += 5_000L
+        fresh.now[0] += field(gate(fresh.service), "activeDurationMs").getLong(gate(fresh.service))
         (field(fresh.service, "completion").get(fresh.service) as Runnable).run()
         assertTrue(field(fresh.service, "timerView").get(fresh.service) != null)
         return field(fresh.service, "sessionTimer").get(fresh.service) as InstagramSessionTimer
@@ -1911,7 +1926,7 @@ class EntryGateServiceActionTest {
                 retry.run()
                 assertEquals(null, field(fresh.service, "timerView").get(fresh.service))
                 assertTrue(field(fresh.service, "overlay").get(fresh.service) != null)
-                fresh.now[0] += 5_000L
+                fresh.now[0] += field(gate(fresh.service), "activeDurationMs").getLong(gate(fresh.service))
                 (field(fresh.service, "completion").get(fresh.service) as Runnable).run()
                 val resumed = field(fresh.service, "timerView").get(fresh.service)
                 assertTrue(resumed != null)
@@ -2046,6 +2061,7 @@ class EntryGateServiceActionTest {
         initialMode: InstallMode = InstallMode.SUCCEED,
         serviceContext: Context = activity.applicationContext,
     ): FreshService {
+        Observation.updateReminderSettings(activity, ReminderSettings(enabled = true))
         Observation.accept(activity, true)
         Observation.setGateConsent(activity, true)
         Observation.connected = true
@@ -2105,6 +2121,7 @@ class EntryGateServiceActionTest {
     ): Fixture {
         lateinit var result: Fixture
         rule.scenario.onActivity { activity ->
+            Observation.updateReminderSettings(activity, ReminderSettings(enabled = true))
             Observation.accept(activity, true)
             Observation.setGateConsent(activity, true)
             Observation.connected = true

@@ -37,6 +37,9 @@ class EntryGateOverlayUiTest {
         rule.scenario.onActivity {
             val actual = requireNotNull(ui)
             assertEquals(BreathingVisuals.INK, (actual.root.background as ColorDrawable).color)
+            assertEquals("Instagram diagnostic pause", actual.root.contentDescription)
+            assertTrue(actual.phaseLabel.isFocusable)
+            assertTrue(actual.phaseLabel.isAccessibilityHeading)
             assertTrue(actual.skipToMessages.minimumHeight >= (48 * it.resources.displayMetrics.density).toInt())
             assertTrue(actual.skipToMessages.isFocusable)
             assertTrue(actual.skipToMessages.isClickable)
@@ -153,18 +156,26 @@ class EntryGateOverlayUiTest {
     }
 
     @Test @SupplementalEvidence fun supplementaryFooterScreenshotScrollsOnlyInItsSeparateTest() {
-        assertTopResumed()
-        waitForDraw(rule.scenario)
-        capture("01-home")
-        device.findObject(By.text("Debug")).click()
-        val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
-        val scroll = UiScrollable(UiSelector().scrollable(true))
+        val preferences = instrumentation.targetContext.getSharedPreferences(
+            "reminder_settings_v1", android.content.Context.MODE_PRIVATE
+        )
+        preferences.edit().clear().commit()
+        recreateActivity()
         try {
+            assertTopResumed()
+            waitForDraw(rule.scenario)
+            capture("01-home")
+            device.findObject(By.text("Debug")).click()
+            val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
+            val scroll = UiScrollable(UiSelector().scrollable(true))
             assertTrue(scroll.scrollToEnd(20))
             assertTrue(device.wait(Until.hasObject(By.text(footer)), 5_000))
             waitForDraw(rule.scenario)
             capture("02-debug")
-        } finally { scroll.scrollToBeginning(20) }
+            scroll.scrollToBeginning(20)
+        } finally {
+            preferences.edit().clear().commit()
+        }
     }
 
     private fun mount(assign: (EntryGateOverlayUi) -> Unit) {

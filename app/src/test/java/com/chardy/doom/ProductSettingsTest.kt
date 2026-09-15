@@ -6,8 +6,8 @@ import org.junit.Test
 class ProductSettingsTest {
     @Test fun defaultsAndPresetsAreExact() {
         assertEquals(ReminderSettings(false, 10, 1), ReminderSettings())
-        assertEquals(listOf(10, 20, 30), listOf(10, 20, 30))
-        assertEquals(listOf(1, 5, 15), listOf(1, 5, 15))
+        assertEquals(listOf(10, 20, 30), ReminderSettingsStore.durationPresets)
+        assertEquals(listOf(1, 5, 15), ReminderSettingsStore.suppressionPresets)
     }
 
     @Test fun customDurationRoundsUpAndClamps() {
