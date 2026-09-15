@@ -62,7 +62,12 @@ internal class InstagramTimerOverlayUi(
         root.minimumWidth = if (model.collapsed) dp(root.context, 56) else dp(root.context, 152)
         root.requestLayout()
     }
-    fun dispose() { root.setOnTouchListener(null); root.setOnClickListener(null); dismiss.setOnClickListener(null) }
+    fun dispose() {
+        root.setOnTouchListener(null)
+        root.setOnClickListener(null)
+        root.setAccessibilityDelegate(null)
+        dismiss.setOnClickListener(null)
+    }
 }
 
 internal object InstagramTimerOverlayViewFactory {

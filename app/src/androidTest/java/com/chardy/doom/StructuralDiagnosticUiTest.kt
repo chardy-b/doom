@@ -55,15 +55,15 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun sessionTimerSwitchPersistsRealIndependentState() {
-        rule.onNodeWithText("Instagram session timer").performScrollTo().assertIsDisplayed()
-        rule.runOnIdle { Observation.setSessionTimerEnabled(rule.activity, false) }
+        val timerSwitch = rule.onNodeWithTag("instagram_session_timer_switch")
+        timerSwitch.performScrollTo().assertIsDisplayed().assertIsOn().performClick().assertIsOff()
         shown("Disabled")
         rule.runOnIdle {
             val prefs = rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
             assertFalse(prefs.getBoolean(Observation.SESSION_TIMER_ENABLED_KEY, true))
             assertEquals(3, prefs.all.size)
         }
-        rule.runOnIdle { Observation.setSessionTimerEnabled(rule.activity, true) }
+        timerSwitch.performClick().assertIsOn()
         shown("Enabled")
     }
 
@@ -501,7 +501,8 @@ class StructuralDiagnosticUiTest {
             assertEquals(
                 mapOf(
                     "sanitized_structural_report_v1" to true,
-                    "instagram_diagnostic_entry_gate_v1" to false
+                    "instagram_diagnostic_entry_gate_v1" to false,
+                    "instagram_session_timer_enabled_v1" to true
                 ),
                 prefs.all
             )

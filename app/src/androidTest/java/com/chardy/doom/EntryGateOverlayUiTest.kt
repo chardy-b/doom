@@ -15,6 +15,8 @@ import androidx.test.uiautomator.UiScrollable
 import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -93,7 +95,8 @@ class EntryGateOverlayUiTest {
                     View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.AT_MOST)
                 )
                 assertTrue(timerUi.root.measuredHeight >= (56 * density).toInt())
-                assertTrue(timerUi.dismiss.minimumWidth >= (48 * density).toInt())
+                assertTrue(timerUi.dismiss.measuredWidth >= (48 * density).toInt())
+                assertTrue(timerUi.dismiss.measuredHeight >= (48 * density).toInt())
                 val margins = InstagramTimerOverlayViewFactory.margins(density, 31, 47)
                 assertEquals(31 + (16 * density).toInt(), margins.first)
                 assertEquals(47 + (16 * density).toInt(), margins.second)
@@ -156,9 +159,11 @@ class EntryGateOverlayUiTest {
             rule.scenario.onActivity { Observation.setSessionTimerEnabled(it, false) }
             instrumentation.waitForIdleSync()
             assertTrue(device.wait(Until.hasObject(By.text("Disabled")), 5_000)); capture("09-dashboard-timer-disabled")
-            val switch = device.findObject(UiSelector().className("android.widget.Switch").instance(1))
-            assertTrue("actual timer Switch must be clickable", switch.exists()); switch.click()
-            assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000)); capture("10-dashboard-timer-reenabled")
+            val switch = device.findObject(By.desc("Instagram session timer"))
+            assertNotNull("actual timer Switch must have stable semantics", switch)
+            assertFalse(switch.isChecked); switch.click()
+            assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000)); assertTrue(switch.isChecked)
+            capture("10-dashboard-timer-reenabled")
         } finally { rule.scenario.onActivity { Observation.setSessionTimerEnabled(it, original) } }
     }
 
@@ -230,11 +235,19 @@ class EntryGateOverlayUiTest {
 
     private fun captureTimer(name: String, collapsed: Boolean) {
         var ui: InstagramTimerOverlayUi? = null
+        var moved = false; var settled = false
         rule.scenario.onActivity { activity ->
-            ui = InstagramTimerOverlayViewFactory.create(activity, {}, {}, { _, _ -> }, {})
+            ui = InstagramTimerOverlayViewFactory.create(activity, {}, {}, { _, _ -> moved = true }, { settled = true })
             activity.findViewById<ViewGroup>(android.R.id.content).addView(ui!!.root)
             ui!!.render(InstagramTimerModel("4:12", "Instagram time, 4 minutes, 12 seconds", collapsed, true))
             assertTrue(ui!!.root.minimumHeight >= (48 * activity.resources.displayMetrics.density).toInt())
+            if (collapsed) {
+                val now = SystemClock.uptimeMillis()
+                ui!!.root.dispatchTouchEvent(android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, 4f, 4f, 0))
+                ui!!.root.dispatchTouchEvent(android.view.MotionEvent.obtain(now, now + 16, android.view.MotionEvent.ACTION_MOVE, 80f, 20f, 0))
+                ui!!.root.dispatchTouchEvent(android.view.MotionEvent.obtain(now, now + 32, android.view.MotionEvent.ACTION_UP, 80f, 20f, 0))
+                assertTrue(moved); assertTrue(settled)
+            }
         }
         assertTopResumed(); waitForDraw(rule.scenario); capture(name)
         rule.scenario.onActivity { ui?.let { (it.root.parent as? ViewGroup)?.removeView(it.root); it.dispose() } }
