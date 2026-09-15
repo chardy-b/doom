@@ -15,6 +15,8 @@ import androidx.test.uiautomator.UiScrollable
 import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -86,16 +88,15 @@ class EntryGateOverlayUiTest {
                 assertReachable(ui.skipToMessages)
                 assertReachable(ui.leaveInstagram)
                 ui.dispose()
-                val timerUi = InstagramTimerOverlayViewFactory.create(context) {}
+                val timerUi = InstagramTimerOverlayViewFactory.create(context, {}, {}, { _, _ -> }, {})
                 timerUi.render(InstagramTimerModel("1:23:45", "Instagram time, 1 hour, 23 minutes, 45 seconds", false, true))
                 timerUi.root.measure(
                     View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.AT_MOST),
                     View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.AT_MOST)
                 )
-                val label = (timerUi.root as ViewGroup).getChildAt(0) as android.widget.TextView
-                assertEquals(ViewGroup.LayoutParams.WRAP_CONTENT, label.layoutParams.height)
-                assertTrue(timerUi.root.measuredHeight >= (48 * density).toInt())
-                assertTrue(label.measuredHeight >= label.layout.height + label.paddingTop + label.paddingBottom)
+                assertTrue(timerUi.root.measuredHeight >= (56 * density).toInt())
+                assertTrue(timerUi.dismiss.measuredWidth >= (48 * density).toInt())
+                assertTrue(timerUi.dismiss.measuredHeight >= (48 * density).toInt())
                 val margins = InstagramTimerOverlayViewFactory.margins(density, 31, 47)
                 assertEquals(31 + (16 * density).toInt(), margins.first)
                 assertEquals(47 + (16 * density).toInt(), margins.second)
@@ -119,22 +120,21 @@ class EntryGateOverlayUiTest {
             renderAndCapture(overlay, "02-overlay-captured-status", reducedMotion = false, captured = true)
             renderAndCapture(overlay, "03-overlay-reduced-motion", reducedMotion = true, captured = false)
             unmount(overlay); overlay = null
-            captureTimer("07-timer-expanded", collapsed = false)
-            captureTimer("08-timer-collapsed", collapsed = true)
+            captureTimer("07-timer-expanded-dismiss", collapsed = false)
+            captureTimer("08-timer-compact-icon", collapsed = true)
+            captureDashboardTimerStates()
 
             device.executeShellCommand("settings put system font_scale 2.0")
             recreateActivity()
             mount { overlay = it }
             renderAndCapture(overlay, "04-overlay-large-font", reducedMotion = true, captured = false)
             unmount(overlay); overlay = null
-            captureTimer("09-timer-large-font", collapsed = false)
 
             device.setOrientationLeft()
             recreateActivity()
             mount { overlay = it }
             renderAndCapture(overlay, "05-overlay-landscape", reducedMotion = true, captured = false)
             unmount(overlay); overlay = null
-            captureTimer("10-timer-landscape", collapsed = false)
 
             unmount(overlay)
             overlay = null
@@ -149,6 +149,26 @@ class EntryGateOverlayUiTest {
             device.executeShellCommand("settings put system font_scale $originalFontScale")
             recreateActivity()
         }
+    }
+
+    private fun captureDashboardTimerStates() {
+        val original = rule.scenario.let { var value=true; it.onActivity { value=Observation.sessionTimerEnabled }; value }
+        try {
+            val scroll = UiScrollable(UiSelector().scrollable(true))
+            scroll.scrollIntoView(UiSelector().text("Instagram session timer"))
+            val switch = device.findObject(By.desc("Instagram session timer"))
+            assertNotNull("actual timer Switch must have stable semantics", switch)
+            if (!switch.isChecked) switch.click()
+            assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000))
+            assertTrue(switch.isChecked)
+            switch.click()
+            assertTrue(device.wait(Until.hasObject(By.text("Disabled")), 5_000))
+            assertFalse(switch.isChecked)
+            capture("09-dashboard-timer-disabled")
+            switch.click()
+            assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000)); assertTrue(switch.isChecked)
+            capture("10-dashboard-timer-reenabled")
+        } finally { rule.scenario.onActivity { Observation.setSessionTimerEnabled(it, original) } }
     }
 
     @Test @SupplementalEvidence fun supplementaryFooterScreenshotScrollsOnlyInItsSeparateTest() {
@@ -219,11 +239,26 @@ class EntryGateOverlayUiTest {
 
     private fun captureTimer(name: String, collapsed: Boolean) {
         var ui: InstagramTimerOverlayUi? = null
+        var moved = false; var settled = false
         rule.scenario.onActivity { activity ->
-            ui = InstagramTimerOverlayViewFactory.create(activity) {}
+            ui = InstagramTimerOverlayViewFactory.create(activity, {}, {}, { _, _ -> moved = true }, { settled = true })
             activity.findViewById<ViewGroup>(android.R.id.content).addView(ui!!.root)
             ui!!.render(InstagramTimerModel("4:12", "Instagram time, 4 minutes, 12 seconds", collapsed, true))
             assertTrue(ui!!.root.minimumHeight >= (48 * activity.resources.displayMetrics.density).toInt())
+            if (collapsed) {
+                val now = SystemClock.uptimeMillis()
+                val events = listOf(
+                    android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, 4f, 4f, 0),
+                    android.view.MotionEvent.obtain(now, now + 16, android.view.MotionEvent.ACTION_MOVE, 80f, 20f, 0),
+                    android.view.MotionEvent.obtain(now, now + 32, android.view.MotionEvent.ACTION_UP, 80f, 20f, 0),
+                )
+                try {
+                    events.forEach(ui!!.root::dispatchTouchEvent)
+                } finally {
+                    events.forEach { it.recycle() }
+                }
+                assertTrue(moved); assertTrue(settled)
+            }
         }
         assertTopResumed(); waitForDraw(rule.scenario); capture(name)
         rule.scenario.onActivity { ui?.let { (it.root.parent as? ViewGroup)?.removeView(it.root); it.dispose() } }
