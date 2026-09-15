@@ -14,6 +14,8 @@ object Observation {
     private const val ENTRY_GATE_CONSENT_KEY = "instagram_diagnostic_entry_gate_v1"
     var gateConsent by mutableStateOf(false)
         private set
+    var reminderSettings by mutableStateOf(ReminderSettings())
+        private set
     var entryGateState by mutableStateOf(EntryGateState.OUTSIDE)
         internal set
     var connected by mutableStateOf(false)
@@ -47,10 +49,16 @@ object Observation {
     }
 
     fun load(context: Context) {
+        reminderSettings = ReminderSettingsStore.read(context)
         val prefs = context.getSharedPreferences("consent", Context.MODE_PRIVATE)
         consent = prefs.getBoolean(CONSENT_KEY, false)
         gateConsent = prefs.getBoolean(ENTRY_GATE_CONSENT_KEY, false)
         if (!consent) clear()
+    }
+
+    fun updateReminderSettings(context: Context, settings: ReminderSettings) {
+        ReminderSettingsStore.write(context, settings)
+        reminderSettings = settings
     }
 
     fun setGateConsent(context: Context, accepted: Boolean) {

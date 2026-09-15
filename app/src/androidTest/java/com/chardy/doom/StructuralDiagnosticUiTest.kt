@@ -193,12 +193,10 @@ class StructuralDiagnosticUiTest {
         rule.runOnIdle {
             var skipCalls = 0
             var leaveCalls = 0
-            var copyCalls = 0
             val overlay = EntryGateOverlayViewFactory.create(
                 rule.activity,
                 onSkipToMessages = { skipCalls++ },
-                onLeaveInstagram = { leaveCalls++ },
-                onCopyCurrentReport = { copyCalls++ }
+                onLeaveInstagram = { leaveCalls++ }
             )
 
             assertTrue(overlay.skipToMessages.performClick())
@@ -207,10 +205,7 @@ class StructuralDiagnosticUiTest {
             assertTrue(overlay.leaveInstagram.performClick())
             assertEquals(1, skipCalls)
             assertEquals(1, leaveCalls)
-            overlay.copyCurrentReport.visibility = android.view.View.VISIBLE
-            assertTrue(overlay.copyCurrentReport.performClick())
-            assertEquals(1, copyCalls)
-            assertEquals("5s remaining", overlay.countdown.text.toString())
+            assertEquals("Breathe in", overlay.phaseLabel.text.toString())
         }
     }
 
@@ -294,14 +289,7 @@ class StructuralDiagnosticUiTest {
             assertEquals(OverlayCopyResult.UNAVAILABLE, Observation.copyCurrentReportFromOverlay(rule.activity))
             assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
 
-            var copies = 0
-            val overlay = EntryGateOverlayViewFactory.create(rule.activity, {}, {}, {
-                copies++
-                Observation.copyCurrentReportFromOverlay(rule.activity)
-            })
-            overlay.copyCurrentReport.visibility = android.view.View.VISIBLE
-            assertTrue(overlay.copyCurrentReport.performClick())
-            assertEquals(1, copies)
+            val overlay = EntryGateOverlayViewFactory.create(rule.activity, {}, {})
             assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
             overlay.dispose()
         }

@@ -31,7 +31,6 @@ internal interface OverlayPlatform {
 class DoomAccessibilityService : AccessibilityService() {
     companion object {
         private const val INSTAGRAM = "com.instagram.android"
-        private const val GATE_DURATION_MS = 5_000L
         private const val WATCHDOG_INTERVAL_MS = 50L
         private const val WATCHDOG_UNCERTAINTY_GRACE_MS = 150L
         private const val REMOVAL_RETRY_INTERVAL_MS = 50L
@@ -57,9 +56,11 @@ class DoomAccessibilityService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private var monotonicClock: () -> Long = { SystemClock.elapsedRealtime() }
     private val entryGate = InstagramEntryGate(
-        durationMs = GATE_DURATION_MS,
-        enabled = { Observation.gateConsent && Observation.consent && Observation.connected },
-        monotonicNowMs = monotonicClock
+        durationMs = 10_000L,
+        enabled = { Observation.reminderSettings.enabled && Observation.gateConsent && Observation.consent && Observation.connected },
+        monotonicNowMs = monotonicClock,
+        durationProvider = { Observation.reminderSettings.durationSeconds * 1_000L },
+        cooldownDurationProvider = { Observation.reminderSettings.suppressionMinutes * 60_000L },
     )
     private var ticket: GateTicket? = null
     private var overlay: View? = null
@@ -739,8 +740,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 },
                 onLeaveInstagram = {
                     requestOverlayRemoval(OverlayRemovalAction.HOME, token, RemovalTraceMark.USER_HOME)
-                },
-                onCopyCurrentReport = { handleOverlayCopy(activeTicket, token) }
+                }
             )
             val box = ui.root
 
@@ -790,7 +790,7 @@ class DoomAccessibilityService : AccessibilityService() {
                         RemovalTraceMark.TIMER_COMPLETE
                     )
                 }
-            }.also { handler.postDelayed(it, GATE_DURATION_MS) }
+            }.also { handler.postDelayed(it, entryGate.durationSnapshotMs()) }
             watchdog = object : Runnable {
                 override fun run() {
                     runWatchdogTick(activeTicket, token, this)
@@ -1176,21 +1176,12 @@ class DoomAccessibilityService : AccessibilityService() {
     private fun renderOverlay(activeTicket: GateTicket, token: OverlayCallbackToken) {
         if (!callbackGuard.acceptsVisible(token) || overlayToken != token) return
         val reduceMotion = try { !ValueAnimator.areAnimatorsEnabled() } catch (_: RuntimeException) { true }
-        val model = EntryGateOverlayModel.from(
-            entryGate.remainingMs(monotonicClock(), activeTicket),
-            GATE_DURATION_MS,
-            reduceMotion,
-            Observation.overlayDiagnosticStatus()
-        )
+        val remaining = entryGate.remainingMs(monotonicClock(), activeTicket)
+        val duration = entryGate.durationSnapshotMs()
+        val model = EntryGateOverlayModel.from(remaining, duration, reduceMotion)
         overlayUi?.render(model)
     }
 
-    private fun handleOverlayCopy(activeTicket: GateTicket, token: OverlayCallbackToken) {
-        if (callbackGuard.acceptsVisible(token) && overlayToken == token) {
-            overlayUi?.showCopyResult(Observation.copyCurrentReportFromOverlay(this))
-            renderOverlay(activeTicket, token)
-        }
-    }
 
     private fun publishGateState() {
         Observation.entryGateState = entryGate.state
