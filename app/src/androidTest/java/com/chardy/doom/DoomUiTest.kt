@@ -70,6 +70,6 @@ class DoomUiTest {
   visible("Breathing reminders");click("Debug")
   scrollTo("DOOM-OWNED QUICK DEMO")
   scrollTo("Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})")
-  UiScrollable(UiSelector().scrollable(true)).scrollToBeginning(20)
+  repeat(20){device.swipe(device.displayWidth/2,device.displayHeight/4,device.displayWidth/2,device.displayHeight*3/4,20)}
  }
 }
