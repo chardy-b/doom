@@ -1,5 +1,6 @@
 package com.chardy.doom
 
+import android.annotation.TargetApi
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
@@ -28,6 +29,17 @@ internal object InstagramTimerOverlayViewFactory {
     fun margins(density: Float, safeEnd: Int, safeTop: Int): Pair<Int, Int> =
         (safeEnd + (16 * density).toInt()) to (safeTop + (16 * density).toInt())
 
+    @TargetApi(Build.VERSION_CODES.P)
+    private fun cutoutInsets(insets: WindowInsets): IntArray {
+        val cutout = insets.displayCutout ?: return intArrayOf(0, 0, 0, 0)
+        return intArrayOf(
+            cutout.safeInsetLeft,
+            cutout.safeInsetTop,
+            cutout.safeInsetRight,
+            cutout.safeInsetBottom,
+        )
+    }
+
     fun safeMargins(context: Context, manager: WindowManager, delivered: WindowInsets? = null): Pair<Int, Int> {
         val density = context.resources.displayMetrics.density
         if (Build.VERSION.SDK_INT >= 30) {
@@ -38,11 +50,11 @@ internal object InstagramTimerOverlayViewFactory {
             return margins(density, if (rtl) insets.left else insets.right, insets.top)
         }
         if (delivered != null) {
-            val cutout = if (Build.VERSION.SDK_INT >= 28) delivered.displayCutout else null
+            val cutout = if (Build.VERSION.SDK_INT >= 28) cutoutInsets(delivered) else intArrayOf(0, 0, 0, 0)
             val rtl = context.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-            val end = if (rtl) maxOf(delivered.systemWindowInsetLeft, cutout?.safeInsetLeft ?: 0)
-                else maxOf(delivered.systemWindowInsetRight, cutout?.safeInsetRight ?: 0)
-            return margins(density, end, maxOf(delivered.systemWindowInsetTop, cutout?.safeInsetTop ?: 0))
+            val end = if (rtl) maxOf(delivered.systemWindowInsetLeft, cutout[0])
+                else maxOf(delivered.systemWindowInsetRight, cutout[2])
+            return margins(density, end, maxOf(delivered.systemWindowInsetTop, cutout[1]))
         }
         // API 26–29 receives system-bar/cutout margins when the window delivers insets.
         return margins(density, 0, 0)
@@ -67,12 +79,12 @@ internal object InstagramTimerOverlayViewFactory {
             minimumWidth = (48*density).toInt(); minimumHeight = (48*density).toInt()
             addView(label, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
             if (Build.VERSION.SDK_INT < 30) setOnApplyWindowInsetsListener { view, insets ->
-                val cutout = if (Build.VERSION.SDK_INT >= 28) insets.displayCutout else null
+                val cutout = if (Build.VERSION.SDK_INT >= 28) cutoutInsets(insets) else intArrayOf(0, 0, 0, 0)
                 view.setPadding(
-                    maxOf(insets.systemWindowInsetLeft, cutout?.safeInsetLeft ?: 0),
-                    maxOf(insets.systemWindowInsetTop, cutout?.safeInsetTop ?: 0),
-                    maxOf(insets.systemWindowInsetRight, cutout?.safeInsetRight ?: 0),
-                    maxOf(insets.systemWindowInsetBottom, cutout?.safeInsetBottom ?: 0)
+                    maxOf(insets.systemWindowInsetLeft, cutout[0]),
+                    maxOf(insets.systemWindowInsetTop, cutout[1]),
+                    maxOf(insets.systemWindowInsetRight, cutout[2]),
+                    maxOf(insets.systemWindowInsetBottom, cutout[3])
                 )
                 insets
             }

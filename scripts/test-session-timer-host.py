@@ -10,6 +10,11 @@ TIMER = (ROOT / "app/src/main/java/com/chardy/doom/InstagramSessionTimer.kt").re
 VIEW = (ROOT / "app/src/main/java/com/chardy/doom/InstagramTimerOverlayView.kt").read_text()
 
 class TimerContract(unittest.TestCase):
+    def test_cutout_reads_are_api_guarded_for_min_sdk_26(self):
+        self.assertIn("@TargetApi(Build.VERSION_CODES.P)\n    private fun cutoutInsets", VIEW)
+        self.assertGreaterEqual(VIEW.count("if (Build.VERSION.SDK_INT >= 28) cutoutInsets("), 2)
+        self.assertNotIn("cutout?.safeInset", VIEW)
+
     def test_only_successful_terminal_episode_is_retired_in_event_path(self):
         retirement = SERVICE.split("// Only a verified event after a successful", 1)[1].split("val activeTicket", 1)[0]
         self.assertIn("ticket != null && terminalGateSucceeded", retirement)
