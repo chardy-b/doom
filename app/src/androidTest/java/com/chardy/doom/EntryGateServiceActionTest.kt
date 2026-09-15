@@ -188,6 +188,7 @@ class EntryGateServiceActionTest {
         rule.scenario.onActivity {
             Observation.setGateConsent(it, false)
             Observation.accept(it, false)
+            Observation.setSessionTimerEnabled(it, true)
             Observation.connected = false
             Observation.clear()
             RemovalTraceStore.process.clear()
@@ -1946,19 +1947,24 @@ class EntryGateServiceActionTest {
             val fresh = freshService(activity, 1_000L)
             try {
                 val timer = startBubble(fresh)
-                val timerUi = field(fresh.service, "timerUi").get(fresh.service) as InstagramTimerOverlayUi
                 fresh.platform.detachOnRemove = false
                 fresh.now[0] += 60_000L
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertTrue(field(fresh.service, "timerClosing").getBoolean(fresh.service))
-                assertTrue(field(fresh.service, "gateAfterTimerDetach").get(fresh.service) != null)
+                val pendingHandoff = field(fresh.service, "gateAfterTimerDetach").get(fresh.service)
+                val currentTicket = field(fresh.service, "ticket").get(fresh.service)
+                val liveEpoch = field(fresh.service, "timerEpoch").getLong(fresh.service)
+                assertTrue(pendingHandoff != null)
 
                 Observation.setSessionTimerEnabled(activity, false)
-                timerUi.dismiss.performClick()
+                invoke(fresh.service, "dismissTimer", liveEpoch)
                 assertFalse(timer.running)
                 assertEquals(null, field(fresh.service, "timerTick").get(fresh.service))
                 assertEquals(null, field(fresh.service, "timerWatchdog").get(fresh.service))
+                assertFalse(field(fresh.service, "timerDismissedThisVisit").getBoolean(fresh.service))
                 assertEquals(null, field(fresh.service, "cancelledGateAfterTimerDetach").get(fresh.service))
+                assertSame(pendingHandoff, field(fresh.service, "gateAfterTimerDetach").get(fresh.service))
+                assertSame(currentTicket, field(fresh.service, "ticket").get(fresh.service))
 
                 val retry = field(fresh.service, "timerRetry").get(fresh.service) as Runnable
                 fresh.platform.detachOnRemove = true
@@ -1967,7 +1973,10 @@ class EntryGateServiceActionTest {
                 assertTrue(field(fresh.service, "overlay").get(fresh.service) != null)
                 assertEquals(null, field(fresh.service, "timerView").get(fresh.service))
                 assertTrue(fresh.platform.attached)
-            } finally { destroyFresh(fresh) }
+            } finally {
+                Observation.setSessionTimerEnabled(activity, true)
+                destroyFresh(fresh)
+            }
         }
     }
 

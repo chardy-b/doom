@@ -159,6 +159,7 @@ class EntryGateOverlayUiTest {
             val switch = device.findObject(By.desc("Instagram session timer"))
             assertNotNull("actual timer Switch must have stable semantics", switch)
             if (!switch.isChecked) switch.click()
+            assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000))
             assertTrue(switch.isChecked)
             switch.click()
             assertTrue(device.wait(Until.hasObject(By.text("Disabled")), 5_000))
@@ -246,9 +247,16 @@ class EntryGateOverlayUiTest {
             assertTrue(ui!!.root.minimumHeight >= (48 * activity.resources.displayMetrics.density).toInt())
             if (collapsed) {
                 val now = SystemClock.uptimeMillis()
-                ui!!.root.dispatchTouchEvent(android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, 4f, 4f, 0))
-                ui!!.root.dispatchTouchEvent(android.view.MotionEvent.obtain(now, now + 16, android.view.MotionEvent.ACTION_MOVE, 80f, 20f, 0))
-                ui!!.root.dispatchTouchEvent(android.view.MotionEvent.obtain(now, now + 32, android.view.MotionEvent.ACTION_UP, 80f, 20f, 0))
+                val events = listOf(
+                    android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, 4f, 4f, 0),
+                    android.view.MotionEvent.obtain(now, now + 16, android.view.MotionEvent.ACTION_MOVE, 80f, 20f, 0),
+                    android.view.MotionEvent.obtain(now, now + 32, android.view.MotionEvent.ACTION_UP, 80f, 20f, 0),
+                )
+                try {
+                    events.forEach(ui!!.root::dispatchTouchEvent)
+                } finally {
+                    events.forEach { it.recycle() }
+                }
                 assertTrue(moved); assertTrue(settled)
             }
         }
