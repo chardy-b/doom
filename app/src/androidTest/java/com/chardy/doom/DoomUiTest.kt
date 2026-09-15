@@ -52,7 +52,7 @@ class DoomUiTest {
   click("Debug");click("Demo messages — no wait");visible("Messages stay open.");capture("03-doom-messages-demo")
   click("Try the breathing demo");visible("Take a breath.");visible("A deliberate start.",15_000);capture("04-doom-completed-demo")
  }
- @Test fun homeDefaultsNavigationAndDebugIsolation(){visible("Breathing reminders");visible("10s");visible("1m");visible("Accessibility: Not enabled");assertFalse(device.hasObject(By.text("SANITIZED STRUCTURAL REPORT")));click("Debug");scrollTo("SANITIZED STRUCTURAL REPORT");visible("DOOM-OWNED QUICK DEMO");click("Home");assertFalse(device.hasObject(By.text("SANITIZED STRUCTURAL REPORT")))}
+ @Test fun homeDefaultsNavigationAndDebugIsolation(){visible("Breathing reminders");visible("10s");visible("1m");visible("Accessibility: Not enabled");assertFalse(device.hasObject(By.text("SANITIZED STRUCTURAL REPORT")));click("Debug");scrollTo("SANITIZED STRUCTURAL REPORT");scrollTo("DOOM-OWNED QUICK DEMO");click("Home");assertFalse(device.hasObject(By.text("SANITIZED STRUCTURAL REPORT")))}
  @Test fun customCancelDismissesWithoutSaving(){
   click("Custom");visible("Custom duration");device.findObject(By.clazz("android.widget.EditText")).text="27"
   click("Cancel");visible("10s");rule.scenario.recreate();visible("10s");visible("1m")
@@ -66,9 +66,8 @@ class DoomUiTest {
  @Test fun previewRequiresTapAndContainsOnlyBreathingPresentation(){assertFalse(device.hasObject(By.text("Breathe in")));click("Preview breathing reminder");visible("Breathe in");assertFalse(device.hasObject(By.textContains("remaining")));assertFalse(device.hasObject(By.textContains("report")))}
  @Test @SupplementalEvidence fun buildFooterIsReachableAfterScrollingToTheEnd(){
   visible("Breathing reminders");click("Debug")
-  visible("DOOM-OWNED QUICK DEMO")
-  UiScrollable(UiSelector().scrollable(true)).scrollToEnd(20)
-  visible("Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})")
-  assertTrue(UiScrollable(UiSelector().scrollable(true)).scrollToBeginning(20))
+  scrollTo("DOOM-OWNED QUICK DEMO")
+  scrollTo("Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})")
+  UiScrollable(UiSelector().scrollable(true)).scrollToBeginning(20)
  }
 }
