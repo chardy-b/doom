@@ -58,9 +58,13 @@ class CoordinatorMatrix(unittest.TestCase):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td); (root/'scripts').mkdir(); (root/'evidence').mkdir()
    shutil.copy(ROOT/'scripts/ci-supplemental.sh',root/'scripts')
+   shutil.copy(ROOT/'scripts/ci-provenance.sh',root/'scripts')
+   (root/'scripts/emulator-readiness.py').write_text('raise SystemExit(0)\n')
    for name,code in [('ci-overlay.sh',overlay),('ci-fixture.sh',fixture)]:
     (root/'scripts'/name).write_text(f'#!/bin/bash\necho {name} >> calls\nexit {code}\n')
-   bindir=root/'bin'; bindir.mkdir(); (bindir/'git').write_text('#!/bin/bash\n[[ "$1" == status ]] || echo '+('a'*40)+'\n'); (bindir/'git').chmod(0o755)
+   bindir=root/'bin'; bindir.mkdir(); (bindir/'git').write_text(
+    '#!/bin/bash\ncase "$1" in rev-parse) echo '+('a'*40)+';; diff) exit 0;; ls-files) exit 0;; status) exit 0;; esac\n')
+   (bindir/'git').chmod(0o755)
    env=os.environ|{'PATH':str(bindir)+':'+os.environ['PATH'],'GITHUB_ACTIONS':'true','CANDIDATE_SHA':'a'*40,'GITHUB_RUN_ID':'1','GITHUB_RUN_ATTEMPT':'2'}
    got=subprocess.run(['bash','scripts/ci-supplemental.sh'],cwd=root,env=env,capture_output=True,text=True)
    return got.returncode,(root/'calls').read_text().splitlines(),got.stdout

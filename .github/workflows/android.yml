@@ -47,6 +47,7 @@ jobs:
       - name: Host source and evidence checks
         run: |
           python3 -B scripts/test-ci-isolation.py
+          python3 -B scripts/test-integrated-ci-harness.py
           python3 -B scripts/test-structural-lifecycle.py
           python3 -B scripts/test-overlay-evidence.py
           python3 -B scripts/test-fixture-evidence.py

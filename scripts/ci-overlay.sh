@@ -2,10 +2,8 @@
 set -euo pipefail
 [[ "${GITHUB_ACTIONS:-}" == true ]] || { echo 'Overlay Android execution is restricted to GitHub Actions.' >&2; exit 2; }
 cd "$(dirname "$0")/.."
-sha=$(git rev-parse HEAD)
-[[ "$sha" =~ ^[0-9a-f]{40}$ && "$sha" == "${CANDIDATE_SHA:?Exact candidate required}" ]]
+. scripts/ci-provenance.sh
 [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ && "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]]
-[[ -z "$(git status --porcelain)" ]] || { echo 'Exact-SHA overlay evidence requires a clean checkout.' >&2; exit 2; }
 out=app/build/reports/androidTests/overlay-evidence
 apk_copy=app/build/reports/androidTests/supplemental-apk/app-debug.apk
 mkdir -p "$out" "$(dirname "$apk_copy")"

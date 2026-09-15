@@ -6,8 +6,8 @@ if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
   exit 2
 fi
 cd "$(dirname "$0")/.."
-[[ "$(git rev-parse HEAD)" == "${CANDIDATE_SHA:?Exact candidate required}" ]]
-[[ -z "$(git status --porcelain)" ]]
+. scripts/ci-provenance.sh
+python3 scripts/emulator-readiness.py app/build/outputs/apk/debug/app-debug.apk
 mkdir -p evidence/screenshots
 collect_diagnostics() {
   result=$?
