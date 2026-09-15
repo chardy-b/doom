@@ -385,21 +385,26 @@ class EntryGateServiceActionTest {
         val oldToken = fixture.token
         request(fixture.service, OverlayRemovalAction.COMPLETE, oldToken)
         lateinit var newView: View
+        lateinit var newToken: OverlayCallbackToken
+        var oldRemovalAttempts = 0
         rule.scenario.onActivity { activity ->
             val guard = field(fixture.service, "callbackGuard").get(fixture.service) as OverlayCallbackGuard
             newView = View(activity)
             fixture.platform.register(newView, true)
-            val newToken = guard.open(fixture.ticket)
+            newToken = guard.open(fixture.ticket)
             field(fixture.service, "overlay").set(fixture.service, newView)
             field(fixture.service, "overlayToken").set(fixture.service, newToken)
+            oldRemovalAttempts = fixture.platform.removeAttempts
+            assertTrue(oldRemovalAttempts > 0)
             // Exercise the queued retry boundary deterministically on the main thread.
             invoke(fixture.service, "attemptOverlayRemoval", oldToken)
             requestOverlayRemovalWithToken(fixture.service, OverlayRemovalAction.COMPLETE, oldToken)
         }
         instrumentation.waitForIdleSync()
         assertSame(newView, field(fixture.service, "overlay").get(fixture.service))
+        assertSame(newToken, field(fixture.service, "overlayToken").get(fixture.service))
         assertEquals(0, fixture.platform.routeCalls)
-        assertEquals(1, fixture.platform.removeAttempts)
+        assertEquals(oldRemovalAttempts, fixture.platform.removeAttempts)
         assertFalse(gate(fixture.service).cooldownActive())
     }
 
@@ -1797,21 +1802,29 @@ class EntryGateServiceActionTest {
                 val view = field(fresh.service, "timerView").get(fresh.service)
                 val epoch = field(fresh.service, "timerEpoch").getLong(fresh.service)
                 val params = field(fresh.service, "timerParams").get(fresh.service) as WindowManager.LayoutParams
-                val portraitX = params.x
-                val portraitY = params.y
                 var updates = 0
                 field(fresh.service, "overlayWindowUpdater").set(fresh.service,
-                    { _: WindowManager, target: View, changed: WindowManager.LayoutParams ->
-                        assertSame(view, target); assertSame(params, changed); updates += 1
+                    { manager: WindowManager, target: View, changed: WindowManager.LayoutParams ->
+                        val density = layoutContext.resources.displayMetrics.density
+                        val frame = manager.currentWindowMetrics.bounds
+                        val safe = InstagramTimerOverlayViewFactory.safeInsets(manager, target.rootWindowInsets)
+                        val bounds = InstagramTimerOverlayViewFactory.bounds(frame, safe,
+                            target.measuredWidth.coerceAtLeast((56 * density).toInt()),
+                            target.measuredHeight.coerceAtLeast((56 * density).toInt()), density)
+                        assertSame(view, target); assertSame(params, changed)
+                        assertTrue(changed.x == bounds.left || changed.x == bounds.right)
+                        assertTrue(changed.y in bounds.top..bounds.bottom)
+                        updates += 1
                     })
                 val landscape = Configuration(layoutContext.resources.configuration).apply {
                     orientation = Configuration.ORIENTATION_LANDSCAPE
                     densityDpi = 320
                 }
                 layoutContext = activity.createConfigurationContext(landscape)
+                params.x = -100_000
+                params.y = -100_000
                 fresh.service.onConfigurationChanged(landscape)
                 assertEquals(1, updates)
-                assertTrue(params.x > portraitX && params.y > portraitY)
                 assertEquals(2, fresh.installs)
                 invoke(fresh.service, "updateTimerLayout", epoch - 1)
                 assertEquals(1, updates)
