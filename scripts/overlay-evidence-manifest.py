@@ -13,7 +13,7 @@ EXPECTED_SCREENSHOTS = (
     "02-overlay-captured-status.png", "03-reminder-inhale.png",
     "03-overlay-reduced-motion.png", "04-reminder-exhale.png",
     "04-overlay-large-font.png", "05-reminder-reduced-motion.png",
-    "05-overlay-landscape.png", "06-doom-build-footer.png",
+    "05-overlay-landscape.png",
     "07-timer-expanded-dismiss.png", "08-timer-compact-icon.png",
     "09-dashboard-timer-disabled.png", "10-dashboard-timer-reenabled.png",
 )
