@@ -523,7 +523,9 @@ class EntryGateServiceActionTest {
                 assertEquals(1, fresh.installs)
                 assertEquals(EntryGateState.BYPASSED, gate(fresh.service).state)
 
+                fresh.platform.rootBehavior = RootBehavior.FOREIGN
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
                 fresh.platform.homeResult = true
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(2, fresh.installs)
@@ -545,7 +547,9 @@ class EntryGateServiceActionTest {
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(1, fresh.installs)
                 assertEquals(EntryGateState.BYPASSED, gate(fresh.service).state)
+                fresh.platform.rootBehavior = RootBehavior.FOREIGN
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(2, fresh.installs)
                 assertTrue(fresh.platform.attached)
