@@ -27,6 +27,23 @@ class EntryGateServiceActionTest {
     @get:Rule val rule = ActivityScenarioRule(MainActivity::class.java)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
 
+    @Test fun timerPreferenceDismissalAndSafetyVetoAreIndependentOfGateAuthority() {
+        rule.scenario.onActivity { activity ->
+            val service = DoomAccessibilityService()
+            Observation.accept(activity, true)
+            Observation.setGateConsent(activity, true)
+            Observation.connected = true
+            Observation.setSessionTimerEnabled(activity, false)
+            assertTrue(invokeResult<Boolean>(service, "timerConsentAllowed"))
+            assertFalse(invokeResult<Boolean>(service, "timerSpecificAllowed"))
+            field(service, "timerDismissedThisVisit").setBoolean(service, true)
+            assertTrue(invokeResult<Boolean>(service, "timerConsentAllowed"))
+            field(service, "timerSafetyVeto").setBoolean(service, true)
+            Observation.setSessionTimerEnabled(activity, true)
+            assertFalse(invokeResult<Boolean>(service, "timerSpecificAllowed"))
+        }
+    }
+
     private enum class RootBehavior {
         INSTAGRAM,
         NULL_PACKAGE,

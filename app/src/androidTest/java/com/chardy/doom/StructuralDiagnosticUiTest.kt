@@ -40,16 +40,31 @@ class StructuralDiagnosticUiTest {
     }
 
     @Before fun reset() = rule.runOnIdle {
+        Observation.setSessionTimerEnabled(rule.activity, true)
         RemovalTraceStore.process.clear()
         Observation.setGateConsent(rule.activity, false)
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
     }
     @After fun cleanup() = rule.runOnIdle {
+        Observation.setSessionTimerEnabled(rule.activity, true)
         RemovalTraceStore.process = RemovalTraceStore()
         Observation.setGateConsent(rule.activity, false)
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
+    }
+
+    @Test fun sessionTimerSwitchPersistsRealIndependentState() {
+        rule.onNodeWithText("Instagram session timer").performScrollTo().assertIsDisplayed()
+        rule.runOnIdle { Observation.setSessionTimerEnabled(rule.activity, false) }
+        shown("Disabled")
+        rule.runOnIdle {
+            val prefs = rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
+            assertFalse(prefs.getBoolean(Observation.SESSION_TIMER_ENABLED_KEY, true))
+            assertEquals(3, prefs.all.size)
+        }
+        rule.runOnIdle { Observation.setSessionTimerEnabled(rule.activity, true) }
+        shown("Enabled")
     }
 
     private fun tap(text: String) = rule.onNodeWithText(text).performScrollTo().performClick()
