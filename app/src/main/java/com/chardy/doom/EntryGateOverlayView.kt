@@ -2,193 +2,62 @@ package com.chardy.doom
 
 import android.content.Context
 import android.content.res.ColorStateList
-import android.graphics.Typeface
+import android.content.res.Configuration
+import android.graphics.drawable.GradientDrawable
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.os.Build
 import android.view.Gravity
 import android.view.View
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.StateListDrawable
+import android.widget.*
 
-internal class EntryGateOverlayUi(
-    val root: View,
-    val countdown: TextView,
-    val skipToMessages: Button,
-    val leaveInstagram: Button,
-    val copyCurrentReport: Button,
-    val status: TextView,
-    private val feedback: TextView,
-    private val pixel: PixelBreathingView
-) {
-    private var disposed = false
-    private var lastCountdown = -1
-    private var lastStatus: String? = null
-    private var lastCopyVisibility = View.GONE
-
-    fun render(model: EntryGateOverlayModel) {
-        if (disposed) return
-        if (lastCountdown != model.remainingSeconds) {
-            countdown.text = "${model.remainingSeconds}s remaining"
-            lastCountdown = model.remainingSeconds
-        }
-        val statusText = "${model.diagnostic.surface.name}\n" +
-            if (model.diagnostic.reportStatus == OverlayReportStatus.CAPTURED) "REPORT CAPTURED"
-            else "REPORT UNAVAILABLE"
-        if (statusText != lastStatus) {
-            status.text = statusText
-            lastStatus = statusText
-        }
-        val copyVisibility = if (model.diagnostic.canCopyCurrentReport) View.VISIBLE else View.GONE
-        if (copyVisibility != lastCopyVisibility) {
-            copyCurrentReport.visibility = copyVisibility
-            lastCopyVisibility = copyVisibility
-        }
-        pixel.render(model.progress, model.reduceMotion)
-    }
-
-    fun showCopyResult(result: OverlayCopyResult) {
-        if (disposed) return
-        feedback.text = if (result == OverlayCopyResult.COPIED) "Copied to system clipboard."
-        else "Copy unavailable."
-        feedback.visibility = View.VISIBLE
-    }
-
-    fun dispose() {
-        if (disposed) return
-        disposed = true
-        skipToMessages.setOnClickListener(null)
-        leaveInstagram.setOnClickListener(null)
-        copyCurrentReport.setOnClickListener(null)
-        skipToMessages.isEnabled = false
-        leaveInstagram.isEnabled = false
-        copyCurrentReport.isEnabled = false
-        pixel.visibility = View.INVISIBLE
-    }
+internal class SegmentedBreathProgressView(context:Context):View(context){
+ private val track=Paint().apply{color=BreathingVisuals.PANEL}
+ private val fill=Paint().apply{color=BreathingVisuals.GOLD}
+ private var segments:List<Float> = emptyList()
+ internal fun render(values:List<Float>){segments=values.toList();invalidate()}
+ override fun onDraw(canvas:Canvas){
+  super.onDraw(canvas);if(segments.isEmpty())return
+  val gap=4f*resources.displayMetrics.density
+  val segmentWidth=(width-gap*(segments.size-1))/segments.size
+  segments.forEachIndexed{i,fraction->val left=i*(segmentWidth+gap);canvas.drawRect(left,0f,left+segmentWidth,height.toFloat(),track);canvas.drawRect(left,0f,left+segmentWidth*fraction.coerceIn(0f,1f),height.toFloat(),fill)}
+ }
 }
-
-internal object EntryGateOverlayViewFactory {
-    fun create(
-        context: Context,
-        onSkipToMessages: () -> Unit,
-        onLeaveInstagram: () -> Unit,
-        onCopyCurrentReport: () -> Unit
-    ): EntryGateOverlayUi {
-        fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
-        fun text(value: String, size: Float, color: Int = BreathingVisuals.PAPER) = TextView(context).apply {
-            text = value
-            textSize = size
-            setTextColor(color)
-        }
-        val scroll = ScrollView(context).apply {
-            setBackgroundColor(BreathingVisuals.INK)
-            isFillViewport = true
-            contentDescription = "Instagram diagnostic pause"
-            setOnApplyWindowInsetsListener { view, insets ->
-                val cutoutSafeInsets = if (Build.VERSION.SDK_INT >= 28) {
-                    insets.displayCutout?.let { cutout ->
-                        intArrayOf(
-                            cutout.safeInsetLeft,
-                            cutout.safeInsetTop,
-                            cutout.safeInsetRight,
-                            cutout.safeInsetBottom
-                        )
-                    }
-                } else null
-                val left = maxOf(insets.systemWindowInsetLeft, cutoutSafeInsets?.get(0) ?: 0)
-                val top = maxOf(insets.systemWindowInsetTop, cutoutSafeInsets?.get(1) ?: 0)
-                val right = maxOf(insets.systemWindowInsetRight, cutoutSafeInsets?.get(2) ?: 0)
-                val bottom = maxOf(insets.systemWindowInsetBottom, cutoutSafeInsets?.get(3) ?: 0)
-                view.setPadding(left, top, right, bottom)
-                insets
-            }
-        }
-        val body = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(24), dp(24), dp(24), dp(24))
-        }
-        scroll.addView(body, android.widget.FrameLayout.LayoutParams(-1, -2))
-        val header = text("INSTAGRAM DETECTED", 20f, BreathingVisuals.JADE).apply {
-            contentDescription = "Instagram detected"
-            isFocusable = true
-            typeface = Typeface.MONOSPACE
-            minHeight = dp(48)
-        }
-        body.addView(header, LinearLayout.LayoutParams(-1, -2))
-        body.addView(text("Take a breath.", 28f).apply { gravity = Gravity.CENTER })
-        val pixel = PixelBreathingView(context).apply {
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        body.addView(pixel, LinearLayout.LayoutParams(-1, dp(112)))
-        body.addView(text("Breathe naturally. No need to hold.", 16f).apply { gravity = Gravity.CENTER })
-        val countdown = text("5s remaining", 22f, BreathingVisuals.JADE).apply {
-            gravity = Gravity.CENTER
-            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_NONE
-            minHeight = dp(48)
-        }
-        body.addView(countdown, LinearLayout.LayoutParams(-1, -2))
-        val status = text("UNKNOWN\nREPORT UNAVAILABLE", 14f, BreathingVisuals.JADE).apply {
-            setPadding(0, dp(8), 0, dp(8))
-        }
-        body.addView(status)
-        body.addView(text("Diagnostic pause may interrupt DM entry. Skip tries to open Instagram messages after removing this pause; it may not work.", 14f))
-        body.addView(text("Copy sends the current sanitized report to the system clipboard without showing it here. Copies leave Doom and cannot be recalled by clearing Doom.", 14f))
-        val feedback = text("", 14f, BreathingVisuals.JADE).apply {
-            visibility = View.GONE
-            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-        }
-        body.addView(feedback)
-        val copy = button(context, "COPY CURRENT REPORT", BreathingVisuals.INK, BreathingVisuals.JADE, dp(48)).apply {
-            visibility = View.GONE
-            setOnClickListener { onCopyCurrentReport() }
-        }
-        val skip = button(context, "SKIP TO MESSAGES", BreathingVisuals.INK, BreathingVisuals.JADE, dp(52)).apply {
-            setOnClickListener { onSkipToMessages() }
-        }
-        val leave = button(context, "LEAVE INSTAGRAM", BreathingVisuals.PAPER, BreathingVisuals.PANEL, dp(48)).apply {
-            setOnClickListener { onLeaveInstagram() }
-        }
-        body.addView(copy, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        body.addView(skip, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-        body.addView(leave, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        return EntryGateOverlayUi(scroll, countdown, skip, leave, copy, status, feedback, pixel)
-    }
-
-    private fun button(context: Context, label: String, textColor: Int, fill: Int, minHeight: Int) = Button(context).apply {
-        text = label
-        textSize = 14f
-        this.minHeight = minHeight
-        minimumHeight = minHeight
-        isAllCaps = false
-        gravity = Gravity.CENTER
-        setPadding(paddingLeft, context.resources.displayMetrics.density.let { (12 * it).toInt() },
-            paddingRight, context.resources.displayMetrics.density.let { (12 * it).toInt() })
-        setTextColor(ColorStateList(
-            arrayOf(
-                intArrayOf(-android.R.attr.state_enabled),
-                intArrayOf(android.R.attr.state_pressed),
-                intArrayOf(android.R.attr.state_focused),
-                intArrayOf(android.R.attr.state_enabled),
-                intArrayOf()
-            ),
-            intArrayOf(BreathingVisuals.PAPER, BreathingVisuals.INK, textColor, textColor, BreathingVisuals.PAPER)
-        ))
-        fun background(color: Int, stroke: Int, width: Int = 1) = GradientDrawable().apply {
-            setColor(color)
-            setStroke(width, stroke)
-            cornerRadius = 2f
-        }
-        val focusStroke = if (fill == BreathingVisuals.JADE) BreathingVisuals.INK else BreathingVisuals.PAPER
-        background = StateListDrawable().apply {
-            addState(intArrayOf(-android.R.attr.state_enabled), background(BreathingVisuals.PANEL, BreathingVisuals.PAPER, 1))
-            addState(intArrayOf(android.R.attr.state_pressed), background(BreathingVisuals.PAPER, BreathingVisuals.INK, 2))
-            addState(intArrayOf(android.R.attr.state_focused), background(fill, focusStroke, 2))
-            addState(intArrayOf(android.R.attr.state_enabled), background(fill, BreathingVisuals.JADE, 1))
-            addState(intArrayOf(), background(fill, BreathingVisuals.JADE, 1))
-        }
-        stateListAnimator = null
-    }
+internal class EntryGateOverlayUi(val root:View,val phaseLabel:TextView,val skipToMessages:Button,val leaveInstagram:Button,private val pixel:PixelBreathingView,private val progress:SegmentedBreathProgressView){
+ private var disposed=false
+ private var lastPhase:String?=null
+ fun render(model:EntryGateOverlayModel){
+  if(disposed)return
+  if(lastPhase!=model.frame.label){phaseLabel.text=model.frame.label;lastPhase=model.frame.label}
+  pixel.render(model.frame.bloom,model.reduceMotion);progress.render(model.frame.segments)
+ }
+ fun dispose(){if(disposed)return;disposed=true;skipToMessages.setOnClickListener(null);leaveInstagram.setOnClickListener(null);skipToMessages.isEnabled=false;leaveInstagram.isEnabled=false;pixel.visibility=View.INVISIBLE}
+}
+internal object EntryGateOverlayViewFactory{
+ fun create(context:Context,onSkipToMessages:()->Unit,onLeaveInstagram:()->Unit):EntryGateOverlayUi{
+  fun dp(v:Int)=(v*context.resources.displayMetrics.density).toInt()
+  val compactLandscape=context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE
+  val verticalPadding=if(compactLandscape)8 else 20
+  fun label(value:String,size:Float)=TextView(context).apply{ text=value; textSize=size; setTextColor(BreathingVisuals.PAPER); gravity=Gravity.CENTER }
+  val scroll=ScrollView(context).apply {
+   setBackgroundColor(BreathingVisuals.INK); isFillViewport=true
+   contentDescription="Instagram diagnostic pause"
+   setOnApplyWindowInsetsListener { view,insets ->
+    val cutout = if(Build.VERSION.SDK_INT>=28) insets.displayCutout?.let { intArrayOf(it.safeInsetLeft,it.safeInsetTop,it.safeInsetRight,it.safeInsetBottom) } else null
+    view.setPadding(maxOf(insets.systemWindowInsetLeft,cutout?.get(0)?:0),maxOf(insets.systemWindowInsetTop,cutout?.get(1)?:0),maxOf(insets.systemWindowInsetRight,cutout?.get(2)?:0),maxOf(insets.systemWindowInsetBottom,cutout?.get(3)?:0)); insets
+   }
+  }
+  val body=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;setPadding(dp(20),dp(verticalPadding),dp(20),dp(verticalPadding))};scroll.addView(body,FrameLayout.LayoutParams(-1,-2))
+  val phase=label("Breathe in",if(compactLandscape)24f else 32f).apply{
+   minHeight=dp(if(compactLandscape)40 else 48);isFocusable=true
+   if(Build.VERSION.SDK_INT>=28)isAccessibilityHeading=true
+  };body.addView(phase,LinearLayout.LayoutParams(-1,-2))
+  val pixel=PixelBreathingView(context).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO};body.addView(pixel,LinearLayout.LayoutParams(-1,dp(if(compactLandscape)96 else 260)).apply{weight=1f})
+  val progress=SegmentedBreathProgressView(context);body.addView(progress,LinearLayout.LayoutParams(-1,dp(if(compactLandscape)8 else 10)))
+  val skip=button(context,"Skip to Messages",BreathingVisuals.INK,BreathingVisuals.GOLD,dp(52)).apply{setOnClickListener{onSkipToMessages()}}
+  val leave=button(context,"Leave Instagram",BreathingVisuals.PAPER,BreathingVisuals.PANEL,dp(48)).apply{setOnClickListener{onLeaveInstagram()}}
+  body.addView(skip,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(if(compactLandscape)6 else 16)});body.addView(leave,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(if(compactLandscape)4 else 8)})
+  return EntryGateOverlayUi(scroll,phase,skip,leave,pixel,progress)
+ }
+ private fun button(c:Context,label:String,text:Int,fill:Int,height:Int)=Button(c).apply{this.text=label;textSize=16f;minHeight=height;minimumHeight=height;isAllCaps=false;setTextColor(ColorStateList.valueOf(text));background=GradientDrawable().apply{setColor(fill);setStroke(2,BreathingVisuals.GOLD);cornerRadius=4f};stateListAnimator=null}
 }

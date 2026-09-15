@@ -199,10 +199,10 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("private val enabled: () -> Boolean = { false }", policy)
         self.assertIn("durationMs in 1L..120_000L", policy)
         self.assertIn("TYPE_ACCESSIBILITY_OVERLAY", SERVICE)
-        self.assertIn('"SKIP TO MESSAGES"', OVERLAY_VIEW)
-        self.assertIn('button(context, "LEAVE INSTAGRAM"', OVERLAY_VIEW)
-        self.assertIn("setOnClickListener { onSkipToMessages() }", OVERLAY_VIEW)
-        self.assertIn("setOnClickListener { onLeaveInstagram() }", OVERLAY_VIEW)
+        self.assertIn('"Skip to Messages"', OVERLAY_VIEW)
+        self.assertIn('button(context,"Leave Instagram"', OVERLAY_VIEW)
+        self.assertIn("setOnClickListener{onSkipToMessages()}", OVERLAY_VIEW)
+        self.assertIn("setOnClickListener{onLeaveInstagram()}", OVERLAY_VIEW)
         install = SERVICE.split("EntryGateOverlayViewFactory.create", 1)[1].split(
             "val parameters", 1
         )[0]
@@ -403,7 +403,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertNotIn("code 29", ui)
 
     def test_overlay_uses_wrapping_accessible_layout_and_complete_insets(self):
-        self.assertIn("LinearLayout.LayoutParams(-1, -2)", OVERLAY_VIEW)
+        self.assertIn("LinearLayout.LayoutParams(-1,-2)", OVERLAY_VIEW)
         self.assertIn("minHeight", OVERLAY_VIEW)
         self.assertNotIn("LinearLayout.LayoutParams(-1, dp(48))", OVERLAY_VIEW)
         self.assertNotIn("LinearLayout.LayoutParams(-1, dp(52))", OVERLAY_VIEW)
@@ -413,12 +413,38 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("systemWindowInsetBottom", OVERLAY_VIEW)
         self.assertIn("displayCutout", OVERLAY_VIEW)
         self.assertNotIn('contentDescription = "Diagnostic status"', OVERLAY_VIEW)
-        self.assertIn("state_pressed", OVERLAY_VIEW)
-        self.assertIn("state_focused", OVERLAY_VIEW)
-        self.assertIn("state_enabled", OVERLAY_VIEW)
-        self.assertIn("lastStatus", OVERLAY_VIEW)
-        self.assertIn("lastCopyVisibility", OVERLAY_VIEW)
-        self.assertIn("pixel.visibility = View.INVISIBLE", OVERLAY_VIEW)
+        for required in ('"Breathe in"', '"Skip to Messages"', '"Leave Instagram"', "PixelBreathingView", "SegmentedBreathProgressView"):
+            self.assertIn(required, OVERLAY_VIEW)
+        for forbidden in ("countdown", "copyCurrentReport", "status", "REPORT CAPTURED", "Take a breath"):
+            self.assertNotIn(forbidden, OVERLAY_VIEW)
+        self.assertIn("pixel.visibility=View.INVISIBLE", OVERLAY_VIEW)
+
+    def test_segmented_progress_has_stable_hierarchy_and_fractional_fill(self):
+        self.assertNotIn("removeAllViews", OVERLAY_VIEW)
+        self.assertNotIn("track.post", OVERLAY_VIEW)
+        self.assertNotIn("1000", OVERLAY_VIEW)
+        self.assertIn("segments=values.toList();invalidate()", OVERLAY_VIEW)
+        self.assertIn("segments.size-1", OVERLAY_VIEW)
+        self.assertIn("segmentWidth*fraction.coerceIn(0f,1f)", OVERLAY_VIEW)
+
+    def test_custom_settings_dialogs_have_real_cancel_and_valid_save(self):
+        ui = (REPO / "app/src/main/java/com/chardy/doom/MainActivity.kt").read_text()
+        dialog = ui.split("private fun CustomDialog(", 1)[1].split(
+            "private fun Debug(", 1
+        )[0]
+        self.assertIn("onDismissRequest = cancel", dialog)
+        self.assertIn('TextButton(onClick = cancel) { Text("Cancel") }', dialog)
+        self.assertIn("enabled = parse() != null", dialog)
+        self.assertNotIn('Text("Clear")', dialog)
+
+    def test_phase_label_changes_only_with_the_breathing_phase(self):
+        self.assertIn("private var lastPhase:String?=null", OVERLAY_VIEW)
+        self.assertIn("if(lastPhase!=model.frame.label)", OVERLAY_VIEW)
+
+    def test_native_overlay_restores_root_and_heading_accessibility(self):
+        self.assertIn('contentDescription="Instagram diagnostic pause"', OVERLAY_VIEW)
+        self.assertIn("isFocusable=true", OVERLAY_VIEW)
+        self.assertIn("isAccessibilityHeading=true", OVERLAY_VIEW)
 
     def test_direct_return_closes_visible_callbacks_before_preserving_report(self):
         own_events = SERVICE.split("RemovalTraceMark.APP_RETURN", 1)[0]
@@ -432,6 +458,9 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("INSTAGRAM_ENTRY_COOLDOWN_MS = 60_000L", policy)
         self.assertIn("monotonicNowMs: () -> Long", policy)
         self.assertIn("return nowMs - terminalAt < durationMs", policy)
+        admission = policy.split("fun beginInstagramSession()", 1)[1].split("return GateTicket", 1)[0]
+        self.assertLess(admission.index("activeDurationMs = durationProvider"), admission.index("activeCooldownDurationMs = cooldownDurationProvider"))
+        self.assertLess(admission.index("activeCooldownDurationMs = cooldownDurationProvider"), admission.index("state = if (enabled())"))
         self.assertNotIn("System.currentTimeMillis", SERVICE + policy)
         self.assertEqual(1, SERVICE.count("SystemClock.elapsedRealtime()"))
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(
@@ -447,7 +476,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
     def test_cooldown_is_owned_only_by_terminal_policy_operations(self):
         policy = (REPO / "app/src/main/java/com/chardy/doom/InstagramEntryGate.kt").read_text()
         self.assertNotIn("fun admitForDisplay", policy)
-        self.assertIn("cooldown.recordTerminal(ticket, nowMs)", policy)
+        self.assertEqual(2, policy.count("cooldown.recordTerminal(ticket, nowMs, activeCooldownDurationMs)"))
+        self.assertIn("activeCooldownDurationMs = cooldownDurationProvider?.invoke()", policy)
         self.assertIn("fun beginMessagesRoute", policy)
         self.assertIn("fun finishMessagesRoute", policy)
         self.assertIn("result == MessagesRouteResult.FAILED", policy)

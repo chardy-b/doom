@@ -1,28 +1,7 @@
 package com.chardy.doom
-
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import org.junit.Assert.*
 import org.junit.Test
-
 class EntryGateOverlayModelTest {
-    private val diagnostic = OverlayDiagnosticStatus(
-        EntryGateSurface.UNKNOWN, OverlayReportStatus.UNAVAILABLE, false
-    )
-
-    @Test fun countdownUsesCeilingAndNeverRunsPastBounds() {
-        assertEquals(5, EntryGateOverlayModel.from(5_000, 5_000, false, diagnostic).remainingSeconds)
-        assertEquals(1, EntryGateOverlayModel.from(1, 5_000, false, diagnostic).remainingSeconds)
-        assertEquals(0, EntryGateOverlayModel.from(0, 5_000, false, diagnostic).remainingSeconds)
-        assertEquals(1f, EntryGateOverlayModel.from(-1, 5_000, false, diagnostic).progress)
-        assertEquals(0f, EntryGateOverlayModel.from(9_000, 5_000, false, diagnostic).progress)
-    }
-
-    @Test fun capturedStatusDoesNotDependOnClassifier() {
-        val captured = diagnostic.copy(
-            reportStatus = OverlayReportStatus.CAPTURED,
-            canCopyCurrentReport = true
-        )
-        assertTrue(captured.reportStatus == OverlayReportStatus.CAPTURED)
-        assertEquals(EntryGateSurface.UNKNOWN, captured.surface)
-    }
+ @Test fun modelMapsRemainingToSharedFrame(){val start=EntryGateOverlayModel.from(20_000,20_000,false);assertEquals("Breathe in",start.frame.label);assertEquals(listOf(0f,0f),start.frame.segments);val middle=EntryGateOverlayModel.from(5_000,20_000,false);assertEquals(listOf(1f,.5f),middle.frame.segments)}
+ @Test fun completionFillsEverySegment(){assertEquals(listOf(1f,1f,1f),EntryGateOverlayModel.from(0,30_000,true).frame.segments)}
 }
