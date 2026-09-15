@@ -14,7 +14,10 @@ POLL_SECONDS = 1.0
 PORT_MIN = 5554
 PORT_MAX = 5682
 PACKAGE = "com.chardyb.doom"
-ACTIVITY = f"{PACKAGE}/.MainActivity"
+ACTIVITY = "com.chardyb.doom/com.chardy.doom.MainActivity"
+TOP_RESUMED_ACTIVITY = re.compile(
+    r"(?m)^[ \t]*topResumedActivity[ \t]*=[ \t]*ActivityRecord\{[^\r\n]*[ \t]com\.chardyb\.doom/com\.chardy\.doom\.MainActivity(?=[ \t}])[^\r\n]*\}[ \t]*$"
+)
 
 
 class NotReady(Exception):
@@ -69,6 +72,10 @@ def keyguard_is_unlocked(policy: str) -> bool:
 
 def has_emulator_identity(boot_qemu: str | None, kernel_qemu: str | None) -> bool:
     return (boot_qemu or "").strip() == "1" or (kernel_qemu or "").strip() == "1"
+
+
+def doom_is_top_resumed(activities: str) -> bool:
+    return TOP_RESUMED_ACTIVITY.search(activities) is not None
 
 
 def main(argv: list[str]) -> int:
@@ -145,7 +152,7 @@ def main(argv: list[str]) -> int:
         if adb("shell", "am", "start", "-W", "-n", ACTIVITY) is None:
             return False
         activities = adb("shell", "dumpsys", "activity", "activities") or ""
-        return re.search(r"topResumedActivity=.*com\.chardyb\.doom/\.MainActivity\b", activities) is not None
+        return doom_is_top_resumed(activities)
 
     poll("foreground", launch_and_prove)
     # Instrumentation must start from a fresh package after the launch proof.

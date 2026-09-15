@@ -89,7 +89,7 @@ class ReadinessTests(unittest.TestCase):
     secure=true
 """
 
-    def run_gate(self, policy=None, activities="topResumedActivity=ActivityRecord{x com.chardyb.doom/.MainActivity t1}\n",
+    def run_gate(self, policy=None, activities="topResumedActivity=ActivityRecord{x com.chardyb.doom/com.chardy.doom.MainActivity t1}\n",
                  boot=None, qemu=("1\n", "\n"), _sleep=None):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -183,11 +183,34 @@ class ReadinessTests(unittest.TestCase):
         result, calls = self.run_gate(
             policy=["  KeyguardServiceDelegate\n    showing=true\n", self.POLICY_UNLOCKED],
             activities=["topResumedActivity=com.android.launcher/.Launcher\n",
-                        "topResumedActivity=com.chardyb.doom/.MainActivity\n"],
+                        "topResumedActivity=ActivityRecord{x com.chardyb.doom/com.chardy.doom.MainActivity t1}\n"],
             boot=["0\n", "1\n"])
         self.assertEqual(0, result)
         self.assertGreaterEqual(sum(c[0][-1] == "sys.boot_completed" for c in calls), 2)
         self.assertGreaterEqual(sum(c[0][-1] == "activities" for c in calls), 2)
+
+    def test_top_resumed_activity_requires_exact_single_line_activity_record(self):
+        positives = (
+            "topResumedActivity=ActivityRecord{x com.chardyb.doom/com.chardy.doom.MainActivity t1}\n",
+            "\t topResumedActivity \t=\t ActivityRecord{abc u0 com.chardyb.doom/com.chardy.doom.MainActivity t42}\t\n",
+            "header\n  topResumedActivity = ActivityRecord{abc u0 com.chardyb.doom/com.chardy.doom.MainActivity}\nfooter\n",
+        )
+        for activities in positives:
+            with self.subTest(activities=activities):
+                self.assertTrue(readiness.doom_is_top_resumed(activities))
+
+        negatives = (
+            "topResumedActivity=ActivityRecord{x com.chardyb.doom/.MainActivity t1}\n",
+            "topResumedActivity=ActivityRecord{x com.chardyb.doom.fake/com.chardy.doom.MainActivity t1}\n",
+            "topResumedActivity=ActivityRecord{x com.chardyb.doom/com.chardy.doom.MainActivityFake t1}\n",
+            "topResumedActivity=ActivityRecord{x example.invalid/com.chardy.doom.MainActivity t1}\n",
+            "topResumedActivity\n=ActivityRecord{x com.chardyb.doom/com.chardy.doom.MainActivity t1}\n",
+            "topResumedActivity=\nActivityRecord{x com.chardyb.doom/com.chardy.doom.MainActivity t1}\n",
+            "topResumedActivity=com.chardyb.doom/com.chardy.doom.MainActivity\n",
+        )
+        for activities in negatives:
+            with self.subTest(activities=activities):
+                self.assertFalse(readiness.doom_is_top_resumed(activities))
 
     def test_port_validation_cases_are_independent(self):
         self.assertEqual("emulator-5554", readiness.emulator_serial("5554"))
