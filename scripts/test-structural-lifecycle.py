@@ -413,11 +413,29 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("systemWindowInsetBottom", OVERLAY_VIEW)
         self.assertIn("displayCutout", OVERLAY_VIEW)
         self.assertNotIn('contentDescription = "Diagnostic status"', OVERLAY_VIEW)
-        for required in ('"Breathe in"', '"Skip to Messages"', '"Leave Instagram"', "PixelBreathingView", "LinearLayout.HORIZONTAL"):
+        for required in ('"Breathe in"', '"Skip to Messages"', '"Leave Instagram"', "PixelBreathingView", "SegmentedBreathProgressView"):
             self.assertIn(required, OVERLAY_VIEW)
         for forbidden in ("countdown", "copyCurrentReport", "status", "REPORT CAPTURED", "Take a breath"):
             self.assertNotIn(forbidden, OVERLAY_VIEW)
         self.assertIn("pixel.visibility=View.INVISIBLE", OVERLAY_VIEW)
+
+    def test_segmented_progress_has_stable_hierarchy_and_fractional_fill(self):
+        self.assertNotIn("removeAllViews", OVERLAY_VIEW)
+        self.assertNotIn("track.post", OVERLAY_VIEW)
+        self.assertNotIn("1000", OVERLAY_VIEW)
+        self.assertIn("segments=values.toList();invalidate()", OVERLAY_VIEW)
+        self.assertIn("segments.size-1", OVERLAY_VIEW)
+        self.assertIn("segmentWidth*fraction.coerceIn(0f,1f)", OVERLAY_VIEW)
+
+    def test_custom_settings_dialogs_have_real_cancel_and_valid_save(self):
+        ui = (REPO / "app/src/main/java/com/chardy/doom/MainActivity.kt").read_text()
+        dialog = ui.split("@Composable private fun CustomDialog", 1)[1].split(
+            '@Suppress("UNUSED_PARAMETER")', 1
+        )[0]
+        self.assertIn("AlertDialog(onDismissRequest=cancel", dialog)
+        self.assertIn('dismissButton={TextButton(onClick=cancel){Text("Cancel")}}', dialog)
+        self.assertIn("enabled=parse()!=null", dialog)
+        self.assertNotIn('Text("Clear")', dialog)
 
     def test_direct_return_closes_visible_callbacks_before_preserving_report(self):
         own_events = SERVICE.split("RemovalTraceMark.APP_RETURN", 1)[0]
@@ -431,7 +449,9 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("INSTAGRAM_ENTRY_COOLDOWN_MS = 60_000L", policy)
         self.assertIn("monotonicNowMs: () -> Long", policy)
         self.assertIn("return nowMs - terminalAt < durationMs", policy)
-        self.assertIn("return nowMs - terminalAt < durationMs", policy)
+        admission = policy.split("fun beginInstagramSession()", 1)[1].split("return GateTicket", 1)[0]
+        self.assertLess(admission.index("activeDurationMs = durationProvider"), admission.index("activeCooldownDurationMs = cooldownDurationProvider"))
+        self.assertLess(admission.index("activeCooldownDurationMs = cooldownDurationProvider"), admission.index("state = if (enabled())"))
         self.assertNotIn("System.currentTimeMillis", SERVICE + policy)
         self.assertEqual(1, SERVICE.count("SystemClock.elapsedRealtime()"))
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(

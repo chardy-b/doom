@@ -117,9 +117,11 @@ class EntryGateOverlayUiTest {
             unmount(overlay); overlay = null
             captureTimer("07-timer-expanded", collapsed = false)
             captureTimer("08-timer-collapsed", collapsed = true)
+            mount { overlay = it }
             renderAndCapture(overlay, "03-reminder-inhale", reducedMotion = false, captured = false)
             renderAndCapture(overlay, "04-reminder-exhale", reducedMotion = false, captured = true)
             renderAndCapture(overlay, "05-reminder-reduced-motion", reducedMotion = true, captured = false)
+            unmount(overlay); overlay = null
 
             device.executeShellCommand("settings put system font_scale 2.0")
             recreateActivity()
@@ -127,7 +129,6 @@ class EntryGateOverlayUiTest {
             renderAndCapture(overlay, "04-overlay-large-font", reducedMotion = true, captured = false)
             unmount(overlay); overlay = null
             captureTimer("09-timer-large-font", collapsed = false)
-            requireNotNull(overlay).render(EntryGateOverlayModel.from(10_000, 10_000, true))
 
             device.setOrientationLeft()
             recreateActivity()
@@ -135,7 +136,6 @@ class EntryGateOverlayUiTest {
             renderAndCapture(overlay, "05-overlay-landscape", reducedMotion = true, captured = false)
             unmount(overlay); overlay = null
             captureTimer("10-timer-landscape", collapsed = false)
-            requireNotNull(overlay).render(EntryGateOverlayModel.from(10_000, 10_000, true))
 
             unmount(overlay)
             overlay = null
