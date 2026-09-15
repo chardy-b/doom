@@ -58,8 +58,9 @@ class InternalSigningTest(unittest.TestCase):
             "BUILD SUCCESSFUL\n",
             encoding="utf-8",
         )
+        (self.evidence / "readiness.log").write_bytes(VALIDATOR.READINESS_SUCCESS)
         files = []
-        for name in VALIDATOR.EXPECTED_EVIDENCE_FILES:
+        for name in VALIDATOR.ALL_EVIDENCE_FILES:
             path = self.evidence / name
             files.append({"path": name, "size": path.stat().st_size, "sha256": file_sha(path)})
         self.manifest = {
@@ -118,13 +119,6 @@ class InternalSigningTest(unittest.TestCase):
                 conclusion="success",
             )
 
-    def test_extended_manifest_with_auxiliary_files_is_accepted(self) -> None:
-        for name in VALIDATOR.AUXILIARY_EVIDENCE_FILES:
-            path = self.evidence / name
-            self.manifest["files"].append({"path": name, "size": path.stat().st_size, "sha256": file_sha(path)})
-        self._write_contracts()
-        self.assertEqual(self.validate(), self.evidence / "doom-diagnostic.apk")
-
     def test_manifest_requires_size_not_an_invented_bytes_field(self) -> None:
         self.manifest["files"][0]["bytes"] = self.manifest["files"][0].pop("size")
         self._write_contracts()
@@ -143,7 +137,7 @@ class InternalSigningTest(unittest.TestCase):
 
     def setUp_contracts_again(self) -> None:
         files = []
-        for name in VALIDATOR.EXPECTED_EVIDENCE_FILES:
+        for name in VALIDATOR.ALL_EVIDENCE_FILES:
             path = self.evidence / name
             files.append({"path": name, "size": path.stat().st_size, "sha256": file_sha(path)})
         self.manifest["files"] = files
@@ -169,6 +163,50 @@ class InternalSigningTest(unittest.TestCase):
         (self.evidence / "instrumentation.log").write_text("BUILD SUCCESSFUL\n", encoding="utf-8")
         with self.assertRaises(VALIDATOR.ValidationError):
             self.validate()
+
+    def test_readiness_evidence_fails_closed(self) -> None:
+        readiness = self.evidence / "readiness.log"
+        readiness_entry = next(entry for entry in self.manifest["files"] if entry["path"] == "readiness.log")
+
+        readiness.unlink()
+        with self.assertRaises(VALIDATOR.ValidationError):
+            self.validate()
+
+        readiness.write_bytes(VALIDATOR.READINESS_SUCCESS)
+        readiness_entry["sha256"] = "0" * 64
+        self._write_contracts()
+        with self.assertRaises(VALIDATOR.ValidationError):
+            self.validate()
+
+        for malformed in (
+            b"Emulator readiness passed.\n",
+            VALIDATOR.READINESS_SUCCESS.rstrip(b"\n"),
+            VALIDATOR.READINESS_SUCCESS + b"adb output\n",
+        ):
+            readiness.write_bytes(malformed)
+            readiness_entry.update(size=len(malformed), sha256=file_sha(readiness))
+            self._write_contracts()
+            with self.assertRaises(VALIDATOR.ValidationError):
+                self.validate()
+
+        readiness.unlink()
+        readiness.symlink_to(self.evidence / "context.txt")
+        readiness_entry.update(size=(self.evidence / "context.txt").stat().st_size, sha256=file_sha(self.evidence / "context.txt"))
+        self._write_contracts()
+        with self.assertRaises(VALIDATOR.ValidationError):
+            self.validate()
+
+    def test_readiness_must_be_accounted_for_in_manifest(self) -> None:
+        self.manifest["files"] = [entry for entry in self.manifest["files"] if entry["path"] != "readiness.log"]
+        self._write_contracts()
+        with self.assertRaises(VALIDATOR.ValidationError):
+            self.validate()
+
+    def test_evidence_manifest_collects_readiness_metadata(self) -> None:
+        collector = (ROOT / "scripts/evidence-manifest.py").read_text(encoding="utf-8")
+        self.assertIn('readiness = root / "readiness.log"', collector)
+        self.assertIn("or not readiness.is_file()", collector)
+        self.assertIn("[apk, context, instrumentation, readiness, *screenshots]", collector)
 
     def test_payload_comparison_allows_only_signature_replacement(self) -> None:
         source = self.root / "source.apk"
