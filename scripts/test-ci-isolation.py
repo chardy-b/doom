@@ -10,6 +10,18 @@ SUP={
 'EntryGateOverlayUiTest#supplementaryScreenshotsEstablishEachNamedStateAndRestoreConfiguration',
 'EntryGateOverlayUiTest#supplementaryFooterScreenshotScrollsOnlyInItsSeparateTest'}
 class SourceContracts(unittest.TestCase):
+ def test_setup_android_skips_removed_legacy_tools_package(self):
+  workflows=ROOT/'.github/workflows'
+  setup='uses: android-actions/setup-android@'
+  total=0
+  configured=0
+  for path in workflows.glob('*.yml'):
+   text=path.read_text()
+   total += text.count(setup)
+   configured += len(re.findall(r'uses: android-actions/setup-android@[^\n]+\n\s+with:\n\s+packages: [\"\']{2}',text))
+  self.assertGreater(total,0)
+  self.assertEqual(total,configured)
+
  def test_workflow_isolation_and_preparation(self):
   can=(ROOT/'.github/workflows/android.yml').read_text(); sup=(ROOT/'.github/workflows/android-supplemental.yml').read_text()
   self.assertNotIn('\n  fixture:',can); self.assertNotIn('ci-fixture.sh',can); self.assertNotIn('ci-overlay.sh',can)
