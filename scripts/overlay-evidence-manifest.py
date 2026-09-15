@@ -12,6 +12,8 @@ EXPECTED_SCREENSHOTS = (
     "01-overlay-unavailable.png", "02-overlay-captured-status.png",
     "03-overlay-reduced-motion.png", "04-overlay-large-font.png",
     "05-overlay-landscape.png", "06-doom-build-footer.png",
+    "07-timer-expanded.png", "08-timer-collapsed.png",
+    "09-timer-large-font.png", "10-timer-landscape.png",
 )
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
@@ -26,7 +28,7 @@ def build_manifest(root: Path, apk: Path, candidate_sha: str, run_id: str, run_a
     if present != set(EXPECTED_SCREENSHOTS):
         raise ValueError("supplementary evidence directory contains an unexpected file")
     if tuple(screenshots) != EXPECTED_SCREENSHOTS:
-        raise ValueError("supplementary evidence requires the exact six screenshots")
+        raise ValueError("supplementary evidence requires the exact ten screenshots")
     if not apk.is_file() or apk.stat().st_size == 0:
         raise ValueError("tested APK is missing or empty")
     files = []

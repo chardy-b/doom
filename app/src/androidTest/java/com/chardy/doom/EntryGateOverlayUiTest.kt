@@ -86,6 +86,20 @@ class EntryGateOverlayUiTest {
                 assertReachable(ui.skipToMessages)
                 assertReachable(ui.leaveInstagram)
                 ui.dispose()
+                val timerUi = InstagramTimerOverlayViewFactory.create(context) {}
+                timerUi.render(InstagramTimerModel("1:23:45", "Instagram time, 1 hour, 23 minutes, 45 seconds", false, true))
+                timerUi.root.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.AT_MOST)
+                )
+                val label = (timerUi.root as ViewGroup).getChildAt(0) as android.widget.TextView
+                assertEquals(ViewGroup.LayoutParams.WRAP_CONTENT, label.layoutParams.height)
+                assertTrue(timerUi.root.measuredHeight >= (48 * density).toInt())
+                assertTrue(label.measuredHeight >= label.layout.height + label.paddingTop + label.paddingBottom)
+                val margins = InstagramTimerOverlayViewFactory.margins(density, 31, 47)
+                assertEquals(31 + (16 * density).toInt(), margins.first)
+                assertEquals(47 + (16 * density).toInt(), margins.second)
+                timerUi.dispose()
             }
         }
     }
@@ -104,16 +118,23 @@ class EntryGateOverlayUiTest {
             renderAndCapture(overlay, "01-overlay-unavailable", reducedMotion = false, captured = false)
             renderAndCapture(overlay, "02-overlay-captured-status", reducedMotion = false, captured = true)
             renderAndCapture(overlay, "03-overlay-reduced-motion", reducedMotion = true, captured = false)
+            unmount(overlay); overlay = null
+            captureTimer("07-timer-expanded", collapsed = false)
+            captureTimer("08-timer-collapsed", collapsed = true)
 
             device.executeShellCommand("settings put system font_scale 2.0")
             recreateActivity()
             mount { overlay = it }
             renderAndCapture(overlay, "04-overlay-large-font", reducedMotion = true, captured = false)
+            unmount(overlay); overlay = null
+            captureTimer("09-timer-large-font", collapsed = false)
 
             device.setOrientationLeft()
             recreateActivity()
             mount { overlay = it }
             renderAndCapture(overlay, "05-overlay-landscape", reducedMotion = true, captured = false)
+            unmount(overlay); overlay = null
+            captureTimer("10-timer-landscape", collapsed = false)
 
             unmount(overlay)
             overlay = null
@@ -194,6 +215,18 @@ class EntryGateOverlayUiTest {
         instrumentation.waitForIdleSync()
         SystemClock.sleep(250)
         assertTopResumed()
+    }
+
+    private fun captureTimer(name: String, collapsed: Boolean) {
+        var ui: InstagramTimerOverlayUi? = null
+        rule.scenario.onActivity { activity ->
+            ui = InstagramTimerOverlayViewFactory.create(activity) {}
+            activity.findViewById<ViewGroup>(android.R.id.content).addView(ui!!.root)
+            ui!!.render(InstagramTimerModel("4:12", "Instagram time, 4 minutes, 12 seconds", collapsed, true))
+            assertTrue(ui!!.root.minimumHeight >= (48 * activity.resources.displayMetrics.density).toInt())
+        }
+        assertTopResumed(); waitForDraw(rule.scenario); capture(name)
+        rule.scenario.onActivity { ui?.let { (it.root.parent as? ViewGroup)?.removeView(it.root); it.dispose() } }
     }
 
     private fun assertTopResumed() {
