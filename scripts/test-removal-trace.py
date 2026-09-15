@@ -88,9 +88,9 @@ class RemovalTracePrivacyTest(unittest.TestCase):
         self.assertIn("snapshot.serializeAscii()", copy)
         self.assertIn('Action("COPY REMOVAL TRACE"', activity)
         self.assertIn('Action("REFRESH TRACE STATUS"', activity)
-        self.assertIn("60-second cooldown", activity)
-        self.assertIn("traceAvailability != RemovalTraceAvailability.RECORDING", activity)
-        self.assertIn("traceAvailability != RemovalTraceAvailability.AVAILABLE", activity)
+        self.assertIn("terminal successes use the admitted cooldown snapshot", activity)
+        self.assertIn("availability != RemovalTraceAvailability.RECORDING", activity)
+        self.assertIn("availability != RemovalTraceAvailability.AVAILABLE", activity)
         self.assertNotIn("Observation.report", copy)
         self.assertNotIn("SanitizedStructuralReport", copy)
 
