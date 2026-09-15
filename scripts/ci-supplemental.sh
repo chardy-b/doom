@@ -3,7 +3,6 @@ set -euo pipefail
 [[ "${GITHUB_ACTIONS:-}" == true ]] || exit 2
 cd "$(dirname "$0")/.."
 . scripts/ci-provenance.sh
-python3 scripts/emulator-readiness.py app/build/outputs/apk/debug/app-debug.apk
 mkdir -p evidence
 overlay_exit=0
 bash scripts/ci-overlay.sh || overlay_exit=$?

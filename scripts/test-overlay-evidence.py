@@ -63,7 +63,7 @@ class OverlayEvidenceManifestTest(unittest.TestCase):
         runner = (ROOT / "scripts/ci-overlay.sh").read_text()
         self.assertNotIn("doom-overlay-ui-evidence", canonical)
         self.assertNotIn("overlay-evidence-manifest.py", canonical)
-        pull = "adb pull /sdcard/Download/doom-overlay-ui-evidence/."
+        pull = 'adb -s "$serial" pull /sdcard/Download/doom-overlay-ui-evidence/.'
         self.assertLess(runner.index(pull), runner.index("python3 scripts/overlay-evidence-manifest.py"))
         self.assertIn("supplemental-apk/app-debug.apk", runner)
 

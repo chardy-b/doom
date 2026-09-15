@@ -83,22 +83,43 @@ class Completed:
 
 
 class ReadinessTests(unittest.TestCase):
-    def run_gate(self, policy, activities="topResumedActivity=ActivityRecord{x com.chardyb.doom/.MainActivity t1}\n"):
+    POLICY_UNLOCKED = """WINDOW MANAGER POLICY STATE
+  KeyguardServiceDelegate
+    showing=false
+    secure=true
+"""
+
+    def run_gate(self, policy=None, activities="topResumedActivity=ActivityRecord{x com.chardyb.doom/.MainActivity t1}\n",
+                 boot=None, qemu=("1\n", "\n")):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             apk = root / "app/build/outputs/apk/debug/app-debug.apk"
             apk.parent.mkdir(parents=True)
             apk.write_bytes(b"apk")
             calls = []
-            outputs = iter(["device\n", "1\n", "35\n", "1\n", "package:android\n",
-                            "", "", "", "", "", policy, activities])
+            boot = list(boot or ["1\n"])
+            state = {"boot": 0, "policy": 0, "activities": 0}
+            policies = policy if isinstance(policy, list) else [policy or self.POLICY_UNLOCKED]
+            activity_values = activities if isinstance(activities, list) else [activities]
 
             def run(argv, **kwargs):
                 calls.append((argv, kwargs))
-                return Completed(next(outputs))
+                args = argv[3:]
+                if args == ["get-state"]: return Completed("device\n")
+                if args == ["shell", "getprop", "sys.boot_completed"]:
+                    value = boot[min(state["boot"], len(boot) - 1)]; state["boot"] += 1; return Completed(value)
+                if args == ["shell", "getprop", "ro.build.version.sdk"]: return Completed("35\n")
+                if args == ["shell", "getprop", "ro.boot.qemu"]: return Completed(qemu[0])
+                if args == ["shell", "getprop", "ro.kernel.qemu"]: return Completed(qemu[1])
+                if args == ["shell", "cmd", "package", "path", "android"]: return Completed("package:android\n")
+                if args == ["shell", "dumpsys", "window", "policy"]:
+                    value = policies[min(state["policy"], len(policies) - 1)]; state["policy"] += 1; return Completed(value)
+                if args == ["shell", "dumpsys", "activity", "activities"]:
+                    value = activity_values[min(state["activities"], len(activity_values) - 1)]; state["activities"] += 1; return Completed(value)
+                return Completed()
 
-            env = {"GITHUB_ACTIONS": "true", "ANDROID_SERIAL": "emulator-5554"}
-            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(readiness.subprocess, "run", run):
+            env = {"GITHUB_ACTIONS": "true", "EMULATOR_PORT": "5554"}
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(readiness.subprocess, "run", run), mock.patch.object(readiness.time, "sleep"):
                 old = Path.cwd()
                 os.chdir(root)
                 try:
@@ -108,8 +129,8 @@ class ReadinessTests(unittest.TestCase):
             return result, calls
 
     def test_each_known_unlocked_format_and_command_contract(self):
-        formats = ("showing=false", "mShowingLockscreen=false", "isStatusBarKeyguard=false",
-                   "KeyguardServiceDelegate state: showing=false")
+        formats = ("WindowManagerPolicy\n  mShowingLockscreen=false\n",
+                   "WindowManagerPolicy\n  isStatusBarKeyguard=false\n", self.POLICY_UNLOCKED)
         for policy in formats:
             result, calls = self.run_gate(policy)
             self.assertEqual(0, result)
@@ -117,24 +138,56 @@ class ReadinessTests(unittest.TestCase):
             self.assertTrue(all(a[:3] == ["adb", "-s", "emulator-5554"] for a in argv))
             self.assertTrue(all(call[1]["stdout"] == subprocess.PIPE and
                                 call[1]["stderr"] == subprocess.PIPE for call in calls))
-            self.assertTrue(all(0 < call[1]["timeout"] <= 10 for call in calls))
+            self.assertTrue(all(0 < call[1]["timeout"] <= 60 for call in calls))
+            install = [call for call in calls if call[0][3:5] == ["install", "-r"]]
+            self.assertEqual(60.0, install[0][1]["timeout"])
             self.assertLess(argv.index(["adb", "-s", "emulator-5554", "shell", "wm", "dismiss-keyguard"]),
                             argv.index(["adb", "-s", "emulator-5554", "install", "-r",
                                         "app/build/outputs/apk/debug/app-debug.apk"]))
 
-    def test_missing_true_ambiguous_keyguard_and_missing_resumed_fail_closed(self):
-        for policy in ("", "showing=true", "showing=false\nisStatusBarKeyguard=true"):
-            with self.assertRaises(readiness.NotReady):
-                self.run_gate(policy)
-        with self.assertRaises(readiness.NotReady):
-            self.run_gate("isStatusBarKeyguard=false", "mResumedActivity: com.android.launcher/.Launcher")
+            install_i = argv.index(["adb", "-s", "emulator-5554", "install", "-r", "app/build/outputs/apk/debug/app-debug.apk"])
+            launch_i = argv.index(["adb", "-s", "emulator-5554", "shell", "am", "start", "-W", "-n", readiness.ACTIVITY])
+            proof_i = argv.index(["adb", "-s", "emulator-5554", "shell", "dumpsys", "activity", "activities"])
+            clear_i = argv.index(["adb", "-s", "emulator-5554", "shell", "pm", "clear", readiness.PACKAGE])
+            stop_i = argv.index(["adb", "-s", "emulator-5554", "shell", "am", "force-stop", readiness.PACKAGE])
+            self.assertLess(install_i, launch_i); self.assertLess(launch_i, proof_i)
+            self.assertLess(proof_i, clear_i); self.assertLess(clear_i, stop_i)
 
-    def test_serial_apk_and_deadlines_are_hard_requirements(self):
-        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "ANDROID_SERIAL": "device-secret"}, clear=True):
-            with self.assertRaises(readiness.NotReady):
-                readiness.main(["emulator-readiness.py", "missing.apk"])
+    def test_keyguard_parser_is_scoped_and_conflicts_fail_closed(self):
+        self.assertFalse(readiness.keyguard_is_unlocked("random showing=false"))
+        for active in ("isStatusBarKeyguard=true", "mShowingLockscreen=true",
+                       "mKeyguardShowing=true", "keyguardShowing=true"):
+            self.assertFalse(readiness.keyguard_is_unlocked(self.POLICY_UNLOCKED + active))
+        self.assertFalse(readiness.keyguard_is_unlocked("  KeyguardServiceDelegate\n    showing=true\n"))
+
+    def test_both_api35_emulator_properties_and_neither(self):
+        self.assertEqual(0, self.run_gate(qemu=("1\n", "\n"))[0])
+        self.assertEqual(0, self.run_gate(qemu=("\n", "1\n"))[0])
+        self.assertFalse(readiness.has_emulator_identity("\n", "\n"))
+
+    def test_polling_models_boot_unlock_and_foreground_transitions(self):
+        result, calls = self.run_gate(
+            policy=["  KeyguardServiceDelegate\n    showing=true\n", self.POLICY_UNLOCKED],
+            activities=["topResumedActivity=com.android.launcher/.Launcher\n",
+                        "topResumedActivity=com.chardyb.doom/.MainActivity\n"],
+            boot=["0\n", "1\n"])
+        self.assertEqual(0, result)
+        self.assertGreaterEqual(sum(c[0][-1] == "sys.boot_completed" for c in calls), 2)
+        self.assertGreaterEqual(sum(c[0][-1] == "activities" for c in calls), 2)
+
+    def test_port_validation_cases_are_independent(self):
+        self.assertEqual("emulator-5554", readiness.emulator_serial("5554"))
+        for value in ("", "port", "5554;id", "5553", "5552", "5684"):
+            with self.subTest(value=value), self.assertRaises(readiness.NotReady):
+                readiness.emulator_serial(value)
         self.assertEqual(120.0, readiness.TOTAL_SECONDS)
         self.assertEqual(10.0, readiness.COMMAND_SECONDS)
+        self.assertGreater(readiness.INSTALL_SECONDS, readiness.COMMAND_SECONDS)
+
+    def test_missing_apk_is_independent_of_valid_port(self):
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "EMULATOR_PORT": "5554"}, clear=True):
+            with self.assertRaisesRegex(readiness.NotReady, "APK"):
+                readiness.main(["emulator-readiness.py", "app/build/outputs/apk/debug/app-debug.apk"])
 
     def test_command_timeout_is_sanitized_and_fails_closed(self):
         with tempfile.TemporaryDirectory() as td:
@@ -147,12 +200,13 @@ class ReadinessTests(unittest.TestCase):
             def timeout(*args, **kwargs):
                 raise subprocess.TimeoutExpired(args[0], kwargs["timeout"], output=secret, stderr=secret)
 
-            env = {"GITHUB_ACTIONS": "true", "ANDROID_SERIAL": "emulator-5554"}
+            env = {"GITHUB_ACTIONS": "true", "EMULATOR_PORT": "5554"}
             old = Path.cwd()
             os.chdir(root)
             try:
-                with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(readiness.subprocess, "run", timeout):
-                    with self.assertRaisesRegex(readiness.NotReady, "timed out") as failure:
+                clock = iter([0.0, 0.0, 119.5, 120.0])
+                with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(readiness.subprocess, "run", timeout), mock.patch.object(readiness.time, "monotonic", side_effect=lambda: next(clock)), mock.patch.object(readiness.time, "sleep"):
+                    with self.assertRaisesRegex(readiness.NotReady, "deadline") as failure:
                         readiness.main(["emulator-readiness.py", "app/build/outputs/apk/debug/app-debug.apk"])
             finally:
                 os.chdir(old)
@@ -169,12 +223,28 @@ class PlacementTests(unittest.TestCase):
         for name in ("ci-device.sh", "ci-supplemental.sh", "ci-overlay.sh", "ci-fixture.sh"):
             text = (ROOT / "scripts" / name).read_text()
             self.assertIn(". scripts/ci-provenance.sh", text)
-        for name in ("ci-device.sh", "ci-supplemental.sh"):
+        for name in ("ci-device.sh", "ci-overlay.sh"):
             text = (ROOT / "scripts" / name).read_text()
             self.assertIn("python3 scripts/emulator-readiness.py", text)
             self.assertLess(text.index(". scripts/ci-provenance.sh"), text.index("python3 scripts/emulator-readiness.py"))
-            first_adb = text.find("adb ")
-            self.assertTrue(first_adb == -1 or text.index("python3 scripts/emulator-readiness.py") < first_adb)
+            self.assertLess(text.index("trap "), text.index("python3 scripts/emulator-readiness.py"))
+
+    def test_supplemental_has_no_duplicate_readiness_and_collectors_are_bounded(self):
+        self.assertNotIn("emulator-readiness.py", (ROOT / "scripts/ci-supplemental.sh").read_text())
+        for name in ("ci-device.sh", "ci-overlay.sh"):
+            text = (ROOT / "scripts" / name).read_text()
+            self.assertLess(text.index(". scripts/ci-provenance.sh"), text.index("mkdir -p"))
+            self.assertLess(text.index("trap "), text.index("python3 scripts/emulator-readiness.py"))
+            self.assertIn("timeout 8s adb -s \"$serial\"", text)
+            self.assertNotIn("adb shell", text)
+
+    def test_workflows_build_exact_apk_before_pinned_port_runner(self):
+        for name in ("android.yml", "android-supplemental.yml"):
+            text = (ROOT / ".github/workflows" / name).read_text()
+            self.assertLess(text.index(":app:assembleDebug"), text.index("android-emulator-runner@"))
+            self.assertIn("emulator-port: 5554", text)
+        self.assertIn("app/build/outputs/apk/debug/app-debug.apk",
+                      (ROOT / "scripts/emulator-readiness.py").read_text())
 
 
 if __name__ == "__main__":
