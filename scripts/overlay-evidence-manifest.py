@@ -30,7 +30,7 @@ def build_manifest(root: Path, apk: Path, candidate_sha: str, run_id: str, run_a
     if present != set(EXPECTED_SCREENSHOTS):
         raise ValueError("supplementary evidence directory contains an unexpected file")
     if tuple(sorted(screenshots)) != tuple(sorted(EXPECTED_SCREENSHOTS)):
-        raise ValueError("supplementary evidence requires the exact fifteen screenshots")
+        raise ValueError("supplementary evidence requires the exact fourteen screenshots")
     if not apk.is_file() or apk.stat().st_size == 0:
         raise ValueError("tested APK is missing or empty")
     files = []

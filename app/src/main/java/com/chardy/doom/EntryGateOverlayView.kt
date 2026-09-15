@@ -3,14 +3,28 @@ package com.chardy.doom
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.os.Build
 import android.view.Gravity
 import android.view.View
 import android.widget.*
 
-internal class EntryGateOverlayUi(val root:View,val phaseLabel:TextView,val skipToMessages:Button,val leaveInstagram:Button,private val pixel:PixelBreathingView,private val progress:LinearLayout){
+internal class SegmentedBreathProgressView(context:Context):View(context){
+ private val track=Paint().apply{color=BreathingVisuals.PANEL}
+ private val fill=Paint().apply{color=BreathingVisuals.GOLD}
+ private var segments:List<Float> = emptyList()
+ internal fun render(values:List<Float>){segments=values.toList();invalidate()}
+ override fun onDraw(canvas:Canvas){
+  super.onDraw(canvas);if(segments.isEmpty())return
+  val gap=4f*resources.displayMetrics.density
+  val segmentWidth=(width-gap*(segments.size-1))/segments.size
+  segments.forEachIndexed{i,fraction->val left=i*(segmentWidth+gap);canvas.drawRect(left,0f,left+segmentWidth,height.toFloat(),track);canvas.drawRect(left,0f,left+segmentWidth*fraction.coerceIn(0f,1f),height.toFloat(),fill)}
+ }
+}
+internal class EntryGateOverlayUi(val root:View,val phaseLabel:TextView,val skipToMessages:Button,val leaveInstagram:Button,private val pixel:PixelBreathingView,private val progress:SegmentedBreathProgressView){
  private var disposed=false
- fun render(model:EntryGateOverlayModel){if(disposed)return;phaseLabel.text=model.frame.label;pixel.render(model.frame.bloom,model.reduceMotion);progress.removeAllViews();val density=root.resources.displayMetrics.density;model.frame.segments.forEach{fraction->val track=FrameLayout(root.context).apply{background=block(BreathingVisuals.PANEL)};track.addView(View(root.context).apply{background=block(BreathingVisuals.GOLD)},FrameLayout.LayoutParams(0,-1).apply{width=(1000*fraction).toInt()});progress.addView(track,LinearLayout.LayoutParams(0,(6*density).toInt(),1f).apply{marginEnd=(4*density).toInt()});track.post{(track.getChildAt(0).layoutParams as FrameLayout.LayoutParams).also{it.width=(track.width*fraction).toInt();track.getChildAt(0).layoutParams=it}}}}
+ fun render(model:EntryGateOverlayModel){if(disposed)return;phaseLabel.text=model.frame.label;pixel.render(model.frame.bloom,model.reduceMotion);progress.render(model.frame.segments)}
  fun dispose(){if(disposed)return;disposed=true;skipToMessages.setOnClickListener(null);leaveInstagram.setOnClickListener(null);skipToMessages.isEnabled=false;leaveInstagram.isEnabled=false;pixel.visibility=View.INVISIBLE}
 }
 internal object EntryGateOverlayViewFactory{
@@ -27,7 +41,7 @@ internal object EntryGateOverlayViewFactory{
   val body=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;setPadding(dp(20),dp(20),dp(20),dp(20))};scroll.addView(body,FrameLayout.LayoutParams(-1,-2))
   val phase=label("Breathe in",32f).apply{minHeight=dp(48)};body.addView(phase,LinearLayout.LayoutParams(-1,-2))
   val pixel=PixelBreathingView(context).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO};body.addView(pixel,LinearLayout.LayoutParams(-1,dp(260)).apply{weight=1f})
-  val progress=LinearLayout(context).apply{orientation=LinearLayout.HORIZONTAL};body.addView(progress,LinearLayout.LayoutParams(-1,dp(10)))
+  val progress=SegmentedBreathProgressView(context);body.addView(progress,LinearLayout.LayoutParams(-1,dp(10)))
   val skip=button(context,"Skip to Messages",BreathingVisuals.INK,BreathingVisuals.GOLD,dp(52)).apply{setOnClickListener{onSkipToMessages()}}
   val leave=button(context,"Leave Instagram",BreathingVisuals.PAPER,BreathingVisuals.PANEL,dp(48)).apply{setOnClickListener{onLeaveInstagram()}}
   body.addView(skip,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(16)});body.addView(leave,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(8)})
@@ -35,4 +49,3 @@ internal object EntryGateOverlayViewFactory{
  }
  private fun button(c:Context,label:String,text:Int,fill:Int,height:Int)=Button(c).apply{this.text=label;textSize=16f;minHeight=height;minimumHeight=height;isAllCaps=false;setTextColor(ColorStateList.valueOf(text));background=GradientDrawable().apply{setColor(fill);setStroke(2,BreathingVisuals.GOLD);cornerRadius=4f};stateListAnimator=null}
 }
-private fun block(color:Int)=GradientDrawable().apply{setColor(color)}

@@ -288,7 +288,7 @@ private enum class DemoScreen { NONE, BREATHING, MESSAGES, COMPLETE }
         listOf(10,20,30).forEach { value -> FilterChip(selected=settings.durationSeconds==value,onClick={save(settings.copy(durationSeconds=value))},label={Text("${value}s")}) }
         FilterChip(selected=settings.durationSeconds !in listOf(10,20,30),onClick={raw="";dialog=true},label={Text("Custom")})
     }}
-    if(dialog) CustomDialog("Custom duration","Seconds",raw,{raw=it},{ReminderSettingsStore.normalizeDuration(raw)}) { value -> save(settings.copy(durationSeconds=value));dialog=false }
+    if(dialog) CustomDialog("Custom duration","Seconds",raw,{raw=it},{ReminderSettingsStore.normalizeDuration(raw)},{dialog=false}) { value -> save(settings.copy(durationSeconds=value));dialog=false }
 }
 @Composable private fun SuppressionSettings(settings:ReminderSettings,save:(ReminderSettings)->Unit) {
     var dialog by remember { mutableStateOf(false) }; var raw by remember { mutableStateOf("") }
@@ -296,10 +296,10 @@ private enum class DemoScreen { NONE, BREATHING, MESSAGES, COMPLETE }
         listOf(1,5,15).forEach { value -> FilterChip(selected=settings.suppressionMinutes==value,onClick={save(settings.copy(suppressionMinutes=value))},label={Text("${value}m")}) }
         FilterChip(selected=settings.suppressionMinutes !in listOf(1,5,15),onClick={raw="";dialog=true},label={Text("Custom")})
     }}
-    if(dialog) CustomDialog("Custom suppression","Minutes",raw,{raw=it},{ReminderSettingsStore.validSuppression(raw)}) { value -> save(settings.copy(suppressionMinutes=value));dialog=false }
+    if(dialog) CustomDialog("Custom suppression","Minutes",raw,{raw=it},{ReminderSettingsStore.validSuppression(raw)},{dialog=false}) { value -> save(settings.copy(suppressionMinutes=value));dialog=false }
 }
-@Composable private fun CustomDialog(title:String,label:String,raw:String,change:(String)->Unit,parse:()->Int?,save:(Int)->Unit) {
-    AlertDialog(onDismissRequest={},title={Text(title)},text={OutlinedTextField(raw,change,label={Text(label)},singleLine=true)},confirmButton={TextButton(onClick={parse()?.let(save)},enabled=parse()!=null){Text("Save")}},dismissButton={TextButton(onClick={change("")}){Text("Clear")}})
+@Composable private fun CustomDialog(title:String,label:String,raw:String,change:(String)->Unit,parse:()->Int?,cancel:()->Unit,save:(Int)->Unit) {
+    AlertDialog(onDismissRequest=cancel,title={Text(title)},text={OutlinedTextField(raw,change,label={Text(label)},singleLine=true)},confirmButton={TextButton(onClick={parse()?.let(save)},enabled=parse()!=null){Text("Save")}},dismissButton={TextButton(onClick=cancel){Text("Cancel")}})
 }
 
 @Suppress("UNUSED_PARAMETER")
@@ -308,21 +308,26 @@ private enum class DemoScreen { NONE, BREATHING, MESSAGES, COMPLETE }
     Frame { Text("DOOM-OWNED QUICK DEMO",color=Gold); Action("Try the breathing demo",onClick=preview); Action("Demo messages — no wait"){setDemo(DemoScreen.MESSAGES)}
         if(demo==DemoScreen.MESSAGES) Text("Messages stay open. This is a simulated inbox.",color=Paper)
         if(demo==DemoScreen.COMPLETE) Text("A deliberate start.",color=Paper)
-        Row(verticalAlignment=Alignment.CenterVertically){Switch(reduceMotion,setReduce);Text("Reduced-motion demo",color=Paper)} }
+        Row(verticalAlignment=Alignment.CenterVertically){Switch(reduceMotion,setReduce,Modifier.semantics{contentDescription="Use a still bloom in the Doom-owned demo"});Text("Still image · demo-local reduced motion",color=Paper)} }
     Frame {
         Text("INSTAGRAM · DIAGNOSTIC ONLY",color=Gold)
         Text(if(Observation.connected) "Observation service: Connected" else "Observation service: Disconnected",color=Paper)
-        Row(verticalAlignment=Alignment.CenterVertically){Checkbox(Observation.gateConsent,{Observation.setGateConsent(context,it)});Text("Allow diagnostic Instagram entry pause",color=Paper)}
+        Text("INSTAGRAM · NOT PROTECTED",color=Gold,fontFamily=FontFamily.Monospace)
+        Text("Diagnostic entry breathing gate · OFF by default. Unverified; does not claim protection. This diagnostic can pause DM notification entry and is not rollout-ready. Only completion or a successful exact Messages result starts cooldown; display, cancellation, Leave, and failed routing do not.",color=Orange)
+        Row(verticalAlignment=Alignment.CenterVertically){Checkbox(Observation.gateConsent,{Observation.setGateConsent(context,it)},Modifier.semantics{contentDescription="Allow the separate diagnostic Instagram entry pause"});Text("Allow diagnostic Instagram entry pause · enables only the default-off temporary overlay",color=Paper,modifier=Modifier.weight(1f))}
+        Text("This consent is separate from sanitized report consent. It does not protect, block, or control Instagram.",color=Paper)
         Text("Entry gate state: ${Observation.entryGateState}",color=Gold)
         Text("An admitted reminder uses the selected duration snapshot; subsequent reminders are suppressed for the selected cooldown snapshot.",color=Orange)
-        Row(verticalAlignment=Alignment.CenterVertically){Checkbox(Observation.consent,{Observation.accept(context,it)});Text("Allow sanitized structural report",color=Paper)}
-        Text("Accessibility access can expose screen content. With fresh report consent, Doom traverses only Instagram and retains sanitized static Instagram resource names from compile-time resource tables, safe class names, depth, child counts and closed booleans. Reports contain at most 128 nodes through depth 8, 64 unique tokens, and 8,192 ASCII/UTF-8 bytes; omissions are marked truncated. Previously unknown names are accepted only under the exact lowercase com.instagram.android:id grammar.",color=Paper)
+        Row(verticalAlignment=Alignment.CenterVertically){Checkbox(Observation.consent,{Observation.accept(context,it)},Modifier.semantics{contentDescription="Allow collection of one bounded sanitized structural report"});Text("Allow sanitized structural report · enables only bounded Instagram structure collection",color=Paper,modifier=Modifier.weight(1f))}
+        Text("Accessibility access receives package identifiers for window events from all apps. During a visible gate Doom may read one active root's package attribution, but it does not read a foreign window tree. With fresh report consent, Doom traverses only Instagram and retains sanitized static Instagram resource names from compile-time resource tables, safe class names, depth, child counts and closed booleans. Reports contain at most 128 nodes through depth 8, 64 unique tokens, and 8,192 ASCII/UTF-8 bytes; omissions are marked truncated. Previously unknown names are accepted only under the exact lowercase com.instagram.android:id grammar.",color=Paper)
         Text("Reports expose static resource names, never UI text or account values. Doom never collects descriptions, hints, errors, pane or tooltip titles, bounds, screenshots, notification content, node/window IDs, raw trees or report actions. Reports remain process-local with no file persistence, logging, network, or automatic export.",color=Paper)
         Text("Returning directly to Doom may preserve a hidden report for local review. Foreign apps, clear, revoke, stop, disconnect, interruption, reconnect, missing/wrong roots, and process death discard report state. Every report requires explicit reveal before explicit clipboard copy.",color=Paper)
         val availability=remember(traceRevision){RemovalTraceStore.process.availability()}
         Text("REMOVAL TRACE · ${availability.name}",color=Gold)
-        Text("The optional trace stores closed categories and monotonic offsets only and expires in process memory.",color=Paper)
+        Text("The optional trace records one armed next gate episode in process memory only. It stores closed categories and monotonic offsets, never content, package strings, event integers, class names, node data, or identifiers. Arming expires after 120 seconds; a frozen trace expires after 10 minutes. Revoking either consent or clearing destroys it.",color=Paper)
+        Text(when{!Observation.consent||!Observation.gateConsent->"Trace unavailable · both observation consents are required";availability==RemovalTraceAvailability.ARMED->"Trace armed · waiting for one eligible episode";availability==RemovalTraceAvailability.RECORDING->"Trace recording · one episode only";availability==RemovalTraceAvailability.AVAILABLE->"Trace available · process-local evidence";availability==RemovalTraceAvailability.EXPIRED->"Trace expired · arm a new episode";else->"No trace armed"},color=Paper)
         Action("ARM NEXT REMOVAL TRACE",Observation.consent&&Observation.gateConsent){RemovalTraceStore.process.arm();refresh()}
+        Text("ARM applies to the next eligible episode; terminal successes use the admitted cooldown snapshot.",color=Paper)
         Action("REFRESH TRACE STATUS",onClick=refresh)
         Action("COPY REMOVAL TRACE",availability==RemovalTraceAvailability.AVAILABLE){setFeedback(Observation.copyRemovalTrace(context).name);refresh()}
         Action("CLEAR REMOVAL TRACE"){RemovalTraceStore.process.clear();setFeedback("Removal trace cleared");refresh()}; feedback?.let{Text(it,color=Gold)}
@@ -332,9 +337,10 @@ private enum class DemoScreen { NONE, BREATHING, MESSAGES, COMPLETE }
         Text("Shadow prediction: ${if(report==null)"UNKNOWN" else Observation.shadowPrediction}",color=Gold)
         Action("REVEAL LOCAL REPORT",Observation.canReveal){Observation.revealReport()}; if(Observation.revealed&&report!=null)Text(report.text,color=Paper,fontFamily=FontFamily.Monospace)
         Action("COPY REVIEWED REPORT",Observation.canCopy){Observation.copyReport(context)}; Action("CLEAR REPORT"){Observation.clear()}; Action("STOP OBSERVATION"){Observation.accept(context,false)}
-        Text("Copying places reviewed bounded data on the system clipboard outside Doom. Clear it separately.",color=Paper)
+        Text("Review the revealed report before copying. Copying places reviewed bounded data on the system clipboard outside Doom; upload privately, then clear the clipboard. Clearing or stopping Doom cannot recall copies outside the app.",color=Paper)
+        if(Observation.copied)Text("Copied to system clipboard. Upload privately, then clear the clipboard.",color=Paper)
     }
-    Text("DEVICE PROOF · PENDING",color=Gold); Text("No verified Instagram behavior is claimed.",color=Paper)
+    Text("DEVICE PROOF · PENDING",color=Gold); Text("No verified Instagram screen mapping or DM route is claimed. This diagnostic does not protect you from scrolling and is not rollout-ready. Disable or uninstall at any time.",color=Paper)
     Text("Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})",color=Gold,fontFamily=FontFamily.Monospace)
 }
 

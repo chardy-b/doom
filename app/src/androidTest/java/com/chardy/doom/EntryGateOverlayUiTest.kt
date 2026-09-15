@@ -122,6 +122,7 @@ class EntryGateOverlayUiTest {
             renderAndCapture(overlay, "03-reminder-inhale", reducedMotion = false, captured = false)
             renderAndCapture(overlay, "04-reminder-exhale", reducedMotion = false, captured = true)
             renderAndCapture(overlay, "05-reminder-reduced-motion", reducedMotion = true, captured = false)
+            unmount(overlay); overlay = null
 
             device.executeShellCommand("settings put system font_scale 2.0")
             recreateActivity()

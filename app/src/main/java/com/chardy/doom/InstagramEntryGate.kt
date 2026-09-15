@@ -140,8 +140,6 @@ class InstagramEntryGate(
         return cooldown.recordTerminal(ticket, nowMs, activeCooldownDurationMs)
     }
 
-    fun skipToMessages(ticket: GateTicket): Boolean = bypass(ticket)
-
     fun bypass(ticket: GateTicket): Boolean {
         if (!valid(ticket)) return false
         if (state == EntryGateState.BYPASSED) {
