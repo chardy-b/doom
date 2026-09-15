@@ -88,7 +88,9 @@ class StructuralDiagnosticUiTest {
             Observation.setGateConsent(rule.activity, true)
             RemovalTraceStore.process.arm(now)
         }
+        rule.onNodeWithText("REFRESH TRACE STATUS").performScrollTo().performClick()
         shown("REMOVAL TRACE · ARMED")
+        shown("Trace armed · waiting for one eligible episode")
         rule.onNodeWithText("ARM NEXT REMOVAL TRACE").performScrollTo().assertIsEnabled()
 
         rule.runOnIdle {
