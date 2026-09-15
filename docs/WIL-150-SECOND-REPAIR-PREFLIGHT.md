@@ -1,5 +1,7 @@
 # WIL-150 second-repair preflight
 
+> Historical working-tree record that began at `fd235a4e1babb47f5014e9ccd4d4fb1f33fdd3f0`; later exact-head preflight supersedes these artifact hashes.
+
 Date: 2026-09-15 (UTC)
 
 ## Candidate scope
