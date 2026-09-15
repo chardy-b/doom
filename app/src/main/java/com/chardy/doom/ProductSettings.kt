@@ -12,6 +12,9 @@ data class ReminderSettings(
 )
 
 internal object ReminderSettingsStore {
+    val durationPresets = listOf(10, 20, 30)
+    val suppressionPresets = listOf(1, 5, 15)
+
     private const val FILE = "reminder_settings_v1"
     private const val ENABLED = "enabled"
     private const val DURATION = "duration_seconds"

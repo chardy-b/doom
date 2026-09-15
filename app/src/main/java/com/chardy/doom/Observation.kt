@@ -67,8 +67,10 @@ object Observation {
     }
 
     fun updateReminderSettings(context: Context, settings: ReminderSettings) {
+        val disableLiveReminder = reminderSettings.enabled && !settings.enabled
         ReminderSettingsStore.write(context, settings)
         reminderSettings = settings
+        if (disableLiveReminder) DoomAccessibilityService.cancelEntryGate()
     }
 
     fun setGateConsent(context: Context, accepted: Boolean) {

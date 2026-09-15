@@ -177,8 +177,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertEqual(1, sum(source.count("setPrimaryClip(") for source in files.values()))
         self.assertEqual(1, sum(source.count("Observation.copyReport(context)") for source in files.values()))
         ui = files["MainActivity.kt"]
-        self.assertIn('Action("COPY REVIEWED REPORT",Observation.canCopy){Observation.copyReport(context)}', ui)
-        self.assertIn('if(Observation.revealed&&report!=null)', ui)
+        self.assertIn('Action("COPY REVIEWED REPORT", enabled = Observation.canCopy) { Observation.copyReport(context) }', ui)
+        self.assertIn('if (Observation.canReveal && Observation.revealed && report != null)', ui)
         for name in ("SanitizedStructuralReport.kt", "Observation.kt", "DoomAccessibilityService.kt"):
             for forbidden in (r'\bLog\.', r'\bprintln\(', r'\bprintStackTrace\(', r'\bFile\(',
                               r'java\.net', r'java\.io', r'ACTION_SEND',
@@ -429,13 +429,22 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
 
     def test_custom_settings_dialogs_have_real_cancel_and_valid_save(self):
         ui = (REPO / "app/src/main/java/com/chardy/doom/MainActivity.kt").read_text()
-        dialog = ui.split("@Composable private fun CustomDialog", 1)[1].split(
-            '@Suppress("UNUSED_PARAMETER")', 1
+        dialog = ui.split("private fun CustomDialog(", 1)[1].split(
+            "private fun Debug(", 1
         )[0]
-        self.assertIn("AlertDialog(onDismissRequest=cancel", dialog)
-        self.assertIn('dismissButton={TextButton(onClick=cancel){Text("Cancel")}}', dialog)
-        self.assertIn("enabled=parse()!=null", dialog)
+        self.assertIn("onDismissRequest = cancel", dialog)
+        self.assertIn('TextButton(onClick = cancel) { Text("Cancel") }', dialog)
+        self.assertIn("enabled = parse() != null", dialog)
         self.assertNotIn('Text("Clear")', dialog)
+
+    def test_phase_label_changes_only_with_the_breathing_phase(self):
+        self.assertIn("private var lastPhase:String?=null", OVERLAY_VIEW)
+        self.assertIn("if(lastPhase!=model.frame.label)", OVERLAY_VIEW)
+
+    def test_native_overlay_restores_root_and_heading_accessibility(self):
+        self.assertIn('contentDescription="Instagram diagnostic pause"', OVERLAY_VIEW)
+        self.assertIn("isFocusable=true", OVERLAY_VIEW)
+        self.assertIn("isAccessibilityHeading=true", OVERLAY_VIEW)
 
     def test_direct_return_closes_visible_callbacks_before_preserving_report(self):
         own_events = SERVICE.split("RemovalTraceMark.APP_RETURN", 1)[0]

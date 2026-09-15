@@ -153,7 +153,8 @@ class DoomAccessibilityService : AccessibilityService() {
             val eventKind = if (traceCapturing) traceEventKind(event) else RemovalTraceEvent.NA
             val owner = if (traceCapturing) traceOwner(packageName) else RemovalTraceOwner.NA
             if ((overlay != null || sessionTimer.running) &&
-                (!Observation.consent || !Observation.gateConsent || !Observation.connected)
+                (!Observation.reminderSettings.enabled || !Observation.consent ||
+                    !Observation.gateConsent || !Observation.connected)
             ) {
                 endTimerSession()
                 requestSafetyCleanup(

@@ -24,7 +24,12 @@ internal class SegmentedBreathProgressView(context:Context):View(context){
 }
 internal class EntryGateOverlayUi(val root:View,val phaseLabel:TextView,val skipToMessages:Button,val leaveInstagram:Button,private val pixel:PixelBreathingView,private val progress:SegmentedBreathProgressView){
  private var disposed=false
- fun render(model:EntryGateOverlayModel){if(disposed)return;phaseLabel.text=model.frame.label;pixel.render(model.frame.bloom,model.reduceMotion);progress.render(model.frame.segments)}
+ private var lastPhase:String?=null
+ fun render(model:EntryGateOverlayModel){
+  if(disposed)return
+  if(lastPhase!=model.frame.label){phaseLabel.text=model.frame.label;lastPhase=model.frame.label}
+  pixel.render(model.frame.bloom,model.reduceMotion);progress.render(model.frame.segments)
+ }
  fun dispose(){if(disposed)return;disposed=true;skipToMessages.setOnClickListener(null);leaveInstagram.setOnClickListener(null);skipToMessages.isEnabled=false;leaveInstagram.isEnabled=false;pixel.visibility=View.INVISIBLE}
 }
 internal object EntryGateOverlayViewFactory{
@@ -33,13 +38,17 @@ internal object EntryGateOverlayViewFactory{
   fun label(value:String,size:Float)=TextView(context).apply{ text=value; textSize=size; setTextColor(BreathingVisuals.PAPER); gravity=Gravity.CENTER }
   val scroll=ScrollView(context).apply {
    setBackgroundColor(BreathingVisuals.INK); isFillViewport=true
+   contentDescription="Instagram diagnostic pause"
    setOnApplyWindowInsetsListener { view,insets ->
     val cutout = if(Build.VERSION.SDK_INT>=28) insets.displayCutout?.let { intArrayOf(it.safeInsetLeft,it.safeInsetTop,it.safeInsetRight,it.safeInsetBottom) } else null
     view.setPadding(maxOf(insets.systemWindowInsetLeft,cutout?.get(0)?:0),maxOf(insets.systemWindowInsetTop,cutout?.get(1)?:0),maxOf(insets.systemWindowInsetRight,cutout?.get(2)?:0),maxOf(insets.systemWindowInsetBottom,cutout?.get(3)?:0)); insets
    }
   }
   val body=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;setPadding(dp(20),dp(20),dp(20),dp(20))};scroll.addView(body,FrameLayout.LayoutParams(-1,-2))
-  val phase=label("Breathe in",32f).apply{minHeight=dp(48)};body.addView(phase,LinearLayout.LayoutParams(-1,-2))
+  val phase=label("Breathe in",32f).apply{
+   minHeight=dp(48);isFocusable=true
+   if(Build.VERSION.SDK_INT>=28)isAccessibilityHeading=true
+  };body.addView(phase,LinearLayout.LayoutParams(-1,-2))
   val pixel=PixelBreathingView(context).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO};body.addView(pixel,LinearLayout.LayoutParams(-1,dp(260)).apply{weight=1f})
   val progress=SegmentedBreathProgressView(context);body.addView(progress,LinearLayout.LayoutParams(-1,dp(10)))
   val skip=button(context,"Skip to Messages",BreathingVisuals.INK,BreathingVisuals.GOLD,dp(52)).apply{setOnClickListener{onSkipToMessages()}}
