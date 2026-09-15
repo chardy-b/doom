@@ -11,8 +11,6 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.UiScrollable
-import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -27,6 +25,18 @@ class EntryGateOverlayUiTest {
     @get:Rule val rule = ActivityScenarioRule(MainActivity::class.java)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val device get() = UiDevice.getInstance(instrumentation)
+
+    private fun swipeUntilVisible(text: String): Boolean {
+        if (device.wait(Until.hasObject(By.text(text)), 1_000)) return true
+        repeat(20) {
+            device.swipe(
+                device.displayWidth / 2, device.displayHeight * 3 / 4,
+                device.displayWidth / 2, device.displayHeight / 4, 20
+            )
+            if (device.wait(Until.hasObject(By.text(text)), 500)) return true
+        }
+        return false
+    }
 
     @Test @SupplementalEvidence fun nativeOverlayIsDoomStyledSemanticAndTargeted() {
         var ui: EntryGateOverlayUi? = null
@@ -185,14 +195,11 @@ class EntryGateOverlayUiTest {
             waitForDraw(rule.scenario)
             capture("01-home")
             device.findObject(By.text("Debug")).click()
-            val scroll = UiScrollable(UiSelector().scrollable(true))
-            scroll.scrollTextIntoView("DOOM-OWNED QUICK DEMO")
+            assertTrue(swipeUntilVisible("DOOM-OWNED QUICK DEMO"))
             val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
-            scroll.scrollTextIntoView(footer)
-            assertTrue(device.wait(Until.hasObject(By.text(footer)), 5_000))
+            assertTrue(swipeUntilVisible(footer))
             waitForDraw(rule.scenario)
             capture("02-debug")
-            scroll.scrollToBeginning(20)
         } finally {
             preferences.edit().clear().commit()
         }
