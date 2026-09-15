@@ -46,7 +46,7 @@ class DoomUiTest {
   visible("Breathing reminders");capture("01-doom-dashboard-demo")
   click("Preview breathing reminder");visible("Breathe in");capture("02-doom-breathing-demo")
   click("Debug");click("Demo messages — no wait");visible("Messages stay open.");capture("03-doom-messages-demo")
-  click("Try the breathing demo");visible("Breathe in");visible("A deliberate start.",15_000);capture("04-doom-completed-demo")
+  click("Try the breathing demo");visible("Take a breath.");visible("A deliberate start.",15_000);capture("04-doom-completed-demo")
  }
  @Test fun homeDefaultsNavigationAndDebugIsolation(){visible("Breathing reminders");visible("10s");visible("1m");visible("Accessibility: Not enabled");assertFalse(device.hasObject(By.text("SANITIZED STRUCTURAL REPORT")));click("Debug");visible("SANITIZED STRUCTURAL REPORT");visible("DOOM-OWNED QUICK DEMO");click("Home");assertFalse(device.hasObject(By.text("SANITIZED STRUCTURAL REPORT")))}
  @Test fun customCancelDismissesWithoutSaving(){
