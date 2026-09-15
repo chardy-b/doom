@@ -9,8 +9,10 @@ from pathlib import Path
 import subprocess
 
 EXPECTED_SCREENSHOTS = (
-    "01-overlay-unavailable.png", "02-overlay-captured-status.png",
-    "03-overlay-reduced-motion.png", "04-overlay-large-font.png",
+    "01-home.png", "01-overlay-unavailable.png", "02-debug.png",
+    "02-overlay-captured-status.png", "03-reminder-inhale.png",
+    "03-overlay-reduced-motion.png", "04-reminder-exhale.png",
+    "04-overlay-large-font.png", "05-reminder-reduced-motion.png",
     "05-overlay-landscape.png", "06-doom-build-footer.png",
     "07-timer-expanded-dismiss.png", "08-timer-compact-icon.png",
     "09-dashboard-timer-disabled.png", "10-dashboard-timer-reenabled.png",
@@ -27,8 +29,8 @@ def build_manifest(root: Path, apk: Path, candidate_sha: str, run_id: str, run_a
     screenshots = sorted(path.name for path in root.glob("*.png"))
     if present != set(EXPECTED_SCREENSHOTS):
         raise ValueError("supplementary evidence directory contains an unexpected file")
-    if tuple(screenshots) != EXPECTED_SCREENSHOTS:
-        raise ValueError("supplementary evidence requires the exact ten screenshots")
+    if tuple(sorted(screenshots)) != tuple(sorted(EXPECTED_SCREENSHOTS)):
+        raise ValueError("supplementary evidence requires the exact fifteen screenshots")
     if not apk.is_file() or apk.stat().st_size == 0:
         raise ValueError("tested APK is missing or empty")
     files = []

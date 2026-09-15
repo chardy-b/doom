@@ -351,7 +351,7 @@ class EntryGateServiceActionTest {
         val fixture = fixture()
         rule.scenario.onActivity { activity ->
             val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val overlayUi = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
+            val overlayUi = EntryGateOverlayViewFactory.create(activity, {}, {})
             val content = activity.findViewById<ViewGroup>(android.R.id.content)
             content.addView(overlayUi.root, ViewGroup.LayoutParams(-1, -1))
             field(fixture.service, "overlayUi").set(fixture.service, overlayUi)

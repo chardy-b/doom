@@ -31,18 +31,14 @@ class EntryGateOverlayUiTest {
     @Test @SupplementalEvidence fun nativeOverlayIsDoomStyledSemanticAndTargeted() {
         var ui: EntryGateOverlayUi? = null
         rule.scenario.onActivity { activity ->
-            ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
+            ui = EntryGateOverlayViewFactory.create(activity, {}, {})
             val content = activity.findViewById<ViewGroup>(android.R.id.content)
             content.addView(ui!!.root, ViewGroup.LayoutParams(-1, -1))
-            ui!!.render(EntryGateOverlayModel(
-                5, 0f, false,
-                OverlayDiagnosticStatus(EntryGateSurface.UNKNOWN, OverlayReportStatus.UNAVAILABLE, false)
-            ))
+            ui!!.render(EntryGateOverlayModel.from(10_000, 10_000, false))
         }
         rule.scenario.onActivity {
             val actual = requireNotNull(ui)
             assertEquals(BreathingVisuals.INK, (actual.root.background as ColorDrawable).color)
-            assertEquals(View.GONE, actual.copyCurrentReport.visibility)
             assertTrue(actual.skipToMessages.minimumHeight >= (48 * it.resources.displayMetrics.density).toInt())
             assertTrue(actual.skipToMessages.isFocusable)
             assertTrue(actual.skipToMessages.isClickable)
@@ -65,7 +61,7 @@ class EntryGateOverlayUiTest {
                 val density = context.resources.displayMetrics.density
                 val width = (widthDp * density).toInt()
                 val height = (heightDp * density).toInt()
-                val ui = EntryGateOverlayViewFactory.create(context, {}, {}, {})
+                val ui = EntryGateOverlayViewFactory.create(context, {}, {})
                 ui.root.measure(
                     View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
@@ -123,6 +119,9 @@ class EntryGateOverlayUiTest {
             captureTimer("07-timer-expanded-dismiss", collapsed = false)
             captureTimer("08-timer-compact-icon", collapsed = true)
             captureDashboardTimerStates()
+            renderAndCapture(overlay, "03-reminder-inhale", reducedMotion = false, captured = false)
+            renderAndCapture(overlay, "04-reminder-exhale", reducedMotion = false, captured = true)
+            renderAndCapture(overlay, "05-reminder-reduced-motion", reducedMotion = true, captured = false)
 
             device.executeShellCommand("settings put system font_scale 2.0")
             recreateActivity()
@@ -172,22 +171,23 @@ class EntryGateOverlayUiTest {
     }
 
     @Test @SupplementalEvidence fun supplementaryFooterScreenshotScrollsOnlyInItsSeparateTest() {
+        assertTopResumed()
+        waitForDraw(rule.scenario)
+        capture("01-home")
+        device.findObject(By.text("Debug")).click()
         val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
         val scroll = UiScrollable(UiSelector().scrollable(true))
         try {
             assertTrue(scroll.scrollToEnd(20))
             assertTrue(device.wait(Until.hasObject(By.text(footer)), 5_000))
-            assertTopResumed()
             waitForDraw(rule.scenario)
-            capture("06-doom-build-footer")
-        } finally {
-            scroll.scrollToBeginning(20)
-        }
+            capture("02-debug")
+        } finally { scroll.scrollToBeginning(20) }
     }
 
     private fun mount(assign: (EntryGateOverlayUi) -> Unit) {
         rule.scenario.onActivity { activity ->
-            val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
+            val ui = EntryGateOverlayViewFactory.create(activity, {}, {})
             activity.findViewById<ViewGroup>(android.R.id.content)
                 .addView(ui.root, ViewGroup.LayoutParams(-1, -1))
             assign(ui)
@@ -211,18 +211,8 @@ class EntryGateOverlayUiTest {
     ) {
         rule.scenario.onActivity {
             val actual = requireNotNull(ui)
-            actual.render(EntryGateOverlayModel(
-                5, if (reducedMotion) .5f else 0f, reducedMotion,
-                OverlayDiagnosticStatus(
-                    EntryGateSurface.UNKNOWN,
-                    if (captured) OverlayReportStatus.CAPTURED else OverlayReportStatus.UNAVAILABLE,
-                    false
-                )
-            ))
-            assertEquals(
-                "UNKNOWN\n" + if (captured) "REPORT CAPTURED" else "REPORT UNAVAILABLE",
-                actual.status.text.toString()
-            )
+            actual.render(EntryGateOverlayModel.from(if (captured) 5_000 else 10_000, 10_000, reducedMotion))
+            assertTrue(actual.phaseLabel.text == "Breathe in" || actual.phaseLabel.text == "Breathe out")
             assertTrue(actual.root.parent != null)
         }
         assertTopResumed()

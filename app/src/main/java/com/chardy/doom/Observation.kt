@@ -16,6 +16,7 @@ object Observation {
     var gateConsent by mutableStateOf(false)
         private set
     var sessionTimerEnabled by mutableStateOf(true)
+    var reminderSettings by mutableStateOf(ReminderSettings())
         private set
     var entryGateState by mutableStateOf(EntryGateState.OUTSIDE)
         internal set
@@ -50,6 +51,7 @@ object Observation {
     }
 
     fun load(context: Context) {
+        reminderSettings = ReminderSettingsStore.read(context)
         val prefs = context.getSharedPreferences("consent", Context.MODE_PRIVATE)
         consent = prefs.getBoolean(CONSENT_KEY, false)
         gateConsent = prefs.getBoolean(ENTRY_GATE_CONSENT_KEY, false)
@@ -62,6 +64,11 @@ object Observation {
             .putBoolean(SESSION_TIMER_ENABLED_KEY, enabled).apply()
         sessionTimerEnabled = enabled
         DoomAccessibilityService.sessionTimerPreferenceChanged(enabled)
+    }
+
+    fun updateReminderSettings(context: Context, settings: ReminderSettings) {
+        ReminderSettingsStore.write(context, settings)
+        reminderSettings = settings
     }
 
     fun setGateConsent(context: Context, accepted: Boolean) {
