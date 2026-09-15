@@ -15,7 +15,7 @@ SPEC.loader.exec_module(MODULE)
 class OverlayEvidenceManifestTest(unittest.TestCase):
     def test_wil194_truthful_timer_states_are_required(self):
         self.assertIn("07-timer-expanded-dismiss.png", MODULE.EXPECTED_SCREENSHOTS)
-        self.assertIn("08-timer-compact-drag-snapped.png", MODULE.EXPECTED_SCREENSHOTS)
+        self.assertIn("08-timer-compact-icon.png", MODULE.EXPECTED_SCREENSHOTS)
         self.assertIn("09-dashboard-timer-disabled.png", MODULE.EXPECTED_SCREENSHOTS)
         self.assertIn("10-dashboard-timer-reenabled.png", MODULE.EXPECTED_SCREENSHOTS)
 

@@ -168,6 +168,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 traceRecord(RemovalTraceMark.EVENT_IGNORED_OWN, eventKind, owner)
                 if (isMainActivityReturn(event)) {
                     timerDismissedThisVisit = false
+                    timerEdge = TimerEdge.RIGHT
                     endTimerSession()
                     mainActivityReturnObserved = true
                     // This also resets a completed/granted session when no overlay remains.
@@ -201,7 +202,7 @@ class DoomAccessibilityService : AccessibilityService() {
                     // the visit. System UI and keyboards commonly cover Instagram temporarily.
                     if (timerDismissedThisVisit && confirmedOrdinaryForeignRoot()) {
                         timerDismissedThisVisit = false
-                        timerAwaitingFreshObservation = false
+                        timerEdge = TimerEdge.RIGHT
                     }
                     // Preserve the baseline gate reset for every non-Instagram/null event.
                     resetOutside(cause = RemovalTraceMark.EVENT_PACKAGE_RESET,
@@ -292,6 +293,9 @@ class DoomAccessibilityService : AccessibilityService() {
             if (Observation.gateConsent && entryGate.cooldownActive()) {
                 when (sampleTimerAuthority()) {
                     OverlayForegroundDecision.KEEP -> {
+                        // Preference re-enable is deliberately event driven. A settings call,
+                        // package attribution, or uncertain root cannot consume this latch.
+                        timerAwaitingFreshObservation = false
                         observeTimerInstagram()
                         attachTimerIfAllowed()
                     }
@@ -476,11 +480,17 @@ class DoomAccessibilityService : AccessibilityService() {
     /** A dismissal-only root classification; never uses the accessibility event package. */
     private fun confirmedOrdinaryForeignRoot(): Boolean {
         val rootPackage = readPackageRoot { overlayPlatform.currentRoot() }.packageName ?: return false
-        val imePackages = try {
+        return isOrdinaryForeignForTimerDismissal(
+            rootPackage, applicationContext.packageName, timerImePackages
+        )
+    }
+
+    /** Process-local platform metadata only; no UI content and no persistence. */
+    private val timerImePackages: Set<String> by lazy {
+        try {
             (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).inputMethodList
                 .mapTo(mutableSetOf()) { it.packageName }
         } catch (_: RuntimeException) { emptySet() }
-        return isOrdinaryForeignForTimerDismissal(rootPackage, applicationContext.packageName, imePackages)
     }
 
     private fun observeTimerInstagram() {
@@ -488,7 +498,6 @@ class DoomAccessibilityService : AccessibilityService() {
         if (!sessionTimer.running) {
             timerSessionEpoch++
             timerForeground.reset(-1L)
-            timerEdge = TimerEdge.RIGHT
         }
         if (sessionTimer.observeVerifiedInstagram(
                 Observation.consent, Observation.gateConsent, Observation.connected
@@ -533,10 +542,10 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     private fun sampleTimerAuthority(): OverlayForegroundDecision {
-        if (!timerSpecificAllowed()) return OverlayForegroundDecision.FAIL_OPEN
+        if (!timerConsentAllowed()) return OverlayForegroundDecision.FAIL_OPEN
         val epoch = timerSessionEpoch
         val sample = readPackageRoot { overlayPlatform.currentRoot() }
-        if (epoch != timerSessionEpoch || !timerSpecificAllowed()) return OverlayForegroundDecision.FAIL_OPEN
+        if (epoch != timerSessionEpoch || !timerConsentAllowed()) return OverlayForegroundDecision.FAIL_OPEN
         // A timer accessibility window can itself own the root during TalkBack taps.
         // It is uncertainty, never fresh authority; MainActivity returns end the session.
         val attributed = if (sample.packageName == applicationContext.packageName &&
@@ -594,9 +603,14 @@ class DoomAccessibilityService : AccessibilityService() {
                 }
             }, onDismiss = { dismissTimer(epoch) }, onMove = { dx, dy -> moveTimer(epoch, dx, dy) },
                 onSettle = { chooseEdge -> settleTimer(epoch, chooseEdge) })
-            created.render(sessionTimer.model(
+            val initialModel = sessionTimer.model(
                 try { !ValueAnimator.areAnimatorsEnabled() } catch (_: RuntimeException) { true }, true
-            ) ?: return)
+            )
+            if (initialModel == null) {
+                created.dispose()
+                return
+            }
+            created.render(initialModel)
             created.root.measure(
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)

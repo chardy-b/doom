@@ -121,7 +121,7 @@ class EntryGateOverlayUiTest {
             renderAndCapture(overlay, "03-overlay-reduced-motion", reducedMotion = true, captured = false)
             unmount(overlay); overlay = null
             captureTimer("07-timer-expanded-dismiss", collapsed = false)
-            captureTimer("08-timer-compact-drag-snapped", collapsed = true)
+            captureTimer("08-timer-compact-icon", collapsed = true)
             captureDashboardTimerStates()
 
             device.executeShellCommand("settings put system font_scale 2.0")
@@ -156,12 +156,15 @@ class EntryGateOverlayUiTest {
         try {
             val scroll = UiScrollable(UiSelector().scrollable(true))
             scroll.scrollIntoView(UiSelector().text("Instagram session timer"))
-            rule.scenario.onActivity { Observation.setSessionTimerEnabled(it, false) }
-            instrumentation.waitForIdleSync()
-            assertTrue(device.wait(Until.hasObject(By.text("Disabled")), 5_000)); capture("09-dashboard-timer-disabled")
             val switch = device.findObject(By.desc("Instagram session timer"))
             assertNotNull("actual timer Switch must have stable semantics", switch)
-            assertFalse(switch.isChecked); switch.click()
+            if (!switch.isChecked) switch.click()
+            assertTrue(switch.isChecked)
+            switch.click()
+            assertTrue(device.wait(Until.hasObject(By.text("Disabled")), 5_000))
+            assertFalse(switch.isChecked)
+            capture("09-dashboard-timer-disabled")
+            switch.click()
             assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000)); assertTrue(switch.isChecked)
             capture("10-dashboard-timer-reenabled")
         } finally { rule.scenario.onActivity { Observation.setSessionTimerEnabled(it, original) } }

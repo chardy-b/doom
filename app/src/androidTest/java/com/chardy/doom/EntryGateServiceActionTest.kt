@@ -1941,6 +1941,71 @@ class EntryGateServiceActionTest {
         }
     }
 
+    @Test fun timerDisableAndDismissDuringClosingPreserveGateHandoff() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                val timer = startBubble(fresh)
+                val timerUi = field(fresh.service, "timerUi").get(fresh.service) as InstagramTimerOverlayUi
+                fresh.platform.detachOnRemove = false
+                fresh.now[0] += 60_000L
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertTrue(field(fresh.service, "timerClosing").getBoolean(fresh.service))
+                assertTrue(field(fresh.service, "gateAfterTimerDetach").get(fresh.service) != null)
+
+                Observation.setSessionTimerEnabled(activity, false)
+                timerUi.dismiss.performClick()
+                assertFalse(timer.running)
+                assertEquals(null, field(fresh.service, "timerTick").get(fresh.service))
+                assertEquals(null, field(fresh.service, "timerWatchdog").get(fresh.service))
+                assertEquals(null, field(fresh.service, "cancelledGateAfterTimerDetach").get(fresh.service))
+
+                val retry = field(fresh.service, "timerRetry").get(fresh.service) as Runnable
+                fresh.platform.detachOnRemove = true
+                retry.run()
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                assertTrue(field(fresh.service, "overlay").get(fresh.service) != null)
+                assertEquals(null, field(fresh.service, "timerView").get(fresh.service))
+                assertTrue(fresh.platform.attached)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun timerReenableWaitsThroughNoiseForOneFreshVerifiedInstagramEvent() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                val timer = startBubble(fresh)
+                Observation.setSessionTimerEnabled(activity, false)
+                assertFalse(timer.running)
+                Observation.setSessionTimerEnabled(activity, true)
+                assertTrue(field(fresh.service, "timerAwaitingFreshObservation").getBoolean(fresh.service))
+                assertFalse(timer.running)
+
+                for (owner in listOf("com.chardyb.doom", "com.android.systemui", "com.example.keyboard", null)) {
+                    fresh.platform.rootBehavior = RootBehavior.MISSING
+                    sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, owner)
+                    assertTrue(field(fresh.service, "timerAwaitingFreshObservation").getBoolean(fresh.service))
+                    assertFalse(timer.running)
+                }
+                fresh.platform.rootBehavior = RootBehavior.NULL_PACKAGE
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertTrue(field(fresh.service, "timerAwaitingFreshObservation").getBoolean(fresh.service))
+                assertFalse(timer.running)
+
+                fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertFalse(field(fresh.service, "timerAwaitingFreshObservation").getBoolean(fresh.service))
+                assertTrue(timer.running)
+                assertEquals(0L, timer.elapsedSeconds())
+                val installs = fresh.installs
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android")
+                assertEquals(installs, fresh.installs)
+                assertEquals(0L, timer.elapsedSeconds())
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
     @Test fun timerTapUsesBoundedOwnOverlayAuthorityAndRevokeStopsCallbacks() {
         rule.scenario.onActivity { activity ->
             for (gateConsent in listOf(false, true)) {
