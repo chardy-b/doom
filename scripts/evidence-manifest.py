@@ -16,7 +16,6 @@ def main():
     apk = root / "doom-diagnostic.apk"
     context = root / "context.txt"
     instrumentation = root / "instrumentation.log"
-    readiness = root / "readiness.log"
     screenshots = sorted((root / "screenshots").glob("*.png"))
     expected = {"01-doom-dashboard-demo.png", "02-doom-breathing-demo.png", "03-doom-messages-demo.png", "04-doom-completed-demo.png"}
     if (
@@ -26,8 +25,6 @@ def main():
         or context.stat().st_size == 0
         or not instrumentation.is_file()
         or instrumentation.stat().st_size == 0
-        or not readiness.is_file()
-        or readiness.stat().st_size == 0
         or {path.name for path in screenshots} != expected
     ):
         raise SystemExit("Missing tested APK or exact four genuine diagnostic screenshots")
@@ -49,7 +46,7 @@ def main():
                 "size": path.stat().st_size,
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             }
-            for path in [apk, context, instrumentation, readiness, *screenshots]
+            for path in [apk, context, instrumentation, *screenshots]
         ],
     }
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

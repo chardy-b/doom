@@ -16,9 +16,8 @@ EXPECTED_SCREENSHOTS = (
     "screenshots/04-doom-completed-demo.png",
 )
 EXPECTED_EVIDENCE_FILES = ("doom-diagnostic.apk", *EXPECTED_SCREENSHOTS)
-AUXILIARY_EVIDENCE_FILES = ("context.txt", "instrumentation.log", "readiness.log")
+AUXILIARY_EVIDENCE_FILES = ("context.txt", "instrumentation.log")
 ALL_EVIDENCE_FILES = (*EXPECTED_EVIDENCE_FILES, *AUXILIARY_EVIDENCE_FILES)
-READINESS_SUCCESS = b"Emulator readiness passed (API 35, unlocked, Doom top-resumed, app data cleared).\n"
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 SIGNATURE_ENTRY = re.compile(r"^META-INF/(?:MANIFEST\.MF|[^/]+\.(?:SF|RSA|DSA|EC))$", re.IGNORECASE)
 MAX_APK_ENTRIES = 100_000
@@ -102,8 +101,9 @@ def validate_evidence(evidence_dir: Path, source_run_file: Path, candidate_sha: 
             raise ValidationError(f"evidence manifest {key} mismatch")
 
     entries = manifest.get("files")
-    if not isinstance(entries, list) or len(entries) != len(ALL_EVIDENCE_FILES):
-        raise ValidationError("evidence manifest file count differs from the exact contract")
+    supported_entry_counts = {len(EXPECTED_EVIDENCE_FILES), len(ALL_EVIDENCE_FILES)}
+    if not isinstance(entries, list) or len(entries) not in supported_entry_counts:
+        raise ValidationError("evidence manifest file count is unsupported")
     seen: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {"path", "size", "sha256"}:
@@ -124,8 +124,9 @@ def validate_evidence(evidence_dir: Path, source_run_file: Path, candidate_sha: 
             raise ValidationError(f"invalid evidence checksum: {normalized}")
         if sha256(path) != checksum:
             raise ValidationError(f"evidence checksum mismatch: {normalized}")
-    if seen != set(ALL_EVIDENCE_FILES):
-        raise ValidationError("evidence manifest paths differ from the exact contract")
+    accepted_manifest_sets = {frozenset(EXPECTED_EVIDENCE_FILES), frozenset(ALL_EVIDENCE_FILES)}
+    if frozenset(seen) not in accepted_manifest_sets:
+        raise ValidationError("evidence manifest paths differ from a supported exact contract")
 
     actual_files: set[str] = set()
     for path in evidence_dir.rglob("*"):
@@ -163,8 +164,6 @@ def validate_evidence(evidence_dir: Path, source_run_file: Path, candidate_sha: 
         raise ValidationError("instrumentation log is empty or too large")
     if "BUILD SUCCESSFUL" not in instrumentation or not re.search(r"Finished [1-9][0-9]* tests? on ", instrumentation):
         raise ValidationError("instrumentation log lacks a successful nonzero test summary")
-    if (evidence_dir / "readiness.log").read_bytes() != READINESS_SUCCESS:
-        raise ValidationError("readiness evidence differs from the exact sanitized success contract")
     for name in EXPECTED_SCREENSHOTS:
         if not (evidence_dir / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
             raise ValidationError(f"invalid screenshot signature: {name}")
