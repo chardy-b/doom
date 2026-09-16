@@ -36,8 +36,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -227,6 +225,7 @@ fun DoomScreen() {
             }
         }
     }
+}
 
 @Composable
 private fun Home(
@@ -246,6 +245,15 @@ private fun Home(
             )
             Text("Breathing reminders", Modifier.padding(start = 12.dp), color = Paper, fontSize = 18.sp)
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(
+                checked = Observation.sessionTimerEnabled,
+                onCheckedChange = { Observation.setSessionTimerEnabled(context, it) },
+                modifier = Modifier.semantics { contentDescription = "Instagram session timer" },
+            )
+            Text("Instagram session timer", Modifier.padding(start = 12.dp), color = Paper, fontSize = 18.sp)
+        }
+        Text(if (Observation.sessionTimerEnabled) "Enabled" else "Disabled", color = Gold)
         Text(if (accessibilityEnabled) "Accessibility: Enabled" else "Accessibility: Not enabled", color = Paper)
         Action("Open Accessibility Settings") {
             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))

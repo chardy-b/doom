@@ -171,8 +171,7 @@ class EntryGateOverlayUiTest {
     private fun captureDashboardTimerStates() {
         val original = rule.scenario.let { var value=true; it.onActivity { value=Observation.sessionTimerEnabled }; value }
         try {
-            val scroll = UiScrollable(UiSelector().scrollable(true))
-            scroll.scrollIntoView(UiSelector().text("Instagram session timer"))
+            assertTrue(swipeUntilVisible("Instagram session timer"))
             val switch = device.findObject(By.desc("Instagram session timer"))
             assertNotNull("actual timer Switch must have stable semantics", switch)
             if (!switch.isChecked) switch.click()
