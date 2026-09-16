@@ -33,7 +33,7 @@ class OverlayEvidenceManifestTest(unittest.TestCase):
         manifest = self.manifest()
         self.assertEqual("doom-overlay-ui-synthetic-only", manifest["evidence_kind"])
         self.assertEqual("a" * 40, manifest["tested_sha"])
-        self.assertEqual(10, len(manifest["files"]))
+        self.assertEqual(6, len(manifest["files"]))
         self.assertEqual(self.apk.stat().st_size, manifest["apk"]["size"])
 
     def test_missing_or_extra_screenshot_is_rejected(self):

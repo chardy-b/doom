@@ -20,10 +20,10 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         for operation in ("beginInstagramSessionIfEligible()", "overlayPlatform.eventRoot()", "collect(root)"):
             self.assertLess(keep, event.index(operation))
 
-    def test_revocation_preflight_covers_visible_overlay_and_running_timer(self):
+    def test_revocation_preflight_is_limited_to_a_visible_overlay(self):
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
         preflight = event.split("// Doom's own", 1)[0]
-        self.assertIn("if ((overlay != null || sessionTimer.running) &&", preflight)
+        self.assertIn("if (overlay != null &&", preflight)
         self.assertNotIn("overlay != null || ticket != null", preflight)
 
     def test_closing_or_stale_visible_event_keeps_the_old_safety_veto(self):

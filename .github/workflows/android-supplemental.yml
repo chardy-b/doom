@@ -40,8 +40,6 @@ jobs:
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
-        with:
-          packages: ''
       - name: Install API 35 packages
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Deterministic supplemental preparation
