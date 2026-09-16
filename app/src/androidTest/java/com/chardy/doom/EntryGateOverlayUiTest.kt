@@ -136,6 +136,7 @@ class EntryGateOverlayUiTest {
             captureTimer("07-timer-expanded-dismiss", collapsed = false)
             captureTimer("08-timer-compact-icon", collapsed = true)
             captureDashboardTimerStates()
+            mount { overlay = it }
             renderAndCapture(overlay, "03-reminder-inhale", reducedMotion = false, captured = false)
             renderAndCapture(overlay, "04-reminder-exhale", reducedMotion = false, captured = true)
             renderAndCapture(overlay, "05-reminder-reduced-motion", reducedMotion = true, captured = false)

@@ -249,7 +249,9 @@ private fun Home(
             Switch(
                 checked = Observation.sessionTimerEnabled,
                 onCheckedChange = { Observation.setSessionTimerEnabled(context, it) },
-                modifier = Modifier.semantics { contentDescription = "Instagram session timer" },
+                modifier = Modifier
+                    .testTag("instagram_session_timer_switch")
+                    .semantics { contentDescription = "Instagram session timer" },
             )
             Text("Instagram session timer", Modifier.padding(start = 12.dp), color = Paper, fontSize = 18.sp)
         }

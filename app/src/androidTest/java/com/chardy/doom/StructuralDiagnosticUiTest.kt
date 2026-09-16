@@ -58,6 +58,7 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun sessionTimerSwitchPersistsRealIndependentState() {
+        rule.onNodeWithText("Home").performClick()
         val timerSwitch = rule.onNodeWithTag("instagram_session_timer_switch")
         timerSwitch.performScrollTo().assertIsDisplayed().assertIsOn().performClick().assertIsOff()
         shown("Disabled")
