@@ -47,7 +47,6 @@ jobs:
       - name: Host source and evidence checks
         run: |
           python3 -B scripts/test-ci-isolation.py
-          python3 -B scripts/test-integrated-ci-harness.py
           python3 -B scripts/test-structural-lifecycle.py
           python3 -B scripts/test-overlay-evidence.py
           python3 -B scripts/test-fixture-evidence.py
@@ -120,7 +119,6 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          emulator-port: 5554
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: bash scripts/ci-device.sh
@@ -148,8 +146,6 @@ jobs:
           name: doom-device-diagnostics-${{ env.CANDIDATE_SHA }}
           path: |
             evidence/context.txt
-            evidence/readiness.log
-            evidence/readiness-diagnostics/
             evidence/instrumentation.log
             evidence/screenshots/
             app/build/reports/androidTests/

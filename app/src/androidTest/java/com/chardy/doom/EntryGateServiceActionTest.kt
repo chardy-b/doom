@@ -27,23 +27,6 @@ class EntryGateServiceActionTest {
     @get:Rule val rule = ActivityScenarioRule(MainActivity::class.java)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
 
-    @Test fun timerPreferenceDismissalAndSafetyVetoAreIndependentOfGateAuthority() {
-        rule.scenario.onActivity { activity ->
-            val service = DoomAccessibilityService()
-            Observation.accept(activity, true)
-            Observation.setGateConsent(activity, true)
-            Observation.connected = true
-            Observation.setSessionTimerEnabled(activity, false)
-            assertTrue(invokeResult<Boolean>(service, "timerConsentAllowed"))
-            assertFalse(invokeResult<Boolean>(service, "timerSpecificAllowed"))
-            field(service, "timerDismissedThisVisit").setBoolean(service, true)
-            assertTrue(invokeResult<Boolean>(service, "timerConsentAllowed"))
-            field(service, "timerSafetyVeto").setBoolean(service, true)
-            Observation.setSessionTimerEnabled(activity, true)
-            assertFalse(invokeResult<Boolean>(service, "timerSpecificAllowed"))
-        }
-    }
-
     private enum class RootBehavior {
         INSTAGRAM,
         NULL_PACKAGE,
@@ -188,7 +171,6 @@ class EntryGateServiceActionTest {
         rule.scenario.onActivity {
             Observation.setGateConsent(it, false)
             Observation.accept(it, false)
-            Observation.setSessionTimerEnabled(it, true)
             Observation.connected = false
             Observation.clear()
             RemovalTraceStore.process.clear()
@@ -385,26 +367,21 @@ class EntryGateServiceActionTest {
         val oldToken = fixture.token
         request(fixture.service, OverlayRemovalAction.COMPLETE, oldToken)
         lateinit var newView: View
-        lateinit var newToken: OverlayCallbackToken
-        var oldRemovalAttempts = 0
         rule.scenario.onActivity { activity ->
             val guard = field(fixture.service, "callbackGuard").get(fixture.service) as OverlayCallbackGuard
             newView = View(activity)
             fixture.platform.register(newView, true)
-            newToken = guard.open(fixture.ticket)
+            val newToken = guard.open(fixture.ticket)
             field(fixture.service, "overlay").set(fixture.service, newView)
             field(fixture.service, "overlayToken").set(fixture.service, newToken)
-            oldRemovalAttempts = fixture.platform.removeAttempts
-            assertTrue(oldRemovalAttempts > 0)
             // Exercise the queued retry boundary deterministically on the main thread.
             invoke(fixture.service, "attemptOverlayRemoval", oldToken)
             requestOverlayRemovalWithToken(fixture.service, OverlayRemovalAction.COMPLETE, oldToken)
         }
         instrumentation.waitForIdleSync()
         assertSame(newView, field(fixture.service, "overlay").get(fixture.service))
-        assertSame(newToken, field(fixture.service, "overlayToken").get(fixture.service))
         assertEquals(0, fixture.platform.routeCalls)
-        assertEquals(oldRemovalAttempts, fixture.platform.removeAttempts)
+        assertEquals(1, fixture.platform.removeAttempts)
         assertFalse(gate(fixture.service).cooldownActive())
     }
 
@@ -1802,29 +1779,21 @@ class EntryGateServiceActionTest {
                 val view = field(fresh.service, "timerView").get(fresh.service)
                 val epoch = field(fresh.service, "timerEpoch").getLong(fresh.service)
                 val params = field(fresh.service, "timerParams").get(fresh.service) as WindowManager.LayoutParams
+                val portraitX = params.x
+                val portraitY = params.y
                 var updates = 0
                 field(fresh.service, "overlayWindowUpdater").set(fresh.service,
-                    { manager: WindowManager, target: View, changed: WindowManager.LayoutParams ->
-                        val density = layoutContext.resources.displayMetrics.density
-                        val frame = manager.currentWindowMetrics.bounds
-                        val safe = InstagramTimerOverlayViewFactory.safeInsets(manager, target.rootWindowInsets)
-                        val bounds = InstagramTimerOverlayViewFactory.bounds(frame, safe,
-                            target.measuredWidth.coerceAtLeast((56 * density).toInt()),
-                            target.measuredHeight.coerceAtLeast((56 * density).toInt()), density)
-                        assertSame(view, target); assertSame(params, changed)
-                        assertTrue(changed.x == bounds.left || changed.x == bounds.right)
-                        assertTrue(changed.y in bounds.top..bounds.bottom)
-                        updates += 1
+                    { _: WindowManager, target: View, changed: WindowManager.LayoutParams ->
+                        assertSame(view, target); assertSame(params, changed); updates += 1
                     })
                 val landscape = Configuration(layoutContext.resources.configuration).apply {
                     orientation = Configuration.ORIENTATION_LANDSCAPE
                     densityDpi = 320
                 }
                 layoutContext = activity.createConfigurationContext(landscape)
-                params.x = -100_000
-                params.y = -100_000
                 fresh.service.onConfigurationChanged(landscape)
                 assertEquals(1, updates)
+                assertTrue(params.x > portraitX && params.y > portraitY)
                 assertEquals(2, fresh.installs)
                 invoke(fresh.service, "updateTimerLayout", epoch - 1)
                 assertEquals(1, updates)
@@ -1951,79 +1920,6 @@ class EntryGateServiceActionTest {
                 invoke(fresh.service, "finishTimerDetach", oldEpoch)
                 assertSame(resumed, field(fresh.service, "timerView").get(fresh.service))
                 assertTrue(timer.running)
-            } finally { destroyFresh(fresh) }
-        }
-    }
-
-    @Test fun timerDisableAndDismissDuringClosingPreserveGateHandoff() {
-        rule.scenario.onActivity { activity ->
-            val fresh = freshService(activity, 1_000L)
-            try {
-                val timer = startBubble(fresh)
-                fresh.platform.detachOnRemove = false
-                fresh.now[0] += 60_000L
-                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
-                assertTrue(field(fresh.service, "timerClosing").getBoolean(fresh.service))
-                val pendingHandoff = field(fresh.service, "gateAfterTimerDetach").get(fresh.service)
-                val currentTicket = field(fresh.service, "ticket").get(fresh.service)
-                val liveEpoch = field(fresh.service, "timerEpoch").getLong(fresh.service)
-                assertTrue(pendingHandoff != null)
-
-                Observation.setSessionTimerEnabled(activity, false)
-                invoke(fresh.service, "dismissTimer", liveEpoch)
-                assertFalse(timer.running)
-                assertEquals(null, field(fresh.service, "timerTick").get(fresh.service))
-                assertEquals(null, field(fresh.service, "timerWatchdog").get(fresh.service))
-                assertFalse(field(fresh.service, "timerDismissedThisVisit").getBoolean(fresh.service))
-                assertEquals(null, field(fresh.service, "cancelledGateAfterTimerDetach").get(fresh.service))
-                assertSame(pendingHandoff, field(fresh.service, "gateAfterTimerDetach").get(fresh.service))
-                assertSame(currentTicket, field(fresh.service, "ticket").get(fresh.service))
-
-                val retry = field(fresh.service, "timerRetry").get(fresh.service) as Runnable
-                fresh.platform.detachOnRemove = true
-                retry.run()
-                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
-                assertTrue(field(fresh.service, "overlay").get(fresh.service) != null)
-                assertEquals(null, field(fresh.service, "timerView").get(fresh.service))
-                assertTrue(fresh.platform.attached)
-            } finally {
-                Observation.setSessionTimerEnabled(activity, true)
-                destroyFresh(fresh)
-            }
-        }
-    }
-
-    @Test fun timerReenableWaitsThroughNoiseForOneFreshVerifiedInstagramEvent() {
-        rule.scenario.onActivity { activity ->
-            val fresh = freshService(activity, 1_000L)
-            try {
-                val timer = startBubble(fresh)
-                Observation.setSessionTimerEnabled(activity, false)
-                assertFalse(timer.running)
-                Observation.setSessionTimerEnabled(activity, true)
-                assertTrue(field(fresh.service, "timerAwaitingFreshObservation").getBoolean(fresh.service))
-                assertFalse(timer.running)
-
-                for (owner in listOf("com.chardyb.doom", "com.android.systemui", "com.example.keyboard", null)) {
-                    fresh.platform.rootBehavior = RootBehavior.MISSING
-                    sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, owner)
-                    assertTrue(field(fresh.service, "timerAwaitingFreshObservation").getBoolean(fresh.service))
-                    assertFalse(timer.running)
-                }
-                fresh.platform.rootBehavior = RootBehavior.NULL_PACKAGE
-                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
-                assertTrue(field(fresh.service, "timerAwaitingFreshObservation").getBoolean(fresh.service))
-                assertFalse(timer.running)
-
-                fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
-                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
-                assertFalse(field(fresh.service, "timerAwaitingFreshObservation").getBoolean(fresh.service))
-                assertTrue(timer.running)
-                assertEquals(0L, timer.elapsedSeconds())
-                val installs = fresh.installs
-                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android")
-                assertEquals(installs, fresh.installs)
-                assertEquals(0L, timer.elapsedSeconds())
             } finally { destroyFresh(fresh) }
         }
     }

@@ -2,7 +2,8 @@
 set -euo pipefail
 [[ "${GITHUB_ACTIONS:-}" == true ]] || exit 2
 cd "$(dirname "$0")/.."
-. scripts/ci-provenance.sh
+[[ "$(git rev-parse HEAD)" == "${CANDIDATE_SHA:?}" ]]
+[[ -z "$(git status --porcelain)" ]]
 mkdir -p evidence
 overlay_exit=0
 bash scripts/ci-overlay.sh || overlay_exit=$?

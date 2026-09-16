@@ -28,7 +28,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -141,17 +140,6 @@ private val Ink=Color(0xFF171B25); private val Paper=Color(0xFFF3E7CF); private 
                         Text("Allow diagnostic Instagram entry pause", color = Paper, modifier = Modifier.weight(1f))
                     }
                     Text("This consent is separate from the sanitized report consent and is the only persisted gate setting.", color = Paper, fontSize = 12.sp)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(
-                            checked = Observation.sessionTimerEnabled,
-                            onCheckedChange = { Observation.setSessionTimerEnabled(context, it) },
-                            modifier = Modifier.testTag("instagram_session_timer_switch").semantics {
-                                contentDescription = "Instagram session timer"
-                            }
-                        )
-                        Text("Instagram session timer", color = Paper, modifier = Modifier.padding(start = 12.dp).weight(1f))
-                    }
-                    Text(if (Observation.sessionTimerEnabled) "Enabled" else "Disabled", color = Jade)
                     Text("Entry gate state: ${Observation.entryGateState}", color = Jade, fontFamily = FontFamily.Monospace)
                     val traceAvailability = remember(traceRevision) {
                         RemovalTraceStore.process.availability()

@@ -8,14 +8,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
-/** Main-thread state. Only two consents and the timer-enabled preference are persisted. */
+/** Main-thread state. Only fresh consent is persisted; reports and UI state are process-local. */
 object Observation {
     private const val CONSENT_KEY = "sanitized_structural_report_v1"
     private const val ENTRY_GATE_CONSENT_KEY = "instagram_diagnostic_entry_gate_v1"
-    internal const val SESSION_TIMER_ENABLED_KEY = "instagram_session_timer_enabled_v1"
     var gateConsent by mutableStateOf(false)
-        private set
-    var sessionTimerEnabled by mutableStateOf(true)
         private set
     var entryGateState by mutableStateOf(EntryGateState.OUTSIDE)
         internal set
@@ -53,15 +50,7 @@ object Observation {
         val prefs = context.getSharedPreferences("consent", Context.MODE_PRIVATE)
         consent = prefs.getBoolean(CONSENT_KEY, false)
         gateConsent = prefs.getBoolean(ENTRY_GATE_CONSENT_KEY, false)
-        sessionTimerEnabled = prefs.getBoolean(SESSION_TIMER_ENABLED_KEY, true)
         if (!consent) clear()
-    }
-
-    fun setSessionTimerEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
-            .putBoolean(SESSION_TIMER_ENABLED_KEY, enabled).apply()
-        sessionTimerEnabled = enabled
-        DoomAccessibilityService.sessionTimerPreferenceChanged(enabled)
     }
 
     fun setGateConsent(context: Context, accepted: Boolean) {

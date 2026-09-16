@@ -59,7 +59,6 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          emulator-port: 5554
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
           disable-animations: true
           script: bash scripts/ci-supplemental.sh
@@ -79,8 +78,6 @@ jobs:
           path: |
             evidence/supplemental-context.txt
             evidence/supplemental-preparation.log
-            evidence/overlay-readiness.log
-            evidence/readiness-diagnostics/
             evidence/overlay-exit.txt
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/

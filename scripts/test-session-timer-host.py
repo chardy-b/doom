@@ -10,24 +10,9 @@ TIMER = (ROOT / "app/src/main/java/com/chardy/doom/InstagramSessionTimer.kt").re
 VIEW = (ROOT / "app/src/main/java/com/chardy/doom/InstagramTimerOverlayView.kt").read_text()
 
 class TimerContract(unittest.TestCase):
-    def test_timer_preference_dismissal_and_gate_authority_are_separate(self):
-        observation = (ROOT / "app/src/main/java/com/chardy/doom/Observation.kt").read_text()
-        self.assertIn("instagram_session_timer_enabled_v1", observation)
-        self.assertIn("timerDismissedThisVisit", SERVICE)
-        shared = SERVICE.split("private fun timerConsentAllowed()", 1)[1].split("private fun timerSpecificAllowed", 1)[0]
-        self.assertNotIn("sessionTimerEnabled", shared)
-        self.assertNotIn("timerDismissedThisVisit", shared)
-        self.assertNotIn("timerSafetyVeto", shared)
-
-    def test_gesture_is_real_view_wiring_not_dead_policy(self):
-        self.assertIn("scaledTouchSlop", VIEW)
-        self.assertIn("hypot(", VIEW)
-        self.assertIn("view.performClick()", VIEW)
-        self.assertIn("ACTION_CANCEL", VIEW)
-        self.assertIn("onDismiss = { dismissTimer(epoch) }", SERVICE)
     def test_cutout_reads_are_api_guarded_for_min_sdk_26(self):
         self.assertIn("@TargetApi(Build.VERSION_CODES.P)\n    private fun cutoutInsets", VIEW)
-        self.assertGreaterEqual(VIEW.count("if (Build.VERSION.SDK_INT >= 28) cutoutInsets("), 1)
+        self.assertGreaterEqual(VIEW.count("if (Build.VERSION.SDK_INT >= 28) cutoutInsets("), 2)
         self.assertNotIn("cutout?.safeInset", VIEW)
 
     def test_only_successful_terminal_episode_is_retired_in_event_path(self):
@@ -81,9 +66,8 @@ class TimerContract(unittest.TestCase):
 
     def test_no_private_content_or_new_capability(self):
         combined = TIMER + VIEW
-        for forbidden in ("contentDescription?", "viewIdResourceName", "SharedPreferences", "INTERNET"):
+        for forbidden in ("AccessibilityNodeInfo", "contentDescription?", "viewIdResourceName", "SharedPreferences", "INTERNET"):
             self.assertNotIn(forbidden, combined)
-        self.assertNotIn("rootInActiveWindow", combined)
 
 if __name__ == "__main__":
     spec = importlib.util.spec_from_file_location("host", ROOT / "scripts/test-entry-gate-host.py")

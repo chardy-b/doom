@@ -197,13 +197,8 @@ class FixtureReadinessTest(unittest.TestCase):
 
     def test_script_gates_device_mutation_and_collection_after_provenance(self):
         gate = SCRIPT.index('python3 scripts/fixture-readiness.py | tee "$out/diagnostics/readiness.log"')
-        for guard in ['. scripts/ci-provenance.sh', 'trap collect EXIT']:
+        for guard in ['${CANDIDATE_SHA:?Exact candidate required}', 'git status --porcelain', 'trap collect EXIT']:
             self.assertLess(SCRIPT.index(guard), gate)
-        provenance = (REPO / "scripts/ci-provenance.sh").read_text()
-        for guard in ['${CANDIDATE_SHA:?Exact candidate required}',
-                      'git diff --quiet --', 'git diff --cached --quiet --',
-                      'git ls-files --others --exclude-standard']:
-            self.assertIn(guard, provenance)
         self.assertLess(SCRIPT.index("device_ready=0"), SCRIPT.index("trap collect EXIT"))
         self.assertEqual(1, SCRIPT.count("device_ready=1"))
         # Standalone commands under set -e must both succeed before collection is enabled.

@@ -40,31 +40,16 @@ class StructuralDiagnosticUiTest {
     }
 
     @Before fun reset() = rule.runOnIdle {
-        Observation.setSessionTimerEnabled(rule.activity, true)
         RemovalTraceStore.process.clear()
         Observation.setGateConsent(rule.activity, false)
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
     }
     @After fun cleanup() = rule.runOnIdle {
-        Observation.setSessionTimerEnabled(rule.activity, true)
         RemovalTraceStore.process = RemovalTraceStore()
         Observation.setGateConsent(rule.activity, false)
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
-    }
-
-    @Test fun sessionTimerSwitchPersistsRealIndependentState() {
-        val timerSwitch = rule.onNodeWithTag("instagram_session_timer_switch")
-        timerSwitch.performScrollTo().assertIsDisplayed().assertIsOn().performClick().assertIsOff()
-        shown("Disabled")
-        rule.runOnIdle {
-            val prefs = rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
-            assertFalse(prefs.getBoolean(Observation.SESSION_TIMER_ENABLED_KEY, true))
-            assertEquals(3, prefs.all.size)
-        }
-        timerSwitch.performClick().assertIsOn()
-        shown("Enabled")
     }
 
     private fun tap(text: String) = rule.onNodeWithText(text).performScrollTo().performClick()
@@ -501,8 +486,7 @@ class StructuralDiagnosticUiTest {
             assertEquals(
                 mapOf(
                     "sanitized_structural_report_v1" to true,
-                    "instagram_diagnostic_entry_gate_v1" to false,
-                    "instagram_session_timer_enabled_v1" to true
+                    "instagram_diagnostic_entry_gate_v1" to false
                 ),
                 prefs.all
             )

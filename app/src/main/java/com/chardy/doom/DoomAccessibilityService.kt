@@ -13,7 +13,6 @@ import android.view.WindowManager
 import android.view.Gravity
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.view.inputmethod.InputMethodManager
 
 internal interface OverlayPlatform {
     fun isAttached(view: View): Boolean
@@ -42,10 +41,6 @@ class DoomAccessibilityService : AccessibilityService() {
         fun cancelEntryGate() {
             instance?.cancelAndBypass()
             if (instance == null) Observation.entryGateState = EntryGateState.OUTSIDE
-        }
-
-        fun sessionTimerPreferenceChanged(enabled: Boolean) {
-            instance?.onTimerPreferenceChanged(enabled)
         }
 
         fun disableObservation() {
@@ -87,13 +82,7 @@ class DoomAccessibilityService : AccessibilityService() {
     private var timerRetry: Runnable? = null
     private var timerWatchdog: Runnable? = null
     private var timerSessionEpoch = 0L
-    /** Irreversible process-lifetime removal-exhaustion veto; never reflects user preference. */
-    private var timerSafetyVeto = false
-    private var timerDismissedThisVisit = false
-    private var timerAwaitingFreshObservation = false
-    private var timerX = 0f
-    private var timerY = 0f
-    private var timerEdge = TimerEdge.RIGHT
+    private var timerDisabled = false
     private var terminalGateSucceeded = false
     private var timerEpoch = 0L
     private var timerClosing = false
@@ -147,6 +136,7 @@ class DoomAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         try {
+            if (timerDisabled) return
             val packageName = event?.packageName?.toString()
             val traceCapturing = RemovalTraceStore.process.isCapturing()
             val eventKind = if (traceCapturing) traceEventKind(event) else RemovalTraceEvent.NA
@@ -167,8 +157,6 @@ class DoomAccessibilityService : AccessibilityService() {
             if (packageName == applicationContext.packageName) {
                 traceRecord(RemovalTraceMark.EVENT_IGNORED_OWN, eventKind, owner)
                 if (isMainActivityReturn(event)) {
-                    timerDismissedThisVisit = false
-                    timerEdge = TimerEdge.RIGHT
                     endTimerSession()
                     mainActivityReturnObserved = true
                     // This also resets a completed/granted session when no overlay remains.
@@ -198,13 +186,6 @@ class DoomAccessibilityService : AccessibilityService() {
                     }
                     if (session != timerSessionEpoch) return
                     endTimerSession()
-                    // Dismissal is timer-owned: event attribution alone is never enough to end
-                    // the visit. System UI and keyboards commonly cover Instagram temporarily.
-                    if (timerDismissedThisVisit && confirmedOrdinaryForeignRoot()) {
-                        timerDismissedThisVisit = false
-                        timerEdge = TimerEdge.RIGHT
-                    }
-                    // Preserve the baseline gate reset for every non-Instagram/null event.
                     resetOutside(cause = RemovalTraceMark.EVENT_PACKAGE_RESET,
                         event = eventKind, owner = owner)
                     return
@@ -293,9 +274,6 @@ class DoomAccessibilityService : AccessibilityService() {
             if (Observation.gateConsent && entryGate.cooldownActive()) {
                 when (sampleTimerAuthority()) {
                     OverlayForegroundDecision.KEEP -> {
-                        // Preference re-enable is deliberately event driven. A settings call,
-                        // package attribution, or uncertain root cannot consume this latch.
-                        timerAwaitingFreshObservation = false
                         observeTimerInstagram()
                         attachTimerIfAllowed()
                     }
@@ -375,9 +353,7 @@ class DoomAccessibilityService : AccessibilityService() {
             }
 
             traceRecord(RemovalTraceMark.EVENT_OBSERVED, eventKind, owner, RemovalTraceRoot.IG)
-            if (timerAwaitingFreshObservation && Observation.sessionTimerEnabled &&
-                !timerDismissedThisVisit && !timerSafetyVeto) timerAwaitingFreshObservation = false
-            if (timerSpecificAllowed()) observeTimerInstagram()
+            observeTimerInstagram()
 
             collect(root)
             if (activeTicket == null) {
@@ -470,31 +446,11 @@ class DoomAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Shared gate authority: deliberately independent of timer preference/dismissal/veto. */
-    private fun timerConsentAllowed(): Boolean =
+    private fun timerConsentAllowed(): Boolean = !timerDisabled &&
         Observation.consent && Observation.gateConsent && Observation.connected
 
-    private fun timerSpecificAllowed(): Boolean = timerConsentAllowed() &&
-        Observation.sessionTimerEnabled && !timerDismissedThisVisit && !timerSafetyVeto
-
-    /** A dismissal-only root classification; never uses the accessibility event package. */
-    private fun confirmedOrdinaryForeignRoot(): Boolean {
-        val rootPackage = readPackageRoot { overlayPlatform.currentRoot() }.packageName ?: return false
-        return isOrdinaryForeignForTimerDismissal(
-            rootPackage, applicationContext.packageName, timerImePackages
-        )
-    }
-
-    /** Process-local platform metadata only; no UI content and no persistence. */
-    private val timerImePackages: Set<String> by lazy {
-        try {
-            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).inputMethodList
-                .mapTo(mutableSetOf()) { it.packageName }
-        } catch (_: RuntimeException) { emptySet() }
-    }
-
     private fun observeTimerInstagram() {
-        if (!timerSpecificAllowed() || timerAwaitingFreshObservation || (!sessionTimer.running && timerClosing)) return
+        if (timerDisabled || (!sessionTimer.running && timerClosing)) return
         if (!sessionTimer.running) {
             timerSessionEpoch++
             timerForeground.reset(-1L)
@@ -522,7 +478,7 @@ class DoomAccessibilityService : AccessibilityService() {
         sessionBoundaryCheck = object : Runnable {
             override fun run() {
                 if (sessionBoundaryCheck !== this || session != timerSessionEpoch) return
-                if (!timerSpecificAllowed()) {
+                if (!timerConsentAllowed()) {
                     endTimerSession()
                     resetOutside()
                     return
@@ -530,7 +486,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 val sample = readPackageRoot { overlayPlatform.currentRoot() }
                 if (sessionBoundaryCheck !== this || session != timerSessionEpoch) return
                 cancelSessionBoundaryCheck()
-                if (!timerSpecificAllowed() || sample.packageName != INSTAGRAM) {
+                if (!timerConsentAllowed() || sample.packageName != INSTAGRAM) {
                     endTimerSession()
                     resetOutside()
                 } else {
@@ -566,7 +522,7 @@ class DoomAccessibilityService : AccessibilityService() {
 
     private fun timerWindowCurrent(epoch: Long): Boolean = epoch == timerEpoch &&
         sessionTimer.running && !timerClosing && timerView != null && overlay == null &&
-        timerSpecificAllowed()
+        timerConsentAllowed()
 
     private fun timerWindowAuthorized(epoch: Long): Boolean {
         if (epoch != timerEpoch || timerClosing || timerView == null) return false
@@ -589,32 +545,18 @@ class DoomAccessibilityService : AccessibilityService() {
 
     private fun attachTimerIfAllowed() {
         if (!sessionTimer.running || timerView != null || timerClosing || overlay != null ||
-            !timerSpecificAllowed()) return
+            !timerConsentAllowed()) return
         if (!freshTimerAuthority()) return
         val epoch = ++timerEpoch
         val session = timerSessionEpoch
         var created: InstagramTimerOverlayUi? = null
         try {
-            created = InstagramTimerOverlayViewFactory.create(this, onToggle = {
+            created = InstagramTimerOverlayViewFactory.create(this) {
                 if (timerWindowAuthorized(epoch)) {
                     sessionTimer.toggle()
                     renderTimer(epoch, true)
-                    created?.root?.post { settleTimer(epoch, false) }
                 }
-            }, onDismiss = { dismissTimer(epoch) }, onMove = { dx, dy -> moveTimer(epoch, dx, dy) },
-                onSettle = { chooseEdge -> settleTimer(epoch, chooseEdge) })
-            val initialModel = sessionTimer.model(
-                try { !ValueAnimator.areAnimatorsEnabled() } catch (_: RuntimeException) { true }, true
-            )
-            if (initialModel == null) {
-                created.dispose()
-                return
             }
-            created.render(initialModel)
-            created.root.measure(
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-            )
             val manager = getSystemService(WINDOW_SERVICE) as WindowManager
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -623,15 +565,13 @@ class DoomAccessibilityService : AccessibilityService() {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             ).apply {
-                gravity = Gravity.TOP or Gravity.LEFT
-                val b = timerBounds(manager, null, created.root.measuredWidth.coerceAtLeast(56.dp()),
-                    created.root.measuredHeight.coerceAtLeast(56.dp()))
-                x = b.snapX(timerEdge); y = b.top + ((b.bottom - b.top) * .42f).toInt()
-                timerX = x.toFloat(); timerY = y.toFloat()
+                gravity = Gravity.TOP or Gravity.END
+                val margins = InstagramTimerOverlayViewFactory.safeMargins(this@DoomAccessibilityService, manager)
+                x = margins.first; y = margins.second
             }
             // Exact fresh attribution immediately before addView, never uncertainty.
             if (!freshTimerAuthority() || epoch != timerEpoch ||
-                session != timerSessionEpoch || !sessionTimer.running || !timerSpecificAllowed() ||
+                session != timerSessionEpoch || !sessionTimer.running || !timerConsentAllowed() ||
                 overlay != null || timerClosing) {
                 created.dispose(); return
             }
@@ -645,9 +585,6 @@ class DoomAccessibilityService : AccessibilityService() {
             if (epoch != timerEpoch || session != timerSessionEpoch) return
             if (!timerWindowCurrent(epoch)) { endTimerSession(); return }
             renderTimer(epoch, true)
-            created.root.addOnLayoutChangeListener { _, _, _, _, _, oldLeft, oldTop, oldRight, oldBottom ->
-                if (created.root.width != oldRight-oldLeft || created.root.height != oldBottom-oldTop) settleTimer(epoch, false)
-            }
             if (timerWindowCurrent(epoch)) {
                 cancelSessionBoundaryCheck()
                 timerWatchdog = object : Runnable {
@@ -683,64 +620,17 @@ class DoomAccessibilityService : AccessibilityService() {
             val view = timerView ?: return
             val params = timerParams ?: return
             if (!overlayPlatform.isAttached(view)) { endTimerSession(); return }
-            val bounds = timerBounds(manager, insets, view.measuredWidth.coerceAtLeast(56.dp()), view.measuredHeight.coerceAtLeast(56.dp()))
+            val margins = InstagramTimerOverlayViewFactory.safeMargins(this, manager, insets)
             if (session != timerSessionEpoch || !timerWindowCurrent(epoch)) return
-            timerX = bounds.snapX(timerEdge).toFloat(); timerY = bounds.clampY(timerY)
-            params.x = timerX.toInt(); params.y = timerY.toInt()
+            val hitTarget = (48 * resources.displayMetrics.density).toInt()
+            if (params.x == margins.first && params.y == margins.second &&
+                view.minimumWidth == hitTarget && view.minimumHeight == hitTarget) return
+            params.x = margins.first; params.y = margins.second
+            view.minimumWidth = hitTarget
+            view.minimumHeight = hitTarget
             overlayWindowUpdater(manager, view, params)
         } catch (_: RuntimeException) {
             if (epoch == timerEpoch && session == timerSessionEpoch) endTimerSession()
-        }
-    }
-
-    private fun Int.dp() = (this * resources.displayMetrics.density).toInt()
-
-    @Suppress("DEPRECATION")
-    private fun timerBounds(manager: WindowManager, insets: android.view.WindowInsets?, width: Int, height: Int): TimerBounds {
-        val frame = if (android.os.Build.VERSION.SDK_INT >= 30) manager.currentWindowMetrics.bounds
-            else android.graphics.Rect(0, 0, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
-        return InstagramTimerOverlayViewFactory.bounds(frame,
-            InstagramTimerOverlayViewFactory.safeInsets(manager, insets), width, height, resources.displayMetrics.density)
-    }
-
-    private fun moveTimer(epoch: Long, dx: Float, dy: Float) {
-        if (epoch != timerEpoch || timerClosing || timerView == null || !timerSpecificAllowed()) return
-        val manager=timerManager?:return; val view=timerView?:return; val params=timerParams?:return
-        val bounds=timerBounds(manager,view.rootWindowInsets,view.width.coerceAtLeast(56.dp()),view.height.coerceAtLeast(56.dp()))
-        timerX=bounds.clampX(timerX+dx); timerY=bounds.clampY(timerY+dy)
-        params.x=timerX.toInt(); params.y=timerY.toInt()
-        try { overlayWindowUpdater(manager,view,params) } catch (_:RuntimeException) { endTimerSession() }
-    }
-
-    private fun settleTimer(epoch: Long, chooseEdge: Boolean) {
-        if (epoch != timerEpoch || timerClosing || timerView == null) return
-        val manager=timerManager?:return; val view=timerView?:return; val params=timerParams?:return
-        val bounds=timerBounds(manager,view.rootWindowInsets,view.width.coerceAtLeast(56.dp()),view.height.coerceAtLeast(56.dp()))
-        if (chooseEdge) timerEdge = if (timerX <= (bounds.left+bounds.right)/2f) TimerEdge.LEFT else TimerEdge.RIGHT
-        timerX=bounds.snapX(timerEdge).toFloat(); timerY=bounds.clampY(timerY); params.x=timerX.toInt(); params.y=timerY.toInt()
-        try { overlayWindowUpdater(manager,view,params) } catch (_:RuntimeException) { endTimerSession() }
-    }
-
-    /** Destructive state is recorded before any foreground/root authority query. */
-    private fun dismissTimer(epoch: Long) {
-        if (epoch != timerEpoch || timerView == null || timerClosing) return
-        timerDismissedThisVisit=true
-        timerAwaitingFreshObservation=false
-        endTimerSession()
-    }
-
-    private fun onTimerPreferenceChanged(enabled: Boolean) {
-        if (!enabled) {
-            timerAwaitingFreshObservation=false
-            if (gateAfterTimerDetach != null || timerClosing && !timerTerminalReset) {
-                cancelSessionBoundaryCheck()
-                timerTick?.let(handler::removeCallbacks); timerTick = null
-                timerWatchdog?.let(handler::removeCallbacks); timerWatchdog = null
-                sessionTimer.endSession()
-            } else endTimerSession()
-        } else {
-            timerAwaitingFreshObservation=true
-            // The irreversible safety veto is intentionally untouched.
         }
     }
 
@@ -791,7 +681,7 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     private fun attemptTimerRemoval(epoch: Long) {
-        if (epoch != timerEpoch || !timerClosing) return
+        if (epoch != timerEpoch || !timerClosing || timerDisabled) return
         timerRetry?.let(handler::removeCallbacks); timerRetry = null
         val view = timerView ?: return finishTimerDetach(epoch)
         if (!overlayPlatform.isAttached(view)) return finishTimerDetach(epoch)
@@ -799,7 +689,7 @@ class DoomAccessibilityService : AccessibilityService() {
         if (!overlayPlatform.isAttached(view)) return finishTimerDetach(epoch)
         timerRemovalAttempts++
         if (timerRemovalAttempts >= MAX_REMOVAL_ATTEMPTS) {
-            timerSafetyVeto = true
+            timerDisabled = true
             endTimerSession()
             stopTimerCallbacks()
             Observation.connected = false
@@ -823,7 +713,7 @@ class DoomAccessibilityService : AccessibilityService() {
         timerClosing = false
         val pendingGate = gateAfterTimerDetach
         gateAfterTimerDetach = null
-        if (timerTerminalReset || timerSafetyVeto) {
+        if (timerTerminalReset || timerDisabled) {
             cancelledGateAfterTimerDetach?.let(::cancelCurrentGatingTicket)
             cancelledGateAfterTimerDetach = null
             publishGateState()
@@ -835,7 +725,7 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     private fun installOverlay(activeTicket: GateTicket) {
-        if (overlay != null || timerView != null || timerClosing) return
+        if (overlay != null || timerView != null || timerClosing || timerDisabled) return
         try {
             val token = callbackGuard.open(activeTicket)
             val ui = EntryGateOverlayViewFactory.create(
@@ -1419,7 +1309,7 @@ class DoomAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         endTimerSession()
-        timerSafetyVeto = true
+        timerDisabled = true
         stopTimerCallbacks()
         traceRecord(RemovalTraceMark.SERVICE_INTERRUPTED, action = RemovalTraceAction.BYPASS)
         requestSafetyCleanup(OverlayRemovalAction.BYPASS)
@@ -1444,7 +1334,7 @@ class DoomAccessibilityService : AccessibilityService() {
 
     private fun disconnect() {
         endTimerSession()
-        timerSafetyVeto = true
+        timerDisabled = true
         stopTimerCallbacks()
         cancelAndBypass()
         ticket = null

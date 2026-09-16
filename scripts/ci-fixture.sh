@@ -5,10 +5,15 @@ if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
   exit 2
 fi
 cd "$(dirname "$0")/.."
-. scripts/ci-provenance.sh
-# ci-provenance.sh guarantees and defines the 40-hex `sha` used in evidence paths.
+sha=$(git rev-parse HEAD)
+[[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+[[ "$sha" == "${CANDIDATE_SHA:?Exact candidate required}" ]]
 [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]]
 [[ "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]]
+if [[ -n "$(git status --porcelain)" ]]; then
+  printf '%s\n' 'Exact-SHA fixture evidence requires a clean checkout.' >&2
+  exit 2
+fi
 out="fixture-evidence/${sha}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 # A fresh artifact directory and device directory prevent stale evidence reuse.
 [[ ! -e "$out" ]]
