@@ -1,5 +1,10 @@
 # WIL-196 Codex Cloud preflight
 
+This is historical pre-repair evidence. It is bound to the source commit explicitly recorded
+below (`9beba5fa89e83f0ef0b483d75f043e40314c5467`), not to the later candidate
+`bcc2dae79be290938a9317d132408280c7baf968` or its uncommitted repair tree. It must not be read
+as Android build/lint evidence for the repaired candidate.
+
 Date: 2026-09-17 (UTC)
 
 ## Candidate identity and scope

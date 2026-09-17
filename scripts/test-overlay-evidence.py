@@ -75,6 +75,11 @@ class OverlayEvidenceManifestTest(unittest.TestCase):
         self.assertIn('assertEquals("Breathe in", actual.phaseLabel.text)', source)
         self.assertIn('assertEquals("Breathe out", actual.phaseLabel.text)', source)
 
+    def test_debug_capture_uses_the_fixed_action_destination(self):
+        source = (ROOT / "app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt").read_text()
+        self.assertIn("activity.startActivity(MainActivity.debugIntent(activity))", source)
+        self.assertIn('assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))', source)
+
     def test_missing_or_empty_apk_is_rejected(self):
         self.apk.unlink()
         with self.assertRaises(ValueError): self.manifest()

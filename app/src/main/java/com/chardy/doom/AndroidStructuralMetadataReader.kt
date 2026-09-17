@@ -52,6 +52,7 @@ internal class AndroidStructuralMetadataReader(
             actions = actionSnapshot.first,
             actionCount = actionSnapshot.second,
             actionsTruncated = actionSnapshot.third,
+            actionState = actionSnapshot.fourth,
             collection = collection,
             collectionItem = item,
             range = range,
@@ -77,11 +78,10 @@ internal class AndroidStructuralMetadataReader(
         }
     }
 
-    @SuppressLint("NewApi")
     private fun readBounds(node: AccessibilityNodeInfo, inWindow: Boolean): MetadataValue<BoundsPx> {
         val rect = Rect()
         return try {
-            if (inWindow) node.getBoundsInWindow(rect) else node.getBoundsInScreen(rect)
+            if (inWindow) readWindowBounds(node, rect) else node.getBoundsInScreen(rect)
             val bounds = BoundsPx(rect.left, rect.top, rect.right, rect.bottom)
             if (bounds.valid()) MetadataValue.Present(bounds)
             else MetadataValue.Unavailable(MetadataUnavailableReason.INVALID)
@@ -89,6 +89,9 @@ internal class AndroidStructuralMetadataReader(
             MetadataValue.Unavailable(MetadataUnavailableReason.READ_ERROR)
         }
     }
+
+    @SuppressLint("NewApi") // Called only after the API-34 ceiling/SDK guard in read().
+    private fun readWindowBounds(node: AccessibilityNodeInfo, rect: Rect) = node.getBoundsInWindow(rect)
 
     private fun normalize(value: MetadataValue<BoundsPx>, width: Int, height: Int): MetadataValue<NormalizedBounds> {
         if (width <= 0 || height <= 0) return MetadataValue.Unavailable(MetadataUnavailableReason.DIMENSIONS)
@@ -107,39 +110,46 @@ internal class AndroidStructuralMetadataReader(
 
     private fun elapsedOffset(start: Long): MetadataValue<Long> = try {
         val elapsed = nowMs() - start
-        if (elapsed in 0L..10_000L) MetadataValue.Present(elapsed)
-        else MetadataValue.Unavailable(MetadataUnavailableReason.READ_ERROR)
+        when {
+            elapsed < 0L -> MetadataValue.Unavailable(MetadataUnavailableReason.CLOCK_ROLLBACK)
+            elapsed <= 10_000L -> MetadataValue.Present(elapsed)
+            else -> MetadataValue.Unavailable(MetadataUnavailableReason.TIMEOUT)
+        }
     } catch (_: RuntimeException) {
         MetadataValue.Unavailable(MetadataUnavailableReason.READ_ERROR)
     }
 
-    private fun readActions(node: AccessibilityNodeInfo): Triple<List<StructuralAction>, Int, Boolean> =
-        if (!atLeast(21)) Triple(emptyList(), 0, false) else try {
+    private fun readActions(node: AccessibilityNodeInfo): Quadruple<List<StructuralAction>, Int, Boolean, MetadataValue<List<StructuralAction>>> =
+        if (!atLeast(21)) Quadruple(emptyList(), 0, false, MetadataValue.Unavailable(MetadataUnavailableReason.API)) else try {
             val list = node.actionList
             val truncated = list.size > SanitizedStructuralReport.MAX_ACTIONS
             val actions = list.take(SanitizedStructuralReport.MAX_ACTIONS)
                 .map { StructuralAction(it.id, StructuralActionNames.name(it.id)) }
                 .distinctBy { it.id }
                 .sortedBy { it.id }
-            Triple(actions, list.size, truncated)
+            Quadruple(actions, list.size, truncated, MetadataValue.Present(actions))
         } catch (_: RuntimeException) {
-            Triple(emptyList(), 0, true)
+            Quadruple(emptyList(), 0, true, MetadataValue.Unavailable(MetadataUnavailableReason.READ_ERROR))
         }
 
-    @SuppressLint("NewApi")
     private fun readCollection(node: AccessibilityNodeInfo): MetadataValue<StructuralCollection> =
         if (!atLeast(19)) MetadataValue.Unavailable(MetadataUnavailableReason.API) else try {
             val info = node.collectionInfo ?: return MetadataValue.Unavailable(MetadataUnavailableReason.ABSENT)
+            val itemCounts = readCollectionItemCounts(info)
             MetadataValue.Present(
                 StructuralCollection(
                     apiValue(19) { info.rowCount }, apiValue(19) { info.columnCount },
                     apiValue(19) { info.isHierarchical }, apiValue(21) { info.selectionMode },
-                    apiValue(35) { info.itemCount }, apiValue(35) { info.importantForAccessibilityItemCount },
+                    itemCounts.first, itemCounts.second,
                 ),
             )
         } catch (_: RuntimeException) {
             MetadataValue.Unavailable(MetadataUnavailableReason.READ_ERROR)
         }
+
+    @SuppressLint("NewApi") // Both getters are reached only when the requested ceiling is 35+.
+    private fun readCollectionItemCounts(info: AccessibilityNodeInfo.CollectionInfo): Pair<MetadataValue<Int>, MetadataValue<Int>> =
+        apiValue(35) { info.itemCount } to apiValue(35) { info.importantForAccessibilityItemCount }
 
     private fun readCollectionItem(node: AccessibilityNodeInfo): MetadataValue<StructuralCollectionItem> =
         if (!atLeast(19)) MetadataValue.Unavailable(MetadataUnavailableReason.API) else try {
@@ -174,7 +184,6 @@ internal class AndroidStructuralMetadataReader(
         MetadataValue.Unavailable(MetadataUnavailableReason.READ_ERROR)
     }
 
-    @SuppressLint("NewApi")
     private fun readFlags(node: AccessibilityNodeInfo): StructuralBooleanMasks {
         var known = 0L
         var value = 0L
@@ -186,7 +195,8 @@ internal class AndroidStructuralMetadataReader(
                 known = known or bit
                 if (getter()) value = value or bit
             } catch (_: RuntimeException) {
-                known = known and bit.inv()
+                // The field was eligible and attempted; keep it in known while marking the
+                // value unavailable through the parallel error mask.
                 error = error or bit
             }
         }
@@ -210,13 +220,18 @@ internal class AndroidStructuralMetadataReader(
         read(StructuralBooleanField.CONTEXT_CLICKABLE, atLeast(23)) { node.isContextClickable }
         read(StructuralBooleanField.IMPORTANT_FOR_ACCESSIBILITY, atLeast(24)) { node.isImportantForAccessibility }
         read(StructuralBooleanField.SHOWING_HINT_TEXT, atLeast(26)) { node.isShowingHintText }
+        readApi28Flags(node, ::read)
+        return StructuralBooleanMasks(known, value, error)
+    }
+
+    @SuppressLint("NewApi") // Each read below is additionally gated by the requested API ceiling.
+    private fun readApi28Flags(node: AccessibilityNodeInfo, read: (StructuralBooleanField, Boolean, () -> Boolean) -> Unit) {
         read(StructuralBooleanField.HEADING, atLeast(28)) { node.isHeading }
         read(StructuralBooleanField.SCREEN_READER_FOCUSABLE, atLeast(28)) { node.isScreenReaderFocusable }
         read(StructuralBooleanField.TEXT_ENTRY_KEY, atLeast(29)) { node.isTextEntryKey }
         read(StructuralBooleanField.TEXT_SELECTABLE, atLeast(33)) { node.isTextSelectable }
         read(StructuralBooleanField.ACCESSIBILITY_DATA_SENSITIVE, atLeast(34)) { node.isAccessibilityDataSensitive }
         read(StructuralBooleanField.GRANULAR_SCROLLING_SUPPORTED, atLeast(35)) { node.isGranularScrollingSupported }
-        return StructuralBooleanMasks(known, value, error)
     }
 
     private fun <T> apiValue(api: Int, read: () -> T?): MetadataValue<T> =
@@ -232,10 +247,11 @@ internal class AndroidStructuralMetadataReader(
 
     private fun atLeast(api: Int) = apiCeiling >= api
 
+    private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+
     companion object {
         const val INSTAGRAM_PACKAGE = "com.instagram.android"
 
-        @SuppressLint("NewApi")
         fun contextFromEvent(
             event: AccessibilityEvent,
             apiLevel: Int = Build.VERSION.SDK_INT,
@@ -245,10 +261,7 @@ internal class AndroidStructuralMetadataReader(
             startedElapsedMs: Long,
         ): StructuralCaptureContext {
             val ceiling = minOf(apiLevel, Build.VERSION.SDK_INT)
-            val windowChanges = if (ceiling >= 28 &&
-                event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
-            ) MetadataValue.Present(event.windowChanges)
-            else MetadataValue.Unavailable(MetadataUnavailableReason.NOT_SUBSCRIBED)
+            val windowChanges = readWindowChanges(event, ceiling)
             // The subscribed state/content events do not carry a meaningful action or movement
             // record. Keep the public fields closed and unavailable rather than treating zero as
             // a reported action.
@@ -273,5 +286,13 @@ internal class AndroidStructuralMetadataReader(
                 ),
             )
         }
+
+        @SuppressLint("NewApi") // The caller supplies the explicit requested/actual API ceiling.
+        private fun readWindowChanges(event: AccessibilityEvent, ceiling: Int): MetadataValue<Int> =
+            if (ceiling >= 28 && event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+                MetadataValue.Present(event.windowChanges)
+            } else {
+                MetadataValue.Unavailable(MetadataUnavailableReason.NOT_SUBSCRIBED)
+            }
     }
 }

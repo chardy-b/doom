@@ -34,11 +34,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_OPEN_DEBUG = "com.chardyb.doom.action.OPEN_DEBUG"
+        private const val DEBUG_REQUEST_CONSUMED = "debug_request_consumed"
 
         fun debugIntent(context: android.content.Context): Intent = Intent(context, MainActivity::class.java).apply {
             action = ACTION_OPEN_DEBUG
@@ -52,10 +55,12 @@ class MainActivity : ComponentActivity() {
 
     private var debugRequestSequence by mutableLongStateOf(0L)
     private var debugRequestPending = false
+    private var debugRequestConsumed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (isDebugIntent(intent)) {
+        debugRequestConsumed = savedInstanceState?.getBoolean(DEBUG_REQUEST_CONSUMED, false) == true
+        if (isDebugIntent(intent) && !debugRequestConsumed) {
             debugRequestSequence = 1L
             debugRequestPending = true
         }
@@ -82,12 +87,22 @@ class MainActivity : ComponentActivity() {
         if (isDebugIntent(intent)) {
             debugRequestSequence++
             debugRequestPending = true
+            debugRequestConsumed = false
+        } else {
+            // A replaced/malformed intent cannot replay a previously pending destination.
+            debugRequestPending = false
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(DEBUG_REQUEST_CONSUMED, debugRequestConsumed)
+        super.onSaveInstanceState(outState)
     }
 
     internal fun consumeDebugRequest(sequence: Long): Boolean {
         if (!debugRequestPending || sequence != debugRequestSequence) return false
         debugRequestPending = false
+        debugRequestConsumed = true
         setIntent(Intent(intent).apply { action = null })
         return true
     }
@@ -136,6 +151,8 @@ fun DoomScreen() {
     var reduceMotion by rememberSaveable { mutableStateOf(false) }
     var traceFeedback by remember { mutableStateOf<String?>(null) }
     var traceRevision by remember { mutableLongStateOf(0L) }
+    var debugReportAnchorOffset by remember { mutableIntStateOf(-1) }
+    var debugScrollRequest by remember { mutableLongStateOf(0L) }
     val homeScroll = rememberScrollState()
     val debugScroll = rememberScrollState()
     val debugRequest = activity?.currentDebugRequestSequence() ?: 0L
@@ -169,7 +186,15 @@ fun DoomScreen() {
             productPreview = false
             leaveDemo()
             Observation.hideReport()
-            debugScroll.scrollTo(0)
+            debugScrollRequest = debugRequest
+        }
+    }
+
+    LaunchedEffect(debugScrollRequest, debugReportAnchorOffset) {
+        if (debugScrollRequest > 0L && destination == Destination.DEBUG && debugReportAnchorOffset >= 0) {
+            debugScroll.scrollTo(
+                (debugScroll.value + debugReportAnchorOffset).coerceIn(0, debugScroll.maxValue)
+            )
         }
     }
 
@@ -270,6 +295,7 @@ fun DoomScreen() {
                             { traceFeedback = it },
                             remaining,
                             systemStatic,
+                            { coordinates -> debugReportAnchorOffset = coordinates.positionInParent().y.toInt() },
                         )
                     }
                     Spacer(Modifier.height(48.dp))
@@ -423,6 +449,7 @@ private fun Debug(
     setFeedback: (String) -> Unit,
     remaining: Long,
     systemStatic: Boolean,
+    onReportAnchorPositioned: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit,
 ) {
     val context = LocalContext.current
     Frame {
@@ -487,10 +514,15 @@ private fun Debug(
         Text("This consent is separate from the sanitized report consent. It does not protect, block, or control Instagram.", color = Paper)
         Text("Entry gate state: ${Observation.entryGateState}", color = Gold)
         Text("An admitted reminder uses the selected duration snapshot; terminal successes use the admitted cooldown snapshot.", color = Orange)
-        Text("SANITIZED STRUCTURAL REPORT", color = Gold)
+        Text(
+            "SANITIZED STRUCTURAL REPORT",
+            color = Gold,
+            modifier = Modifier.testTag("debug_report_controls").onGloballyPositioned(onReportAnchorPositioned),
+        )
         Text("Structure changes with scrolling and content. The sanitized report is separate from a diagnostic shadow prediction; neither blocks, protects, or controls actions; the optional entry pause is default-off and fail-open.", color = Paper)
-        Text("Optional accessibility access can expose screen content to an app. Doom receives package identifiers for window events from all apps and, during a visible gate, reads only one active root's package attribution to decide whether the gate remains in Instagram; it reads no foreign window tree. With fresh v2 consent, Doom traverses only Instagram: at most 128 nodes breadth-first through depth 8. It keeps sanitized resource/class identifiers, Doom-local parent and sibling indexes, bounded screen/window geometry, normalized screen bounds, sibling-relative drawing order, fixed action names, collection/item/range tuples, named numeric fields and closed boolean masks. A public unique ID is kept only when it equals an already accepted resource ID; other values become u:free_form. Unsupported, absent, invalid, unsafe and capped values use closed u:* markers. Reports have at most 64 tokens and 8,192 ASCII characters/bytes, emit whole rows and mark omitted structure truncated.", color = Paper)
-        Text("Reports expose static Instagram resource names and class identifiers as structural metadata only, never UI text/content/account values. No text, descriptions, hints, errors, pane or tooltip titles, notification or account content, raw trees, framework objects, arbitrary/free-form IDs or private screenshots are collected. Bounds and named scalar metadata are the narrow v2 exception; at most 64 unique tokens and 8,192 ASCII characters/bytes are retained, and metadata never selects targets or drives actions. Fresh v2 consent is required; one report stays in process memory with no file persistence, logging, network, upload or automatic export.", color = Paper)
+        Text("Optional accessibility access can expose screen content to an app. Doom receives package identifiers for window events from all apps and, during a visible gate, reads only one active root's package attribution to decide whether the gate remains in Instagram; it reads no foreign window tree. With fresh v2 report consent and a connected observer, even when the optional gate is off, Doom traverses only Instagram: at most 128 nodes breadth-first through depth 8. It keeps sanitized resource/class identifiers, Doom-local parent and sibling indexes, bounded screen/window geometry, normalized screen bounds, sibling-relative drawing order, fixed action names, collection/item/range tuples, named numeric fields and closed boolean masks. A public unique ID is kept only when it equals an already accepted resource ID; other values become u:free_form. Unsupported, absent, invalid, unsafe and capped values use closed u:* markers. Reports have at most 64 tokens and 8,192 final ASCII bytes, emit whole rows and mark omitted structure truncated.", color = Paper)
+        Text("Reports expose static Instagram resource names and class identifiers as structural metadata only, never UI text/content/account values. No text, descriptions, hints, errors, pane or tooltip titles, notification or account content, raw trees, framework objects, arbitrary/free-form IDs or private screenshots are collected. Bounds and named scalar metadata are the narrow v2 exception; at most 64 unique tokens and 8,192 final ASCII bytes, including the complete header, are retained. Rich rows can reduce practical capacity below 128, and metadata never selects targets or drives actions. Fresh v2 report consent is required; one report stays in process memory with no file persistence, logging, network, upload or automatic export.", color = Paper)
+        Text("The 8,192-byte cap includes the final header and comma-separated truncation reasons. Rich rows can make practical capacity smaller than 128 nodes; only complete rows are emitted.", color = Orange)
         Text("Clear removes the report and reveal/copy state; a later Instagram event may create a new hidden report. Returning directly to Doom preserves the latest hidden report for local review. Other foreign apps, revocation, observer stop, disconnect, interruption, reconnect and process death clear that state. A delayed Instagram event with a wrong or missing root invalidates it.", color = Paper)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(

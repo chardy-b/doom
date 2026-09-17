@@ -12,6 +12,18 @@ class StructuralMetadataTest {
         }
     }
 
+    @Test fun booleanGetterErrorKeepsKnownBitAndSerializesAsError() {
+        val bit = 1L shl StructuralBooleanField.CLICKABLE.ordinal
+        val masks = StructuralBooleanMasks(known = bit, error = bit)
+        assertEquals(bit, masks.known)
+        assertEquals(bit, masks.error)
+        assertEquals(0L, masks.value)
+        val report = SanitizedStructuralReport.Builder().apply {
+            add(StructuralNodeMetadata(position = StructuralNodePosition(), resourceId = null, className = null, flags = masks))
+        }.build()!!
+        assertTrue(report.text.contains("flags=$bit,0,$bit"))
+    }
+
     @Test fun syntheticContextHasExplicitEventAndDimensions() {
         val context = StructuralCaptureContext.synthetic(apiLevel = 26)
         assertEquals(26, context.apiLevel)

@@ -6,6 +6,8 @@ internal enum class MetadataUnavailableReason(val wire: String) {
     ABSENT("absent"),
     INVALID("invalid"),
     READ_ERROR("read_error"),
+    CLOCK_ROLLBACK("clock_rollback"),
+    TIMEOUT("timeout"),
     NOT_APPLICABLE("not_applicable"),
     NOT_SUBSCRIBED("not_subscribed"),
     ROOT("root"),
@@ -140,6 +142,8 @@ internal data class StructuralNodeMetadata(
     val actions: List<StructuralAction> = emptyList(),
     val actionCount: Int = 0,
     val actionsTruncated: Boolean = false,
+    /** Present distinguishes an empty action list from a failed action-list read. */
+    val actionState: MetadataValue<List<StructuralAction>> = MetadataValue.Present(actions),
     val collection: MetadataValue<StructuralCollection> = MetadataValue.Unavailable(MetadataUnavailableReason.ABSENT),
     val collectionItem: MetadataValue<StructuralCollectionItem> = MetadataValue.Unavailable(MetadataUnavailableReason.ABSENT),
     val range: MetadataValue<StructuralRange> = MetadataValue.Unavailable(MetadataUnavailableReason.ABSENT),
@@ -156,6 +160,7 @@ internal data class StructuralNodeMetadata(
         require(reportedChildCount in 0..SanitizedStructuralReport.MAX_CHILDREN)
         require(actions.size <= SanitizedStructuralReport.MAX_ACTIONS)
         require(actionCount >= 0)
+        require(actionState is MetadataValue.Unavailable || actionState is MetadataValue.Present)
     }
 }
 

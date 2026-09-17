@@ -28,6 +28,40 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("if ((overlay != null || sessionTimer.running) &&", preflight)
         self.assertNotIn("overlay != null || ticket != null", preflight)
 
+    def test_report_only_collection_requires_report_consent_and_connection_not_gate_consent(self):
+        event = SERVICE.split("// Suppression is checked", 1)[1].split('@Suppress', 1)[0]
+        denial = event.split("// Report-only collection", 1)[1].split(
+            "// A successful Debug departure", 1
+        )[0]
+        self.assertIn("if (!Observation.consent || !Observation.connected)", denial)
+        self.assertNotIn("!Observation.gateConsent", denial)
+        self.assertIn("val activeTicket = if (Observation.gateConsent)", event)
+        self.assertIn("collect(root, captureContext)", event)
+
+    def test_report_only_regression_is_an_actual_accessibility_event_test(self):
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        body = tests.split("@Test fun reportOnlyEventCollectsWithGateConsentOff", 1)[1].split("@Test", 1)[0]
+        self.assertIn("service.onAccessibilityEvent(event)", tests)
+        self.assertIn("Observation.setGateConsent(rule.activity, false)", body)
+        self.assertIn("Observation.connected = true", body)
+        self.assertIn("assertNotNull(Observation.report)", body)
+
+    def test_debug_callback_rechecks_all_authority_after_detachment_and_launches_once(self):
+        debug = SERVICE.split("private fun requestDebugReport", 1)[1].split(
+            "private fun requestOverlayRemoval", 1
+        )[0]
+        self.assertIn("overlayToken !== token", debug)
+        self.assertIn("!Observation.gateConsent", debug)
+        confirmed = SERVICE.split("OverlayRemovalAction.OPEN_DEBUG", 1)[1].split(
+            "OverlayRemovalAction.NAVIGATE_MESSAGES", 1
+        )[0]
+        for required in ("Observation.consent", "Observation.gateConsent", "Observation.connected",
+                         "Observation.hideReport()", "debugDepartureTicket = departureTicket",
+                         "overlayPlatform.openDebug()", "callbackGuard.consumeDetached(detachedToken)"):
+            self.assertIn(required, confirmed)
+        self.assertLess(confirmed.index("Observation.connected"), confirmed.index("currentRoot()"))
+        self.assertLess(confirmed.index("Observation.hideReport()"), confirmed.index("openDebug()"))
+
     def test_closing_or_stale_visible_event_keeps_the_old_safety_veto(self):
         body = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
         branch = body.split("if (packageName != INSTAGRAM)", 1)[1]

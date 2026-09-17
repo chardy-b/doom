@@ -88,10 +88,16 @@ internal object BreathingVisuals {
             val cellCenterY = centerY + logicalY * pitch
             val rawLeft = cellCenterX - pitch / 2f
             val rawTop = cellCenterY - pitch / 2f
-            val clippedLeft = max(rawLeft, leftEdge)
-            val clippedTop = max(rawTop, topEdge)
-            val clippedRight = min(cellCenterX + pitch / 2f, rightEdge)
-            val clippedBottom = min(cellCenterY + pitch / 2f, bottomEdge)
+            val rawRight = cellCenterX + pitch / 2f
+            val rawBottom = cellCenterY + pitch / 2f
+            // Keep the outer envelope exact while leaving proportional gaps between interior
+            // pixels. A fixed two-pixel gap made this lattice read as a solid diamond on small
+            // and high-density displays alike.
+            val gapHalf = pitch * 0.07f
+            val clippedLeft = if (rawLeft <= leftEdge) max(rawLeft, leftEdge) else rawLeft + gapHalf
+            val clippedTop = if (rawTop <= topEdge) max(rawTop, topEdge) else rawTop + gapHalf
+            val clippedRight = if (rawRight >= rightEdge) min(rawRight, rightEdge) else rawRight - gapHalf
+            val clippedBottom = if (rawBottom >= bottomEdge) min(rawBottom, bottomEdge) else rawBottom - gapHalf
             if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) continue
 
             val radial = abs(cellCenterX - centerX) / halfWidth + abs(cellCenterY - centerY) / halfHeight
@@ -102,13 +108,18 @@ internal object BreathingVisuals {
             val center = logicalX == 0 && logicalY == 0
             // A faint, deterministic gold seed keeps the minimum 20% bloom visibly bounded;
             // it fades continuously as the inhale grows instead of popping a new outer ring.
-            val seed = 0.12f * (1f - bloom)
-            val alpha = if (center) 1f else (max(delayed, seed) * edge).coerceIn(0f, 1f)
-            if (!center && alpha <= 0.0001f) continue
+            val seed = 0.30f * (1f - bloom)
+            val alpha = if (center) 1f else {
+                // Every visible pixel has a meaningful floor. The edge mask still decides
+                // whether the pixel belongs to the diamond, so the floor cannot fill a solid
+                // rectangular/diamond silhouette outside the bloom.
+                if (edge <= 0f) continue
+                max(0.25f, max(delayed, seed) * edge).coerceIn(0f, 1f)
+            }
             val role = if (center) BloomColorRole.PAPER else colorRole(radial)
             cells += BloomCell(
                 clippedLeft, clippedTop, clippedRight, clippedBottom, alpha, role,
-                colorFor(role, radial), gridX, gridY,
+                colorAt(radial), gridX, gridY,
             )
         }
         return cells
@@ -134,11 +145,18 @@ internal object BreathingVisuals {
         else -> BloomColorRole.AUBERGINE
     }
 
+    /** Actual RGBA ramp used by both renderers; kept visible to pure color-neighbor tests. */
+    internal fun colorAt(radial: Float): Int = colorFor(colorRole(radial), radial)
+
     private fun colorFor(role: BloomColorRole, radial: Float): Int = when (role) {
         BloomColorRole.PAPER -> PAPER
-        BloomColorRole.GOLD -> GOLD
-        BloomColorRole.BURNT_ORANGE -> mix(GOLD, ORANGE, (radial / 0.34f).coerceIn(0f, 1f))
-        BloomColorRole.AUBERGINE -> mix(ORANGE, AUBERGINE, ((radial - 0.68f) / 0.40f).coerceIn(0f, 1f))
+        BloomColorRole.GOLD,
+        BloomColorRole.BURNT_ORANGE,
+        BloomColorRole.AUBERGINE -> when {
+            radial < 0.34f -> mix(GOLD, ORANGE, radial / 0.34f)
+            radial < 0.68f -> mix(ORANGE, AUBERGINE, (radial - 0.34f) / 0.34f)
+            else -> AUBERGINE
+        }
     }
 
     private fun mix(first: Int, second: Int, amount: Float): Int {

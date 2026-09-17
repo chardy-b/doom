@@ -59,4 +59,25 @@ class StructuralMetadataApiTest {
             node.recycle()
         }
     }
+
+    @Test fun clockRollbackInvalidatesTheOffsetWhileTimeoutIsTypedAndBounded() {
+        val node = AccessibilityNodeInfo.obtain().apply {
+            packageName = "com.instagram.android"
+            viewIdResourceName = "com.instagram.android:id/clock_test"
+        }
+        try {
+            val rollback = AndroidStructuralMetadataReader(nowMs = { 999L }).read(
+                node, StructuralNodePosition(), StructuralCaptureContext.synthetic(startedElapsedMs = 1_000L),
+            )
+            assertEquals(MetadataUnavailableReason.CLOCK_ROLLBACK,
+                (rollback.elapsedOffsetMs as MetadataValue.Unavailable).reason)
+            val timeout = AndroidStructuralMetadataReader(nowMs = { 11_001L }).read(
+                node, StructuralNodePosition(), StructuralCaptureContext.synthetic(startedElapsedMs = 1_000L),
+            )
+            assertEquals(MetadataUnavailableReason.TIMEOUT,
+                (timeout.elapsedOffsetMs as MetadataValue.Unavailable).reason)
+        } finally {
+            node.recycle()
+        }
+    }
 }

@@ -75,6 +75,8 @@ class EntryGateServiceActionTest {
         @Volatile var homeCalls = 0
         @Volatile var homeResult = true
         @Volatile var debugCalls = 0
+        @Volatile var debugResult = true
+        @Volatile var debugThrows = false
         val platformCalls = Collections.synchronizedList(mutableListOf<String>())
         lateinit var revokeInsideRoot: () -> Unit
         var rootReadHook: () -> Unit = {}
@@ -161,7 +163,8 @@ class EntryGateServiceActionTest {
         override fun openDebug(): Boolean {
             platformCalls += "openDebug"
             debugCalls++
-            return true
+            if (debugThrows) throw IllegalStateException("debug launch unavailable")
+            return debugResult
         }
 
         lateinit var stateReader: () -> EntryGateState
@@ -173,6 +176,7 @@ class EntryGateServiceActionTest {
         val ticket: GateTicket,
         val token: OverlayCallbackToken,
         val view: View,
+        val ui: EntryGateOverlayUi,
         val activity: MainActivity,
     )
 
@@ -245,6 +249,96 @@ class EntryGateServiceActionTest {
             fixture.platform.platformCalls.indexOf("currentRoot"))
         assertTrue(fixture.platform.platformCalls.indexOf("currentRoot") <
             fixture.platform.platformCalls.indexOf("openDebug"))
+    }
+
+    @Test fun actualDebugButtonCallbackDetachesHidesPreservesAndLaunchesOnce() {
+        val fixture = fixture()
+        val report = SanitizedStructuralReport.Builder().apply {
+            add(StructuralNodeMetadata(
+                position = StructuralNodePosition(),
+                resourceId = "com.instagram.android:id/debug_callback_report",
+                className = "View",
+            ))
+        }.build()!!
+        rule.scenario.onActivity {
+            Observation.record(report)
+            invoke(fixture.service, "observeTimerInstagram")
+            assertTrue((field(fixture.service, "sessionTimer").get(fixture.service) as InstagramSessionTimer).running)
+            assertTrue(fixture.ui.debugReport.performClick())
+        }
+        waitFor { fixture.platform.debugCalls == 1 }
+        assertSame(report, Observation.report)
+        assertFalse(Observation.revealed)
+        assertFalse(Observation.copied)
+        assertFalse((field(fixture.service, "sessionTimer").get(fixture.service) as InstagramSessionTimer).running)
+        assertFalse(gate(fixture.service).cooldownActive())
+        rule.scenario.onActivity { assertFalse(fixture.ui.debugReport.performClick()) }
+        assertEquals(1, fixture.platform.debugCalls)
+    }
+
+    @Test fun actualDebugButtonRejectsMissingForeignAndThrowingRoots() {
+        listOf(
+            RootBehavior.MISSING,
+            RootBehavior.NULL_PACKAGE,
+            RootBehavior.FOREIGN,
+            RootBehavior.THROW,
+            RootBehavior.PACKAGE_THROW,
+        ).forEach { behavior ->
+            val fixture = fixture(rootBehavior = behavior)
+            rule.scenario.onActivity { assertTrue(fixture.ui.debugReport.performClick()) }
+            instrumentation.waitForIdleSync()
+            assertEquals("root=$behavior", 0, fixture.platform.debugCalls)
+            assertFalse(gate(fixture.service).cooldownActive())
+            assertFalse(Observation.revealed)
+        }
+    }
+
+    @Test fun actualDebugButtonRejectsStaleOrMissingAuthorityBeforeRemoval() {
+        val cases = listOf("overlay", "ticket", "token", "connection")
+        cases.forEach { missing ->
+            val fixture = fixture()
+            rule.scenario.onActivity {
+                when (missing) {
+                    "overlay" -> field(fixture.service, "overlay").set(fixture.service, null)
+                    "ticket" -> field(fixture.service, "ticket").set(fixture.service, null)
+                    "token" -> {
+                        val guard = field(fixture.service, "callbackGuard").get(fixture.service) as OverlayCallbackGuard
+                        field(fixture.service, "overlayToken").set(fixture.service, guard.open(fixture.ticket))
+                    }
+                    "connection" -> Observation.connected = false
+                }
+                assertTrue(fixture.ui.debugReport.performClick())
+            }
+            instrumentation.waitForIdleSync()
+            assertEquals("authority=$missing", 0, fixture.platform.debugCalls)
+            assertTrue(fixture.platform.attached)
+        }
+    }
+
+    @Test fun falseOrThrowingDebugLaunchPreservesTheDetachedEpisodeWithoutRetry() {
+        listOf(false, true).forEach { throws ->
+            val fixture = fixture()
+            val report = SanitizedStructuralReport.Builder().apply {
+                add(StructuralNodeMetadata(
+                    position = StructuralNodePosition(),
+                    resourceId = "com.instagram.android:id/debug_launch_result",
+                    className = "View",
+                ))
+            }.build()!!
+            rule.scenario.onActivity {
+                Observation.record(report)
+                fixture.platform.debugResult = !throws
+                fixture.platform.debugThrows = throws
+                assertTrue(fixture.ui.debugReport.performClick())
+            }
+            waitFor { fixture.platform.debugCalls == 1 }
+            assertSame(report, Observation.report)
+            assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+            assertFalse(gate(fixture.service).cooldownActive())
+            assertEquals(1, fixture.platform.debugCalls)
+            rule.scenario.onActivity { sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android") }
+            assertEquals(1, fixture.platform.debugCalls)
+        }
     }
 
     @Test fun disablingRemindersRemovesLiveOverlayWithoutCooldownCredit() {
@@ -2256,7 +2350,11 @@ class EntryGateServiceActionTest {
             val guard = field(service, "callbackGuard").get(service) as OverlayCallbackGuard
             val token = guard.open(ticket)
             field(service, "overlayToken").set(service, token)
-            result = Fixture(service, platform, ticket, token, view, activity)
+            val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {
+                invoke(service, "requestDebugReport", token)
+            })
+            field(service, "overlayUi").set(service, ui)
+            result = Fixture(service, platform, ticket, token, view, ui, activity)
         }
         instrumentation.waitForIdleSync()
         return result

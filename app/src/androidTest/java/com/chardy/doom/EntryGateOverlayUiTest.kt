@@ -41,7 +41,7 @@ class EntryGateOverlayUiTest {
     @Test @SupplementalEvidence fun nativeOverlayIsDoomStyledSemanticAndTargeted() {
         var ui: EntryGateOverlayUi? = null
         rule.scenario.onActivity { activity ->
-            ui = EntryGateOverlayViewFactory.create(activity, {}, {})
+            ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
             val content = activity.findViewById<ViewGroup>(android.R.id.content)
             content.addView(ui!!.root, ViewGroup.LayoutParams(-1, -1))
             ui!!.render(EntryGateOverlayModel.from(10_000, 10_000, false))
@@ -78,7 +78,7 @@ class EntryGateOverlayUiTest {
                 val density = context.resources.displayMetrics.density
                 val width = (widthDp * density).toInt()
                 val height = (heightDp * density).toInt()
-                val ui = EntryGateOverlayViewFactory.create(context, {}, {})
+                val ui = EntryGateOverlayViewFactory.create(context, {}, {}, {})
                 ui.root.measure(
                     View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
@@ -203,7 +203,10 @@ class EntryGateOverlayUiTest {
             assertTopResumed()
             waitForDraw(rule.scenario)
             capture("01-home")
-            device.findObject(By.text("Debug")).click()
+            // Exercise the same explicit fixed-action destination used by the detached
+            // accessibility overlay; the nav bar is not the Debug-entry evidence path.
+            rule.scenario.onActivity { activity -> activity.startActivity(MainActivity.debugIntent(activity)) }
+            assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))
             assertTrue(swipeUntilVisible("DOOM-OWNED QUICK DEMO"))
             val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
             assertTrue(swipeUntilVisible(footer))
@@ -216,7 +219,7 @@ class EntryGateOverlayUiTest {
 
     private fun mount(assign: (EntryGateOverlayUi) -> Unit) {
         rule.scenario.onActivity { activity ->
-            val ui = EntryGateOverlayViewFactory.create(activity, {}, {})
+            val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
             activity.findViewById<ViewGroup>(android.R.id.content)
                 .addView(ui.root, ViewGroup.LayoutParams(-1, -1))
             assign(ui)

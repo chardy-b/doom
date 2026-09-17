@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.test.core.app.ActivityScenario
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import org.junit.After
@@ -52,6 +53,58 @@ class StructuralDiagnosticUiTest {
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
             intent.flags and (Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
         )
+    }
+
+    @Test fun coldDebugIntentConsumesOnceAndTargetsReportControls() {
+        val scenario = ActivityScenario.launch<MainActivity>(MainActivity.debugIntent(rule.activity))
+        try {
+            scenario.onActivity { activity ->
+                assertTrue(activity.currentDebugRequestSequence() > 0L)
+            }
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            scenario.onActivity { activity ->
+                val sequence = activity.currentDebugRequestSequence()
+                assertFalse(activity.consumeDebugRequest(sequence))
+            }
+        } finally {
+            scenario.close()
+        }
+        // The rule's warm Activity remains the test surface; the fixed action's UI route is
+        // verified separately below without using a private report or an Activity authority.
+        rule.runOnIdle { rule.activity.onNewIntent(MainActivity.debugIntent(rule.activity)) }
+        rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test fun warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay() {
+        seed()
+        rule.runOnIdle {
+            val before = rule.activity.currentDebugRequestSequence()
+            rule.activity.onNewIntent(MainActivity.debugIntent(rule.activity))
+            rule.activity.onNewIntent(MainActivity.debugIntent(rule.activity))
+            assertEquals(before + 2L, rule.activity.currentDebugRequestSequence())
+            rule.activity.onNewIntent(MainActivity.debugIntent(rule.activity).putExtra("unexpected", 1))
+        }
+        rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().assertIsDisplayed()
+        rule.runOnIdle { assertTrue(Observation.report != null) }
+    }
+
+    @Test fun previewCancelAndConsumedDebugRequestSurviveRotationWithoutPersistingReport() {
+        rule.onNodeWithText("Home").performClick()
+        rule.onNodeWithText("Preview breathing reminder").performClick()
+        rule.runOnIdle { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        rule.onNodeWithText("Preview breathing reminder").assertIsDisplayed()
+        seed()
+        rule.runOnIdle {
+            rule.activity.onNewIntent(MainActivity.debugIntent(rule.activity))
+        }
+        rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().performClick()
+        rule.runOnIdle { assertTrue(Observation.revealed) }
+        val before = rule.runOnIdle { Observation.report }
+        rule.activityRule.scenario.recreate()
+        rule.runOnIdle {
+            assertSame(before, Observation.report)
+            assertTrue(Observation.revealed)
+        }
     }
 
     @Before fun reset() = rule.runOnIdle {
@@ -214,6 +267,38 @@ class StructuralDiagnosticUiTest {
         rule.onNodeWithText("similarity", substring = true).assertDoesNotExist()
     }
 
+    @Test fun reportOnlyEventCollectsWithGateConsentOff() {
+        val service = DoomAccessibilityService()
+        rule.runOnIdle {
+            ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+                .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
+            Observation.accept(rule.activity, true)
+            Observation.setGateConsent(rule.activity, false)
+            Observation.connected = true
+            val root = AccessibilityNodeInfo.obtain().apply {
+                packageName = "com.instagram.android"
+                viewIdResourceName = "com.instagram.android:id/report_only_event_root"
+                className = "android.view.View"
+            }
+            val platform = object : OverlayPlatform {
+                override fun isAttached(view: android.view.View) = false
+                override fun removeImmediate(manager: android.view.WindowManager, view: android.view.View) = Unit
+                override fun currentRoot() = root
+                override fun eventRoot() = root
+                override fun routeMessages(root: AccessibilityNodeInfo) = MessagesRouteResult.FAILED
+                override fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
+                override fun performHome() = false
+                override fun openDebug() = false
+            }
+            DoomAccessibilityService::class.java.getDeclaredField("overlayPlatform")
+                .apply { isAccessible = true }.set(service, platform)
+            sendEvent(service, "com.instagram.android")
+            assertFalse(Observation.gateConsent)
+            assertNotNull(Observation.report)
+            assertEquals(EntryGateState.OUTSIDE, Observation.entryGateState)
+        }
+    }
+
     @Test fun entryGateConsentIsSeparateDefaultOffAndRevocable() {
         val gateConsent = rule.onNodeWithContentDescription("Diagnostic Instagram entry gate opt in")
         gateConsent.performScrollTo().assertIsOff()
@@ -338,7 +423,7 @@ class StructuralDiagnosticUiTest {
             assertEquals(OverlayCopyResult.UNAVAILABLE, Observation.copyCurrentReportFromOverlay(rule.activity))
             assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
 
-            val overlay = EntryGateOverlayViewFactory.create(rule.activity, {}, {})
+            val overlay = EntryGateOverlayViewFactory.create(rule.activity, {}, {}, {})
             assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
             overlay.dispose()
         }

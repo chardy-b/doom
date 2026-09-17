@@ -106,12 +106,55 @@ class SanitizedStructuralReportTest {
         val b = report(node(index = 1, id = "com.instagram.android:id/second"), node())
         assertNotEquals(a.text, b.text)
         val rowLength = a.text.lines().first { it.startsWith("n=") }.length + 1
-        val short = SanitizedStructuralReport.Builder(maxChars = SanitizedStructuralReport.HEADER_SIZE + rowLength - 1).apply {
+        val short = SanitizedStructuralReport.Builder(maxChars = SanitizedStructuralReport.HEADER_SIZE).apply {
             add(node())
         }.build()!!
         assertTrue(short.truncated)
         assertFalse(short.text.contains("n=0"))
         assertTrue(short.text.toByteArray(Charsets.UTF_8).size <= SanitizedStructuralReport.HEADER_SIZE + rowLength - 1)
+    }
+
+    @Test fun finalHeaderAndRichRowsStayWithinEveryInjectedByteLimit() {
+        val allReasons = listOf("nodes", "depth", "children", "foreign", "missing_child", "tokens", "actions", "bytes", "time")
+        val actions = (0 until 16).map { StructuralAction(it + 1, "UNKNOWN") }
+        val rich = node(index = 1, parent = MetadataValue.Present(0), depth = 1,
+            slot = MetadataValue.Present(0), id = "com.instagram.android:id/a_very_long_static_resource_name_2026")
+            .copy(
+                actions = actions,
+                actionCount = actions.size,
+                actionsTruncated = true,
+                actionState = MetadataValue.Present(actions),
+                screenBounds = MetadataValue.Present(BoundsPx(-1000, -1000, 9000, 9000)),
+                windowBounds = MetadataValue.Present(BoundsPx(0, 0, 9000, 9000)),
+                normalizedScreenBounds = MetadataValue.Present(NormalizedBounds(-10000, -10000, 90000, 90000)),
+            )
+        for (limit in SanitizedStructuralReport.HEADER_SIZE..SanitizedStructuralReport.MAX_CHARS) {
+            val builder = SanitizedStructuralReport.Builder(maxChars = limit).apply {
+                add(node())
+                add(rich)
+                allReasons.forEach(::markTruncated)
+            }
+            val result = requireNotNull(builder.build())
+            assertTrue("limit=$limit", result.text.toByteArray(Charsets.UTF_8).size <= limit)
+        }
+    }
+
+    @Test fun shadowInputIncludesSanitizedRowsOmittedByTheTextByteCutoff() {
+        val result = SanitizedStructuralReport.Builder(maxChars = SanitizedStructuralReport.HEADER_SIZE + 1).apply {
+            add(node(id = "com.instagram.android:id/unrelated", klass = null))
+            add(node(index = 1, parent = MetadataValue.Present(0), depth = 1,
+                slot = MetadataValue.Present(0), id = "com.instagram.android:id/message_list",
+                selected = false, scrollable = true))
+        }.build()!!
+        assertFalse(result.text.contains("message_list"))
+        assertEquals(InstagramSurface.MESSAGING, InstagramSurfaceShadowClassifier.classify(result))
+    }
+
+    @Test fun actionReadFailureUsesTypedUnavailableWireState() {
+        val result = report(node().copy(
+            actionState = MetadataValue.Unavailable(MetadataUnavailableReason.READ_ERROR),
+        ))
+        assertTrue(result.text.contains("actions=u:read_error action_count=u:read_error actions_truncated=u:read_error"))
     }
 
     @Test fun immutableReportDoesNotChangeAfterBuilderMutation() {

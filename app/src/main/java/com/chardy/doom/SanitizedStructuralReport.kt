@@ -69,9 +69,10 @@ class SanitizedStructuralReport private constructor(
         private val nodes = ArrayList<StructuralNodeMetadata>(MAX_NODES)
         private val reasons = linkedSetOf<String>()
         private var visited = 0
+        private val minimumChars = header(context, TRUNCATION_REASONS, MAX_NODES, MAX_NODES).length
 
         init {
-            require(maxChars in HEADER_SIZE..MAX_CHARS)
+            require(maxChars in minimumChars..MAX_CHARS)
             require(maxUniqueTokens in 1..MAX_UNIQUE_TOKENS)
         }
 
@@ -91,10 +92,13 @@ class SanitizedStructuralReport private constructor(
                 return
             }
             if (node.childCountCapped) markTruncated("children")
-            if (node.actionsTruncated) markTruncated("actions")
+            if (node.actionsTruncated ||
+                (node.actionState is MetadataValue.Unavailable &&
+                    node.actionState.reason == MetadataUnavailableReason.READ_ERROR)
+            ) markTruncated("actions")
             val elapsed = node.elapsedOffsetMs
             if (elapsed is MetadataValue.Unavailable &&
-                elapsed.reason == MetadataUnavailableReason.READ_ERROR
+                elapsed.reason == MetadataUnavailableReason.TIMEOUT
             ) markTruncated("time")
             nodes += node
         }
@@ -118,7 +122,9 @@ class SanitizedStructuralReport private constructor(
                     markTruncated("bytes")
                     break
                 }
-                val candidateHeader = header(context, reasons, visited, emitted + 1)
+                // The final header can gain the bytes reason (and contains comma-separated
+                // reasons), so reserve the complete closed reason vocabulary for every row.
+                val candidateHeader = header(context, TRUNCATION_REASONS, visited, emitted + 1)
                 val candidateSize = candidateHeader.length + outputRows.sumOf { it.length } + line.length
                 if (candidateSize > maxChars) {
                     omittedForBytes = true
@@ -131,7 +137,11 @@ class SanitizedStructuralReport private constructor(
             if (omittedForBytes) markTruncated("bytes")
             val finalHeader = header(context, reasons, visited, emitted)
             val text = finalHeader + outputRows.joinToString("")
-            val included = nodes.take(emitted)
+            check(text.length <= maxChars) { "serialized report exceeded its byte cap" }
+            check(text.toByteArray(Charsets.UTF_8).size == text.length) { "report must remain ASCII" }
+            // Text rows are a presentation limit only. Shadow classification must see every
+            // sanitized/token-admitted DTO, including rows omitted at the byte boundary.
+            val included = nodes
             val shadowRows = included.mapNotNull { node ->
                 val id = node.resourceId?.takeIf { it in admitted } ?: return@mapNotNull null
                 node to id
@@ -178,7 +188,12 @@ class SanitizedStructuralReport private constructor(
                 listOf(r.type, r.min, r.max, r.current).joinToString(",") { tuple(it) }
             }
             val p = node.position
-            val actions = node.actions.sortedBy { it.id }.joinToString(";") { "${it.id}:${it.name}" }
+            val actions = node.actionState.wireValue { value ->
+                @Suppress("UNCHECKED_CAST")
+                val entries = (value as List<StructuralAction>).sortedBy { it.id }
+                    .joinToString(";") { "${it.id}:${it.name}" }
+                "[$entries]"
+            }
             return buildString {
                 append("n=${p.index} p=").append(p.parentIndex.wireValue { scalar(it) })
                 append(" d=${p.depth} t=${p.bfsOrdinal} s=").append(p.siblingSlot.wireValue { scalar(it) })
@@ -188,8 +203,11 @@ class SanitizedStructuralReport private constructor(
                 append(" screen=${bounds(node.screenBounds)} window=${bounds(node.windowBounds)}")
                 append(" norm=${normalized(node.normalizedScreenBounds)}")
                 append(" flags=${node.flags.known},${node.flags.value},${node.flags.error}")
-                append(" actions=[$actions] action_count=${node.actionCount}")
-                append(" actions_truncated=${if (node.actionsTruncated) 1 else 0}")
+                append(" actions=").append(actions)
+                append(" action_count=").append(node.actionState.wireValue { node.actionCount.toString() })
+                append(" actions_truncated=").append(
+                    node.actionState.wireValue { if (node.actionsTruncated) "1" else "0" }
+                )
                 append(" collection=${collection(node.collection)} item=${item(node.collectionItem)}")
                 append(" range=${range(node.range)} input=${tuple(node.inputType)}")
                 append(" live=${tuple(node.liveRegion)} movement=${tuple(node.movementGranularities)}")
@@ -243,7 +261,10 @@ class SanitizedStructuralReport private constructor(
             append("actions,action_count,actions_truncated,collection,item,range,input,live,movement,selection,max_length,dt_ms\n")
         }
 
-        val HEADER_SIZE: Int = header(StructuralCaptureContext.synthetic(), emptySet(), 0, 0).length
+        /** Worst-case synthetic header, including every comma-separated truncation reason. */
+        val HEADER_SIZE: Int = header(
+            StructuralCaptureContext.synthetic(), TRUNCATION_REASONS, MAX_NODES, MAX_NODES,
+        ).length
 
         private fun formatFloat(value: Float): String {
             if (!value.isFinite()) return "u:invalid"

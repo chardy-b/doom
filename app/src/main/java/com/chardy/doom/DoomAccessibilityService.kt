@@ -326,7 +326,9 @@ class DoomAccessibilityService : AccessibilityService() {
                 traceRecord(RemovalTraceMark.EVENT_SUPPRESSED_COOLDOWN, eventKind, owner)
                 return
             }
-            if (!Observation.consent || !Observation.connected || !Observation.gateConsent) {
+            // Report-only collection remains available with fresh report consent and a live
+            // connection. Gate consent is optional; it is required only for the overlay/timer.
+            if (!Observation.consent || !Observation.connected) {
                 endTimerSession()
                 requestSafetyCleanup(OverlayRemovalAction.BYPASS, RemovalTraceMark.EVENT_DENIED,
                     eventKind, owner)
@@ -414,7 +416,15 @@ class DoomAccessibilityService : AccessibilityService() {
                 if (activeTicket != null) requestSafetyCleanup(OverlayRemovalAction.BYPASS, RemovalTraceMark.EVENT_FAILURE)
                 return
             }
-            collect(root, captureContext)
+            if (!collect(root, captureContext)) {
+                if (activeTicket != null) requestSafetyCleanup(
+                    OverlayRemovalAction.BYPASS, RemovalTraceMark.EVENT_FAILURE,
+                    eventKind, owner, RemovalTraceRoot.READ_FAILURE,
+                ) else {
+                    Observation.entryGateState = EntryGateState.OUTSIDE
+                }
+                return
+            }
             if (activeTicket == null) {
                 if (overlay != null) cancelAndBypass()
                 else Observation.entryGateState = EntryGateState.OUTSIDE
@@ -445,11 +455,11 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     @Suppress("DEPRECATION") // Release transient nodes on older supported Android versions too.
-    private fun collect(root: AccessibilityNodeInfo, context: StructuralCaptureContext) {
+    private fun collect(root: AccessibilityNodeInfo, context: StructuralCaptureContext): Boolean {
         if (root.packageName?.let { StructuralSanitizer.isExactAscii(it, AndroidStructuralMetadataReader.INSTAGRAM_PACKAGE) } != true) {
             root.recycle()
             Observation.record(null)
-            return
+            return false
         }
         data class QueueEntry(val node: AccessibilityNodeInfo, val position: StructuralNodePosition)
         val queue = ArrayDeque<QueueEntry>()
@@ -471,11 +481,19 @@ class DoomAccessibilityService : AccessibilityService() {
                     val metadata = reader.read(node, entry.position.copy(bfsOrdinal = visited - 1), context)
                     builder.add(metadata)
                     val elapsedOffset = metadata.elapsedOffsetMs
-                    if (elapsedOffset is MetadataValue.Unavailable &&
-                        elapsedOffset.reason == MetadataUnavailableReason.READ_ERROR
-                    ) {
-                        builder.markTruncated("time")
-                        break
+                    if (elapsedOffset is MetadataValue.Unavailable) when (elapsedOffset.reason) {
+                        MetadataUnavailableReason.CLOCK_ROLLBACK -> {
+                            // A backward elapsedRealtime sample invalidates this capture; never
+                            // publish a partial report assembled across an invalid clock.
+                            Observation.record(null)
+                            return false
+                        }
+                        MetadataUnavailableReason.TIMEOUT,
+                        MetadataUnavailableReason.READ_ERROR -> {
+                            builder.markTruncated("time")
+                            break
+                        }
+                        else -> Unit
                     }
                     val depth = entry.position.depth
                     if (depth >= SanitizedStructuralReport.MAX_DEPTH) {
@@ -508,6 +526,7 @@ class DoomAccessibilityService : AccessibilityService() {
             }
             if (queue.isNotEmpty()) builder.markTruncated("nodes")
             Observation.record(builder.build())
+            return true
         } finally {
             while (queue.isNotEmpty()) queue.removeFirst().node.recycle()
         }
@@ -927,8 +946,6 @@ class DoomAccessibilityService : AccessibilityService() {
             if (activeTicket != ticket || activeTicket.generation != entryGate.generation ||
                 entryGate.state != EntryGateState.GATING || !timerConsentAllowed() ||
                 sampleTimerAuthority() != OverlayForegroundDecision.KEEP ||
-                activeTicket != ticket || activeTicket.generation != entryGate.generation ||
-                entryGate.state != EntryGateState.GATING || !timerConsentAllowed() ||
                 timerView != null || timerClosing || overlay != null) {
                 ui.dispose()
                 if (activeTicket == ticket && activeTicket.generation == entryGate.generation) {
@@ -1167,7 +1184,8 @@ class DoomAccessibilityService : AccessibilityService() {
                 val departureTicket = detachedToken?.ticket
                 if (departureTicket == null || !ownsDetachedEpisode ||
                     !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
-                    !Observation.reminderSettings.enabled
+                    !Observation.reminderSettings.enabled || !Observation.consent ||
+                    !Observation.gateConsent || !Observation.connected
                 ) {
                     departureTicket?.let(::cancelCurrentGatingTicket)
                     publishGateState()
@@ -1188,7 +1206,9 @@ class DoomAccessibilityService : AccessibilityService() {
                     val verifiedForeground = packageName == INSTAGRAM ||
                         (packageName == applicationContext.packageName && mainActivityReturnObserved)
                     if (!verifiedForeground || !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
-                        !Observation.reminderSettings.enabled || !entryGate.bypass(departureTicket)
+                        !Observation.reminderSettings.enabled || !Observation.consent ||
+                        !Observation.gateConsent || !Observation.connected ||
+                        !entryGate.bypass(departureTicket)
                     ) {
                         cancelCurrentGatingTicket(departureTicket)
                         publishGateState()

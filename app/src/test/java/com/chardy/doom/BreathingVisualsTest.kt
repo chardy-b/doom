@@ -43,6 +43,28 @@ class BreathingVisualsTest {
         assertTrue(high.map { it.gridY }.toSet().size >= 20)
         assertTrue(BreathingVisuals.geometry(.35f, width, 240f).any { it.left % (width / 32f) != 0f })
     }
+
+    @Test fun visibleAlphaFloorPreservesTheMinimumAndMaximumExtents() {
+        fun extent(progress: Float): Float = BreathingVisuals.geometry(progress, 320f, 240f)
+            .filter { it.alpha >= 0.25f }
+            .let { it.maxOf { cell -> cell.right } - it.minOf { cell -> cell.left } }
+        assertEquals(64f, extent(0f), .001f)
+        assertEquals(280f, extent(1f), .001f)
+        assertTrue(BreathingVisuals.geometry(0f, 320f, 240f).any { it.alpha >= 0.25f && it.role == BloomColorRole.GOLD })
+    }
+
+    @Test fun warmPaletteIsContinuousAcrossGoldOrangeAndAubergineNeighbors() {
+        val colors = (0..100).map { index -> BreathingVisuals.colorAt(index / 100f) }
+        colors.zipWithNext().forEach { (first, second) ->
+            val channelDelta = listOf(16, 8, 0).maxOf { shift ->
+                kotlin.math.abs(((first ushr shift) and 0xFF) - ((second ushr shift) and 0xFF))
+            }
+            assertTrue("neighbor jump=$channelDelta", channelDelta <= 8)
+        }
+        assertEquals(BreathingVisuals.ORANGE, BreathingVisuals.colorAt(.34f))
+        assertEquals(BreathingVisuals.AUBERGINE, BreathingVisuals.colorAt(.68f))
+    }
+
     @Test fun geometryHasOneIvoryCenterAndClosedWarmPalette() {
         listOf(0f, .2f, .5f, .9f, 1f).forEach { progress ->
             val cells = BreathingVisuals.geometry(progress, 480f, 300f)

@@ -34,7 +34,7 @@ internal class EntryGateOverlayUi(val root:View,val phaseLabel:TextView,val skip
  fun dispose(){if(disposed)return;disposed=true;skipToMessages.setOnClickListener(null);leaveInstagram.setOnClickListener(null);debugReport.setOnClickListener(null);skipToMessages.isEnabled=false;leaveInstagram.isEnabled=false;debugReport.isEnabled=false;pixel.visibility=View.INVISIBLE}
 }
 internal object EntryGateOverlayViewFactory{
- fun create(context:Context,onSkipToMessages:()->Unit,onLeaveInstagram:()->Unit,onDebugReport:()->Unit = {}):EntryGateOverlayUi{
+ fun create(context:Context,onSkipToMessages:()->Unit,onLeaveInstagram:()->Unit,onDebugReport:()->Unit):EntryGateOverlayUi{
   fun dp(v:Int)=(v*context.resources.displayMetrics.density).toInt()
   val compactLandscape=context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE
   val verticalPadding=if(compactLandscape)8 else 20
