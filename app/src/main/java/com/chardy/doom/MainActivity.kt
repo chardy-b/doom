@@ -33,14 +33,32 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val ACTION_OPEN_DEBUG = "com.chardyb.doom.action.OPEN_DEBUG"
+
+        fun debugIntent(context: android.content.Context): Intent = Intent(context, MainActivity::class.java).apply {
+            action = ACTION_OPEN_DEBUG
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+
+        private fun isDebugIntent(intent: Intent?): Boolean =
+            intent?.action == ACTION_OPEN_DEBUG && intent.data == null && intent.categories.isNullOrEmpty() &&
+                (intent.extras == null || intent.extras?.isEmpty == true)
+    }
+
+    private var debugRequestSequence by mutableLongStateOf(0L)
+    private var debugRequestPending = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (isDebugIntent(intent)) {
+            debugRequestSequence = 1L
+            debugRequestPending = true
+        }
         @Suppress("DEPRECATION")
         window.statusBarColor = BreathingVisuals.INK
         window.decorView.setBackgroundColor(BreathingVisuals.INK)
@@ -57,6 +75,25 @@ class MainActivity : ComponentActivity() {
         Observation.load(this)
         setContent { DoomTheme { DoomScreen() } }
     }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (intent == null) return
+        setIntent(intent)
+        if (isDebugIntent(intent)) {
+            debugRequestSequence++
+            debugRequestPending = true
+        }
+    }
+
+    internal fun consumeDebugRequest(sequence: Long): Boolean {
+        if (!debugRequestPending || sequence != debugRequestSequence) return false
+        debugRequestPending = false
+        setIntent(Intent(intent).apply { action = null })
+        return true
+    }
+
+    internal fun currentDebugRequestSequence(): Long = debugRequestSequence
 }
 
 private val Ink = Color(BreathingVisuals.INK)
@@ -85,6 +122,7 @@ private enum class Destination { HOME, DEBUG }
 @Composable
 fun DoomScreen() {
     val context = LocalContext.current
+    val activity = context as? MainActivity
     val lifecycle = LocalLifecycleOwner.current
     val demoGate = remember { DemoGate() }
     var destination by rememberSaveable { mutableStateOf(Destination.HOME) }
@@ -99,6 +137,9 @@ fun DoomScreen() {
     var reduceMotion by rememberSaveable { mutableStateOf(false) }
     var traceFeedback by remember { mutableStateOf<String?>(null) }
     var traceRevision by remember { mutableLongStateOf(0L) }
+    val homeScroll = rememberScrollState()
+    val debugScroll = rememberScrollState()
+    val debugRequest = activity?.currentDebugRequestSequence() ?: 0L
     val systemStatic = remember {
         Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     }
@@ -121,6 +162,16 @@ fun DoomScreen() {
         demoGate.leave(screen)
         demoScreen = demoGate.screen
         demoGeneration = demoGate.generation
+    }
+
+    LaunchedEffect(debugRequest) {
+        if (debugRequest > 0L && activity?.consumeDebugRequest(debugRequest) == true) {
+            destination = Destination.DEBUG
+            productPreview = false
+            leaveDemo()
+            Observation.hideReport()
+            debugScroll.scrollTo(0)
+        }
     }
 
     DisposableEffect(lifecycle) {
@@ -199,7 +250,9 @@ fun DoomScreen() {
                 )
             } else {
                 Column(
-                    Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
+                    Modifier.weight(1f).fillMaxWidth().verticalScroll(
+                        if (destination == Destination.HOME) homeScroll else debugScroll
+                    ).padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     Text("DOOM", fontSize = 38.sp, color = Gold, fontFamily = FontFamily.Monospace)
@@ -382,7 +435,10 @@ private fun Debug(
             }
             DemoGate.Screen.BREATHING -> {
                 Text("Take a breath.", color = Paper, fontSize = 30.sp)
-                PixelBloom(if (reduceMotion || systemStatic) 0.5f else 1f - remaining / 5_000f)
+                PixelBloom(
+                    if (reduceMotion || systemStatic) BreathingVisuals.staticProgress()
+                    else 1f - remaining / 5_000f
+                )
                 Text("Breathe naturally. No need to hold.", color = Paper)
                 Text("${(remaining + 999L) / 1_000L}s remaining", color = Gold)
                 Action("DEMO MESSAGES — NO WAIT") { leaveDemo(DemoGate.Screen.MESSAGES) }
@@ -434,8 +490,8 @@ private fun Debug(
         Text("An admitted reminder uses the selected duration snapshot; terminal successes use the admitted cooldown snapshot.", color = Orange)
         Text("SANITIZED STRUCTURAL REPORT", color = Gold)
         Text("Structure changes with scrolling and content. The sanitized report is separate from a diagnostic shadow prediction; neither blocks, protects, or controls actions; the optional entry pause is default-off and fail-open.", color = Paper)
-        Text("Optional accessibility access can expose screen content to an app. Doom receives package identifiers for window events from all apps and, during a visible gate, reads only one active root's package attribution to decide whether the gate remains in Instagram; it reads no foreign window tree. With fresh report consent, Doom traverses only Instagram: at most 128 nodes through depth 8. It keeps only sanitized static Instagram resource names from compile-time resource tables, normalized safe class names, depth, child count capped at 16, and clickable/scrollable/editable/selected/checked booleans in sorted aggregate rows. Previously unknown resource names are admitted only as exact com.instagram.android:id/ names: 1–64 lowercase ASCII letters/digits/underscores, starting with a letter, at most 96 raw characters. Invalid IDs and unknown classes are omitted. Reports have at most 64 unique tokens and 8,192 ASCII characters/UTF-8 bytes; omitted structure is marked truncated.", color = Paper)
-        Text("Reports expose static resource names, never UI text/content/account values. No text, descriptions, hints, errors, pane or tooltip titles, bounds, screenshots, notification or account content, node/window IDs, raw trees or actions are collected. Only consent is saved. One report stays in process memory; no file persistence, logging, network or automatic export.", color = Paper)
+        Text("Optional accessibility access can expose screen content to an app. Doom receives package identifiers for window events from all apps and, during a visible gate, reads only one active root's package attribution to decide whether the gate remains in Instagram; it reads no foreign window tree. With fresh v2 consent, Doom traverses only Instagram: at most 128 nodes breadth-first through depth 8. It keeps sanitized resource/class identifiers, Doom-local parent and sibling indexes, bounded screen/window geometry, normalized screen bounds, sibling-relative drawing order, fixed action names, collection/item/range tuples, named numeric fields and closed boolean masks. A public unique ID is kept only when it equals an already accepted resource ID; other values become u:free_form. Unsupported, absent, invalid, unsafe and capped values use closed u:* markers. Reports have at most 64 tokens and 8,192 ASCII characters/bytes, emit whole rows and mark omitted structure truncated.", color = Paper)
+        Text("Reports expose static Instagram resource names and class identifiers as structural metadata only, never UI text/content/account values. No text, descriptions, hints, errors, pane or tooltip titles, notification or account content, raw trees, framework objects, arbitrary/free-form IDs or private screenshots are collected. Bounds and named scalar metadata are the narrow v2 exception; at most 64 unique tokens and 8,192 ASCII characters/bytes are retained, and metadata never selects targets or drives actions. Fresh v2 consent is required; one report stays in process memory with no file persistence, logging, network, upload or automatic export.", color = Paper)
         Text("Clear removes the report and reveal/copy state; a later Instagram event may create a new hidden report. Returning directly to Doom preserves the latest hidden report for local review. Other foreign apps, revocation, observer stop, disconnect, interruption, reconnect and process death clear that state. A delayed Instagram event with a wrong or missing root invalidates it.", color = Paper)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(
@@ -546,13 +602,12 @@ private fun SegmentedProgress(segments: List<Float>) {
 @Composable
 private fun PixelBloom(progress: Float, modifier: Modifier = Modifier.height(180.dp)) {
     Canvas(modifier.fillMaxWidth().semantics { contentDescription = "A quiet pixel bloom" }) {
-        val unit = minOf(size.width / 16, size.height / 16)
-        val colors = listOf(Orange, Color(0xFF9A3F35), Gold, Paper)
-        BreathingVisuals.cells(progress).forEach { cell ->
+        BreathingVisuals.geometry(progress, size.width, size.height).forEach { cell ->
             drawRect(
-                colors[cell.layer],
-                Offset(size.width / 2 + cell.x * unit - unit / 2, size.height / 2 + cell.y * unit - unit / 2),
-                Size((unit - 2).coerceAtLeast(1f), (unit - 2).coerceAtLeast(1f)),
+                Color(cell.color),
+                Offset(cell.left, cell.top),
+                Size(cell.right - cell.left, cell.bottom - cell.top),
+                alpha = cell.alpha,
             )
         }
     }

@@ -29,6 +29,8 @@ class RemovalTracePrivacyTest(unittest.TestCase):
         self.assertIn("WATCHDOG_ROLLBACK", TRACE)
         self.assertIn("WATCHDOG_NO_SAFE_ANCHOR", TRACE)
         self.assertIn("TRUNCATED", TRACE)
+        self.assertIn("USER_DEBUG", TRACE)
+        self.assertIn("OPEN_DEBUG", TRACE)
         self.assertIn("vetoedExternalAction", SERVICE)
 
     def test_trace_is_default_off_before_category_and_clock_work(self):

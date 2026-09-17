@@ -55,6 +55,10 @@ class EntryGateOverlayUiTest {
             assertTrue(actual.skipToMessages.minimumHeight >= (48 * it.resources.displayMetrics.density).toInt())
             assertTrue(actual.skipToMessages.isFocusable)
             assertTrue(actual.skipToMessages.isClickable)
+            assertTrue(actual.leaveInstagram.minimumHeight >= (48 * it.resources.displayMetrics.density).toInt())
+            assertTrue(actual.debugReport.minimumHeight >= (48 * it.resources.displayMetrics.density).toInt())
+            assertTrue(actual.debugReport.isFocusable)
+            assertTrue(actual.debugReport.isClickable)
             actual.dispose()
             (actual.root.parent as? ViewGroup)?.removeView(actual.root)
         }
@@ -100,6 +104,7 @@ class EntryGateOverlayUiTest {
                 }
                 assertReachable(ui.skipToMessages)
                 assertReachable(ui.leaveInstagram)
+                assertReachable(ui.debugReport)
                 ui.dispose()
                 val timerUi = InstagramTimerOverlayViewFactory.create(context, {}, {}, { _, _ -> }, {})
                 timerUi.render(InstagramTimerModel("1:23:45", "Instagram time, 1 hour, 23 minutes, 45 seconds", false, true))
@@ -129,29 +134,29 @@ class EntryGateOverlayUiTest {
         var overlay: EntryGateOverlayUi? = null
         try {
             mount { overlay = it }
-            renderAndCapture(overlay, "01-overlay-unavailable", reducedMotion = false, captured = false)
-            renderAndCapture(overlay, "02-overlay-captured-status", reducedMotion = false, captured = true)
-            renderAndCapture(overlay, "03-overlay-reduced-motion", reducedMotion = true, captured = false)
+            renderAndCapture(overlay, "01-overlay-unavailable", reducedMotion = false, elapsedMs = 10_000)
+            renderAndCapture(overlay, "02-overlay-captured-status", reducedMotion = false, elapsedMs = 3_900)
+            renderAndCapture(overlay, "03-overlay-reduced-motion", reducedMotion = true, elapsedMs = 3_900)
             unmount(overlay); overlay = null
             captureTimer("07-timer-expanded-dismiss", collapsed = false)
             captureTimer("08-timer-compact-icon", collapsed = true)
             captureDashboardTimerStates()
             mount { overlay = it }
-            renderAndCapture(overlay, "03-reminder-inhale", reducedMotion = false, captured = false)
-            renderAndCapture(overlay, "04-reminder-exhale", reducedMotion = false, captured = true)
-            renderAndCapture(overlay, "05-reminder-reduced-motion", reducedMotion = true, captured = false)
+            renderAndCapture(overlay, "03-reminder-inhale", reducedMotion = false, elapsedMs = 3_900)
+            renderAndCapture(overlay, "04-reminder-exhale", reducedMotion = false, elapsedMs = 9_900)
+            renderAndCapture(overlay, "05-reminder-reduced-motion", reducedMotion = true, elapsedMs = 3_900)
             unmount(overlay); overlay = null
 
             device.executeShellCommand("settings put system font_scale 2.0")
             recreateActivity()
             mount { overlay = it }
-            renderAndCapture(overlay, "04-overlay-large-font", reducedMotion = true, captured = false)
+            renderAndCapture(overlay, "04-overlay-large-font", reducedMotion = true, elapsedMs = 3_900)
             unmount(overlay); overlay = null
 
             device.setOrientationLeft()
             recreateActivity()
             mount { overlay = it }
-            renderAndCapture(overlay, "05-overlay-landscape", reducedMotion = true, captured = false)
+            renderAndCapture(overlay, "05-overlay-landscape", reducedMotion = true, elapsedMs = 3_900)
             unmount(overlay); overlay = null
 
             unmount(overlay)
@@ -231,12 +236,17 @@ class EntryGateOverlayUiTest {
         ui: EntryGateOverlayUi?,
         name: String,
         reducedMotion: Boolean,
-        captured: Boolean
+        elapsedMs: Long
     ) {
         rule.scenario.onActivity {
             val actual = requireNotNull(ui)
-            actual.render(EntryGateOverlayModel.from(if (captured) 5_000 else 10_000, 10_000, reducedMotion))
+            val model = EntryGateOverlayModel.from(elapsedMs, 10_000, reducedMotion)
+            actual.render(model)
             assertTrue(actual.phaseLabel.text == "Breathe in" || actual.phaseLabel.text == "Breathe out")
+            if (name == "03-reminder-inhale" || name == "02-overlay-captured-status") {
+                assertEquals("Breathe in", actual.phaseLabel.text)
+            }
+            if (name == "04-reminder-exhale") assertEquals("Breathe out", actual.phaseLabel.text)
             assertTrue(actual.root.parent != null)
         }
         assertTopResumed()

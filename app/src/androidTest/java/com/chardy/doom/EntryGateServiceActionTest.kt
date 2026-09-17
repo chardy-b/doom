@@ -74,6 +74,7 @@ class EntryGateServiceActionTest {
         @Volatile var routeThrows = false
         @Volatile var homeCalls = 0
         @Volatile var homeResult = true
+        @Volatile var debugCalls = 0
         val platformCalls = Collections.synchronizedList(mutableListOf<String>())
         lateinit var revokeInsideRoot: () -> Unit
         var rootReadHook: () -> Unit = {}
@@ -126,7 +127,14 @@ class EntryGateServiceActionTest {
 
         override fun readRootPackage(root: AccessibilityNodeInfo): String? {
             if (rootBehavior == RootBehavior.PACKAGE_THROW) throw IllegalStateException("package unavailable")
-            return root.packageName?.toString().also { afterPackageRead() }
+            val packageName = when {
+                StructuralSanitizer.isExactAscii(root.packageName, "com.instagram.android") -> "com.instagram.android"
+                StructuralSanitizer.isExactAscii(root.packageName, "com.chardyb.doom") -> "com.chardyb.doom"
+                root.packageName == null -> null
+                else -> "__foreign__"
+            }
+            afterPackageRead()
+            return packageName
         }
 
         override fun recycleRoot(root: AccessibilityNodeInfo) {
@@ -148,6 +156,12 @@ class EntryGateServiceActionTest {
             platformCalls += "performHome"
             homeCalls++
             return homeResult
+        }
+
+        override fun openDebug(): Boolean {
+            platformCalls += "openDebug"
+            debugCalls++
+            return true
         }
 
         lateinit var stateReader: () -> EntryGateState
@@ -213,6 +227,24 @@ class EntryGateServiceActionTest {
         assertEquals(listOf(EntryGateState.BYPASSED), fixture.platform.stateAtRoute)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
         assertTrue(gate(fixture.service).cooldownActive())
+    }
+
+    @Test fun debugWaitsForDetachPreservesEpisodeAndNeverArmsCooldown() {
+        val fixture = fixture(attached = true, detachOnRemove = false)
+        request(fixture.service, OverlayRemovalAction.OPEN_DEBUG, fixture.token)
+        waitFor { fixture.platform.removeAttempts > 0 }
+        assertEquals(0, fixture.platform.debugCalls)
+
+        rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
+        waitFor { fixture.platform.debugCalls == 1 }
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
+        assertEquals(1, fixture.platform.currentRootCalls)
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertTrue(fixture.platform.platformCalls.indexOf("removeImmediate") <
+            fixture.platform.platformCalls.indexOf("currentRoot"))
+        assertTrue(fixture.platform.platformCalls.indexOf("currentRoot") <
+            fixture.platform.platformCalls.indexOf("openDebug"))
     }
 
     @Test fun disablingRemindersRemovesLiveOverlayWithoutCooldownCredit() {
@@ -2249,6 +2281,7 @@ class EntryGateServiceActionTest {
             OverlayRemovalAction.NAVIGATE_MESSAGES -> RemovalTraceMark.USER_MESSAGES
             OverlayRemovalAction.COMPLETE -> RemovalTraceMark.TIMER_COMPLETE
             OverlayRemovalAction.PRESERVE_REPORT -> RemovalTraceMark.APP_RETURN
+            OverlayRemovalAction.OPEN_DEBUG -> RemovalTraceMark.USER_DEBUG
             OverlayRemovalAction.BYPASS -> RemovalTraceMark.SAFETY_OVERRIDE
             OverlayRemovalAction.RESET_OUTSIDE -> RemovalTraceMark.EVENT_PACKAGE_RESET
         }

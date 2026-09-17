@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -37,6 +38,20 @@ class StructuralDiagnosticUiTest {
 
         val exportedActivities = activities.filter { it.exported }.map { it.name }
         assertEquals(listOf("com.chardy.doom.MainActivity"), exportedActivities)
+    }
+
+    @Test fun debugIntentIsExplicitInternalNavigationWithoutPayload() {
+        val intent = MainActivity.debugIntent(rule.activity)
+        assertEquals(MainActivity.ACTION_OPEN_DEBUG, intent.action)
+        assertEquals(rule.activity.packageName, intent.component?.packageName)
+        assertEquals(MainActivity::class.java.name, intent.component?.className)
+        assertNull(intent.data)
+        assertTrue(intent.categories.isNullOrEmpty())
+        assertTrue(intent.extras == null || intent.extras!!.isEmpty)
+        assertEquals(
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            intent.flags and (Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        )
     }
 
     @Before fun reset() = rule.runOnIdle {
@@ -74,10 +89,18 @@ class StructuralDiagnosticUiTest {
     private fun tap(text: String) = rule.onNodeWithText(text).performScrollTo().performClick()
     private fun shown(text: String) = rule.onNodeWithText(text).performScrollTo().assertIsDisplayed()
     private fun sample(depth: Int = 0) = SanitizedStructuralReport.Builder().apply {
-        add(depth, "com.instagram.android:id/feed_tab", "android.widget.TextView", 0,
-            false, false, false, true, false)
-        add(depth, "com.instagram.android:id/row_feed_media", "android.view.View", 0,
-            false, false, false, false, false)
+        add(StructuralNodeMetadata(
+            position = StructuralNodePosition(depth = depth, bfsOrdinal = 0),
+            resourceId = "com.instagram.android:id/feed_tab", className = "TextView",
+            flags = StructuralBooleanMasks(
+                known = 1L shl StructuralBooleanField.SELECTED.ordinal,
+                value = 1L shl StructuralBooleanField.SELECTED.ordinal,
+            ),
+        ))
+        add(StructuralNodeMetadata(
+            position = StructuralNodePosition(index = 1, depth = depth, bfsOrdinal = 1),
+            resourceId = "com.instagram.android:id/row_feed_media", className = "View",
+        ))
     }.build()!!
     private fun seed(depth: Int = 0) = rule.runOnIdle {
         Observation.accept(rule.activity, true)
@@ -159,14 +182,15 @@ class StructuralDiagnosticUiTest {
             this.packageName = packageName
             viewIdResourceName = "com.instagram.android:id/feed_tab"
             className = "android.widget.TextView"
-            text = "SECRET_MESSAGE"
-            contentDescription = "SECRET_ACCOUNT"
-            hintText = "SECRET_HINT"
-            error = "SECRET_ERROR"
+            text = "PROHIBITED_TEXT_CANARY"
+            contentDescription = "PROHIBITED_DESCRIPTION_CANARY"
+            hintText = "PROHIBITED_HINT_CANARY"
+            error = "PROHIBITED_ERROR_CANARY"
         }
         // Collector owns/recycles this node, including on mismatched roots.
-        DoomAccessibilityService::class.java.getDeclaredMethod("collect", AccessibilityNodeInfo::class.java)
-            .apply { isAccessible = true }.invoke(service, root)
+        DoomAccessibilityService::class.java.getDeclaredMethod(
+            "collect", AccessibilityNodeInfo::class.java, StructuralCaptureContext::class.java
+        ).apply { isAccessible = true }.invoke(service, root, StructuralCaptureContext.synthetic())
     }
 
     @Test fun disclosureAndControlsNeverClaimProtectionOrAuthorizeActions() {
@@ -214,10 +238,12 @@ class StructuralDiagnosticUiTest {
         rule.runOnIdle {
             var skipCalls = 0
             var leaveCalls = 0
+            var debugCalls = 0
             val overlay = EntryGateOverlayViewFactory.create(
                 rule.activity,
                 onSkipToMessages = { skipCalls++ },
-                onLeaveInstagram = { leaveCalls++ }
+                onLeaveInstagram = { leaveCalls++ },
+                onDebugReport = { debugCalls++ },
             )
 
             assertTrue(overlay.skipToMessages.performClick())
@@ -226,6 +252,8 @@ class StructuralDiagnosticUiTest {
             assertTrue(overlay.leaveInstagram.performClick())
             assertEquals(1, skipCalls)
             assertEquals(1, leaveCalls)
+            assertTrue(overlay.debugReport.performClick())
+            assertEquals(1, debugCalls)
             assertEquals("Breathe in", overlay.phaseLabel.text.toString())
         }
     }
@@ -342,7 +370,7 @@ class StructuralDiagnosticUiTest {
         rule.runOnIdle {
             collectSyntheticRoot(service, "com.instagram.android")
             assertNotNull(Observation.report)
-            assertFalse(Observation.report!!.text.contains("SECRET"))
+            assertFalse(Observation.report!!.text.contains("PROHIBITED"))
             assertFalse(Observation.revealed)
             assertFalse(Observation.copied)
         }
@@ -404,7 +432,8 @@ class StructuralDiagnosticUiTest {
     @Test fun bothOldConsentKeysCannotAuthorizeAndInvalidCopyNeverTouchesClipboard() {
         rule.runOnIdle {
             rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
-                .clear().putBoolean("accepted", true).putBoolean("structural_fingerprints_v1", true).commit()
+                .clear().putBoolean("accepted", true).putBoolean("structural_fingerprints_v1", true)
+                .putBoolean("sanitized_structural_report_v1", true).commit()
             Observation.load(rule.activity)
             assertFalse(Observation.consent)
             Observation.connected = true
@@ -424,6 +453,29 @@ class StructuralDiagnosticUiTest {
         }
         assertEmpty()
         shown("Observation off · service disconnected")
+    }
+
+    @Test fun v2ConsentIsExplicitAndIndependentFromRemovedV1Authorization() {
+        rule.runOnIdle {
+            val prefs = rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
+            prefs.edit().clear()
+                .putBoolean("sanitized_structural_report_v1", true)
+                .putBoolean("instagram_diagnostic_entry_gate_v1", true)
+                .commit()
+            Observation.load(rule.activity)
+            assertFalse(Observation.consent)
+            assertTrue(Observation.gateConsent)
+
+            prefs.edit().putBoolean("sanitized_structural_report_v2", false).commit()
+            Observation.load(rule.activity)
+            assertFalse(Observation.consent)
+            Observation.accept(rule.activity, true)
+            assertTrue(Observation.consent)
+            assertTrue(prefs.getBoolean("sanitized_structural_report_v2", false))
+            Observation.accept(rule.activity, false)
+            assertFalse(Observation.consent)
+            assertFalse(prefs.getBoolean("sanitized_structural_report_v2", true))
+        }
     }
 
     @Test fun interruptionDisconnectAndDestructionClearEverythingAndRejectDelayedCallbacks() {
@@ -494,7 +546,7 @@ class StructuralDiagnosticUiTest {
             val prefs = rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
             assertEquals(
                 mapOf(
-                    "sanitized_structural_report_v1" to true,
+                    "sanitized_structural_report_v2" to true,
                     "instagram_diagnostic_entry_gate_v1" to false,
                     "instagram_session_timer_enabled_v1" to true
                 ),

@@ -18,6 +18,7 @@ MAIN = [
     "OverlayForegroundWatchdog.kt",
     "EntryGateOverlayModel.kt",
     "BreathingVisuals.kt",
+    "StructuralMetadata.kt",
     "SanitizedStructuralReport.kt",
     "OverlayRemovalTrace.kt",
     "RemovalTraceStore.kt",
@@ -32,6 +33,7 @@ TESTS = [
     "EntryGateOverlayModelTest.kt",
     "BreathingVisualsTest.kt",
     "SanitizedStructuralReportTest.kt",
+    "StructuralMetadataTest.kt",
     "OverlayRemovalTraceTest.kt",
 ]
 TEST_CLASSES = [
@@ -44,6 +46,7 @@ TEST_CLASSES = [
     "com.chardy.doom.EntryGateOverlayModelTest",
     "com.chardy.doom.BreathingVisualsTest",
     "com.chardy.doom.SanitizedStructuralReportTest",
+    "com.chardy.doom.StructuralMetadataTest",
     "com.chardy.doom.OverlayRemovalTraceTest",
 ]
 

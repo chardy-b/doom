@@ -16,6 +16,13 @@ class BreathingVisualsTest {
         assertTrue(b(100)-b(0) < b(2_100)-b(2_000))
         assertTrue(b(4_000)-b(3_900) < b(2_100)-b(2_000))
     }
+    @Test fun smootherstepHasQuinticQuarterSampleAndFlatEndpoints() {
+        assertEquals(0.103515625f, BreathingVisuals.smootherstep(.25f), 0.000001f)
+        assertEquals(0.5f, BreathingVisuals.smootherstep(.5f), 0.000001f)
+        val epsilon = .001f
+        assertTrue(BreathingVisuals.smootherstep(epsilon) < epsilon)
+        assertTrue(1f - BreathingVisuals.smootherstep(1f - epsilon) < epsilon)
+    }
     @Test fun segmentMappingAndCompletionAreExact() {
         assertEquals(listOf(0f), BreathingVisuals.frame(0,10_000).segments)
         assertEquals(listOf(1f, .5f), BreathingVisuals.frame(15_000,20_000).segments)
@@ -24,5 +31,30 @@ class BreathingVisualsTest {
     @Test fun paletteContrastAndLayersMeetContract() {
         assertTrue(BreathingVisuals.contrastRatio(BreathingVisuals.PAPER,BreathingVisuals.INK)>=4.5)
         assertTrue(BreathingVisuals.cells(.5f).map { it.layer }.toSet().size >= 4)
+    }
+    @Test fun denseGeometryHasThirtyTwoPitchesAndContinuousTargetExtents() {
+        val width = 320f
+        val low = BreathingVisuals.geometry(0f, width, 240f)
+        val high = BreathingVisuals.geometry(1f, width, 240f)
+        fun extent(cells: List<BloomCell>) = cells.maxOf { it.right } - cells.minOf { it.left }
+        assertEquals(width * .20f, extent(low), .001f)
+        assertEquals(width * .875f, extent(high), .001f)
+        assertTrue(high.map { it.gridX }.toSet().size >= 28)
+        assertTrue(high.map { it.gridY }.toSet().size >= 20)
+        assertTrue(BreathingVisuals.geometry(.35f, width, 240f).any { it.left % (width / 32f) != 0f })
+    }
+    @Test fun geometryHasOneIvoryCenterAndClosedWarmPalette() {
+        listOf(0f, .2f, .5f, .9f, 1f).forEach { progress ->
+            val cells = BreathingVisuals.geometry(progress, 480f, 300f)
+            assertEquals(1, cells.count { it.role == BloomColorRole.PAPER && it.alpha == 1f })
+            assertTrue(cells.all { it.role != BloomColorRole.PAPER || (it.gridX == 16 && it.gridY == 16) })
+            assertTrue(cells.all { it.color == BreathingVisuals.PAPER || it.color ushr 24 == 0xFF })
+        }
+    }
+
+    @Test fun reducedMotionUsesOneSharedStaticGeometryValue() {
+        val static = BreathingVisuals.geometry(BreathingVisuals.staticProgress(), 320f, 180f)
+        assertEquals(static, BreathingVisuals.geometry(BreathingVisuals.staticProgress(), 320f, 180f))
+        assertTrue(BreathingVisuals.staticProgress() in 0f..1f)
     }
 }
