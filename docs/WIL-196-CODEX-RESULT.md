@@ -1,101 +1,101 @@
 # WIL-196 repair result
 
-Repair scope was limited to `/mnt/HC_Volume_106820083/worktrees/doom/wil-196-sunset-debug-report`.
+Repair scope was limited to this worktree. The requested candidate was checked out at the
+following exact starting head:
 
-Exact starting head: `6abb000a4eced81db3cf2d5a47509001dcaab873` on branch
-`wil-196-sunset-debug-report`, with a clean worktree. The repair is uncommitted. No commit,
-push, PR, signing, release, or Linear update was performed.
+```text
+7ce3207712cc9b34f9cd45b1900cc74033058c72
+branch: wil-196-sunset-debug-report
+worktree: clean
+```
 
-## Repairs and files
+No commit, push, PR, signing, release, or Linear update was performed. The worktree is left
+uncommitted as requested.
 
-- Supplemental captures keep `3_900` and `9_900` as elapsed milliseconds and now pass
-  `10_000 - elapsedMs` to the remaining-time model. The exact fourteen-file evidence inventory
-  and all names/counts are unchanged.
-- Debug fixed-action delivery now uses one `BringIntoViewRequester` attached to the report
-  anchor in the actual `verticalScroll` container. The request is consumed only after the
-  bring-into-view operation returns. Cold and warm fixed-action instrumentation asserts the
-  report controls are displayed without `performScrollTo` or swipes.
-- `isDebugIntent` accepts only the exact action with no data/categories and `extras == null`.
-  Malformed extras remain rejected through the public instrumentation callback API.
-- Added narrow documentation for SystemUI/IME/foreign transitions that can clear the
-  process-only report between Debug launch and verified Doom return; real behavior remains a
-  consenting-phone evidence requirement.
-- Corrected the persisted-boolean wording: consent and session-timer booleans are distinct
-  from separately persisted reminder duration/suppression settings.
-- Added pure tall-portrait geometry assertions and intentional landscape vertical-compression
-  assertions.
+## TDD result
+
+RED was the supplied independent review of the exact starting head:
+`/mnt/HC_Volume_106820083/artifacts/doom-wil-196/opus-review-7ce3207.md`. It reported one
+High timer-dismissal regression plus the bounded Medium/Low repairs addressed here. No
+unexecuted Android or Gradle failure is represented as test evidence.
+
+GREEN focused host checks after the repairs:
+
+- `test-entry-gate-host.py`: **98 JVM tests passed**.
+- `test-structural-lifecycle.py`: **50 tests passed**.
+- `test-session-timer-host.py`: **5 JVM tests and 11 Python tests passed**.
+
+The full requested host checks also passed:
+
+- `test-overlay-evidence.py`: **8 tests**.
+- `test-fixture-evidence.py`: **21 tests**.
+- `test_wil155_host.py`: **5 tests**.
+- `test-internal-signing.py`: **16 tests**.
+- Shell syntax for `scripts/ci-device.sh`, `scripts/ci-fixture.sh`, and
+  `scripts/sign-internal-apk.sh`.
+- XML parsing for the changed `app/src/main/res/values/strings.xml`.
+- `git diff --check`.
+
+No Gradle command, emulator, device, adb, or connected Android test was run.
+
+## Repairs and bounded tests
+
+- Root package classification preserves only closed `system_ui` and `recognized_ime` tokens
+  before ordinary foreign sanitization. Service-level timer tests prove SystemUI and a
+  recognized IME preserve `timerDismissedThisVisit`, while ordinary foreign clears it.
+- Unique-ID serialization now emits exact `u:free_form`, `u:absent`, `u:api`, and
+  `u:read_error` wires; only a unique ID equal to the accepted resource token is retained.
+  Exact wire tests cover unavailable and accepted/unsafe cases.
+- Timeout stops before adding the timed-out row and marks `time`; clock rollback invalidates
+  the whole capture. A dangling parent uses existing `nodes` truncation vocabulary. Disclosure
+  text now states these rules and the typed unique-ID markers.
+- Debug anchor readiness is request-scoped and reset on leaving Debug; the warm-request
+  regression requires fresh anchor placement before bring-into-view.
+- Intermediate API-ceiling tests, custom action-label/extras canaries, and OPEN_DEBUG
+  precedence pairs against COMPLETE and NAVIGATE_MESSAGES were added.
+- The documented SystemUI/IME/foreign transition risk between Debug launch and verified Doom
+  return remains a consenting-phone acceptance item. Detachment, authority, privacy, routing,
+  cooldown, permissions, inventories, and signing behavior were not weakened.
 
 Changed files from the exact starting head:
 
 - `README.md`
-- `app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt`
+- `app/src/androidTest/java/com/chardy/doom/EntryGateServiceActionTest.kt`
 - `app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt`
+- `app/src/androidTest/java/com/chardy/doom/StructuralMetadataApiTest.kt`
+- `app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt`
 - `app/src/main/java/com/chardy/doom/MainActivity.kt`
-- `app/src/test/java/com/chardy/doom/BreathingVisualsTest.kt`
+- `app/src/main/java/com/chardy/doom/SanitizedStructuralReport.kt`
+- `app/src/main/java/com/chardy/doom/TimerDismissalRoot.kt`
+- `app/src/main/res/values/strings.xml`
+- `app/src/test/java/com/chardy/doom/OverlayRemovalPolicyTest.kt`
+- `app/src/test/java/com/chardy/doom/SanitizedStructuralReportTest.kt`
+- `app/src/test/java/com/chardy/doom/StructuralMetadataTest.kt`
+- `app/src/test/java/com/chardy/doom/TimerDismissalRootTest.kt`
 - `docs/WIL-149-VALIDATION.md`
 - `docs/WIL-196-CLOUD-PREFLIGHT.md`
 - `docs/WIL-196-CODEX-RESULT.md`
-- `scripts/test-overlay-evidence.py`
+- `scripts/test-entry-gate-host.py`
 - `scripts/test-structural-lifecycle.py`
 
-No manifest, permission, dependency, workflow, router, selector authority, detachment,
-cooldown, privacy, signing, fixture, or evidence-inventory change was made.
+## Provenance and remaining evidence
 
-## TDD evidence
+The earlier Android preflight remains recorded in
+[`docs/WIL-196-CLOUD-PREFLIGHT.md`](WIL-196-CLOUD-PREFLIGHT.md), but is explicitly bound to
+candidate `501d174` and must not be attributed to this `7ce3207` repair. This repair has no
+new Gradle evidence.
 
-Focused RED after adding the new source/instrumentation contracts: the structural lifecycle
-host runner reported 2 failures in 49 tests—the stale `extras?.isEmpty` predicate and the
-missing bring-into-view implementation. The first causal failures were repaired in
-`MainActivity.kt`; the phase conversion, malformed-extra assertion, geometry assertions, and
-visibility instrumentation were then kept in the test/guard path.
+The exact four canonical, fourteen supplemental, and thirteen fixture evidence contracts still
+require authorized exact-head CI/device execution and review. Remaining unrun evidence includes
+Android compilation/lint/assembly, Android-test compilation and execution, emulator/device
+timing, screenshots, physical overlay detachment, SystemUI/IME/foreign Debug-return behavior,
+real Instagram metadata, Messages routing, protected signing, and consenting-phone acceptance.
+Host checks do not establish any of those results.
 
-Focused GREEN:
-
-- `python3 -B scripts/test-overlay-evidence.py`: 8 tests passed.
-- `python3 -B scripts/test-structural-lifecycle.py`: 49 tests passed.
-
-## Host verification
-
-All requested host checks passed after the repair:
-
-- `test-entry-gate-host.py`: 91 tests.
-- `test-structural-lifecycle.py`: 49 tests.
-- `test-overlay-evidence.py`: 8 tests.
-- `test-fixture-evidence.py`: 21 tests.
-- `test_wil155_host.py`: 5 tests.
-- `test-session-timer-host.py`: 5 JUnit tests and 11 Python tests.
-- `test-removal-trace.py`: 8 tests.
-- `test-ci-isolation.py`: 6 tests.
-- `test-android-junit-validator.py`: 8 tests.
-- `test-integrated-ci-harness.py`: 17 tests.
-- `test-internal-signing.py`: 16 tests.
-- Shell syntax for `ci-device.sh`, `ci-fixture.sh`, `ci-overlay.sh`,
-  `ci-supplemental.sh`, and `sign-internal-apk.sh`: passed.
-- Python XML parse of all 6 files under `app/src`: passed.
-- `git diff --check`: passed.
-
-No Gradle command was run, as requested. The earlier Cloud preflight record is explicitly
-bound to source `366b2d253818bb2c319ddfdbdac34430973e5ae9` plus its test repair, committed as
-`6abb000a4eced81db3cf2d5a47509001dcaab873`; its recorded totals are 16 signing tests, 105
-JVM tests, 0 lint errors and 13 warnings, with the documented APK artifacts. Those numbers
-are not a preflight result for this new uncommitted repair.
-
-Final uncommitted binding, excluding this result document:
+Uncommitted provenance digest, excluding this result document, is to be recorded only after the
+final documentation edit and final host checks:
 
 ```text
 git diff --binary HEAD -- . ':(exclude)docs/WIL-196-CODEX-RESULT.md' | sha256sum
-e09bf4f7160b577bc60fac2524dfd9613c18cd618a6f67c4086e226d7ab886bb
+b9dce98f6eb148ae12ca35562ee2ff177fa892e808e45efefb5717c6ddeef87c  -
 ```
-
-The digest is intentionally recorded only after the final host checks and documentation edit.
-
-## Remaining evidence boundary
-
-No Gradle build, Android-test compilation, emulator, device, adb, GitHub Actions, screenshot
-readback, signing, release, or real-Instagram/consenting-phone validation was run for this
-repair. Host checks do not establish Android compilation, runtime Compose navigation, cold/warm
-Activity delivery, screenshot appearance, TalkBack reachability, physical overlay detachment,
-SystemUI/IME transition behavior, Instagram metadata behavior, or Messages routing. The exact
-four canonical, fourteen supplemental, and thirteen fixture evidence contracts remain owned by
-the authorized exact-head CI/device gates. No private content, screenshot, raw tree, or account
-data was collected or claimed.

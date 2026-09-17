@@ -157,6 +157,59 @@ class SanitizedStructuralReportTest {
         assertTrue(result.text.contains("actions=u:read_error action_count=u:read_error actions_truncated=u:read_error"))
     }
 
+    @Test fun uniqueIdUnavailableReasonsUseExactTypedWireTokens() {
+        val reasons = listOf(
+            MetadataUnavailableReason.FREE_FORM to "u:free_form",
+            MetadataUnavailableReason.ABSENT to "u:absent",
+            MetadataUnavailableReason.API to "u:api",
+            MetadataUnavailableReason.READ_ERROR to "u:read_error",
+        )
+        reasons.forEach { (reason, wire) ->
+            val result = report(node().copy(
+                uniqueId = MetadataValue.Unavailable(reason),
+            ))
+            assertTrue("missing $wire", result.text.contains("uid=$wire"))
+            assertFalse(result.text.contains("uid=-"))
+        }
+    }
+
+    @Test fun uniqueIdOnlyRetainsTheAlreadyAcceptedResourceToken() {
+        val accepted = report(node().copy(
+            uniqueId = MetadataValue.Present("com.instagram.android:id/feed_tab"),
+        ))
+        assertTrue(accepted.text.contains("uid=com.instagram.android:id/feed_tab"))
+
+        val unsafe = report(node().copy(
+            uniqueId = MetadataValue.Present("free-form-public-value"),
+        ))
+        assertTrue(unsafe.text.contains("uid=u:free_form"))
+        assertFalse(unsafe.text.contains("free-form-public-value"))
+    }
+
+    @Test fun danglingParentUsesClosedNodeOmissionReason() {
+        val result = report(node(index = 3, parent = MetadataValue.Present(99), depth = 1))
+        assertTrue(result.truncated)
+        assertTrue(result.text.contains("reasons=[nodes]"))
+        assertFalse(result.text.contains("reasons=[bytes]"))
+    }
+
+    @Test fun timeoutStopsBeforeRowAndRollbackInvalidatesBuilder() {
+        val timeout = SanitizedStructuralReport.Builder().apply {
+            add(node().copy(
+                elapsedOffsetMs = MetadataValue.Unavailable(MetadataUnavailableReason.TIMEOUT),
+            ))
+        }.build()
+        assertNull(timeout)
+
+        val rollback = SanitizedStructuralReport.Builder().apply {
+            add(node().copy(
+                elapsedOffsetMs = MetadataValue.Unavailable(MetadataUnavailableReason.CLOCK_ROLLBACK),
+            ))
+            add(node(index = 1, id = "com.instagram.android:id/later"))
+        }.build()
+        assertNull(rollback)
+    }
+
     @Test fun immutableReportDoesNotChangeAfterBuilderMutation() {
         val builder = SanitizedStructuralReport.Builder().apply { add(node()) }
         val first = builder.build()!!

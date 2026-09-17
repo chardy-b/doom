@@ -97,6 +97,14 @@ class StructuralDiagnosticUiTest {
         rule.runOnIdle { assertTrue(Observation.report != null) }
     }
 
+    @Test fun leavingDebugThenStartingWarmDebugRequestReanchorsControls() {
+        seed()
+        rule.onNodeWithText("Home").performClick()
+        rule.onNodeWithText("Debug").performClick()
+        deliverNewIntent(MainActivity.debugIntent(rule.activity))
+        assertDebugControlsDisplayed()
+    }
+
     @Test fun previewCancelAndConsumedDebugRequestSurviveRotationWithoutPersistingReport() {
         rule.onNodeWithText("Home").performClick()
         rule.onNodeWithText("Preview breathing reminder").performClick()
@@ -313,6 +321,33 @@ class StructuralDiagnosticUiTest {
             assertFalse(Observation.gateConsent)
             assertNotNull(Observation.report)
             assertEquals(EntryGateState.OUTSIDE, Observation.entryGateState)
+        }
+    }
+
+    @Test fun captureRollbackClearsAndTimeoutStopsBeforeEmittingTimedOutRow() {
+        val service = DoomAccessibilityService()
+        rule.runOnIdle {
+            ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+                .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
+            Observation.accept(rule.activity, true)
+            Observation.connected = true
+            val clock = DoomAccessibilityService::class.java
+                .getDeclaredField("monotonicClock").apply { isAccessible = true }
+            fun capture(now: Long) {
+                clock.set(service, { now })
+                val root = AccessibilityNodeInfo.obtain().apply {
+                    packageName = "com.instagram.android"
+                    viewIdResourceName = "com.instagram.android:id/timing_canary"
+                }
+                DoomAccessibilityService::class.java.getDeclaredMethod(
+                    "collect", AccessibilityNodeInfo::class.java, StructuralCaptureContext::class.java
+                ).apply { isAccessible = true }.invoke(
+                    service, root, StructuralCaptureContext.synthetic(startedElapsedMs = 1_000L),
+                )
+                assertNull(Observation.report)
+            }
+            capture(999L)
+            capture(11_001L)
         }
     }
 

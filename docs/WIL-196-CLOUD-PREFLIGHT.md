@@ -1,6 +1,11 @@
-# WIL-196 Codex Cloud preflight — candidate `501d174` plus minimal compile repair
+# Historical WIL-196 Codex Cloud preflight — candidate `501d174` plus minimal compile repair
 
 Date: 2026-09-17 (UTC)
+
+This is historical Android evidence for the earlier `501d174` candidate and its minimal
+Compose opt-in repair. It is not evidence for exact candidate `7ce3207712cc9b34f9cd45b1900cc74033058c72`
+or the subsequent uncommitted repair on that head. No new Gradle, Android-test compilation,
+emulator, device, adb, or GitHub Actions result is claimed in this record.
 
 ## Candidate identity and repair binding
 

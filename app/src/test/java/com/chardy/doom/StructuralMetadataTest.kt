@@ -39,6 +39,17 @@ class StructuralMetadataTest {
         assertEquals("UNKNOWN", StructuralActionNames.name(0x7fff1234))
     }
 
+    @Test fun uniqueIdWireReasonsAreClosedAndExact() {
+        mapOf(
+            MetadataUnavailableReason.FREE_FORM to "u:free_form",
+            MetadataUnavailableReason.ABSENT to "u:absent",
+            MetadataUnavailableReason.API to "u:api",
+            MetadataUnavailableReason.READ_ERROR to "u:read_error",
+        ).forEach { (reason, expected) ->
+            assertEquals(expected, MetadataValue.Unavailable(reason).wireValue { it.toString() })
+        }
+    }
+
     private object AccessibilityActionIds {
         const val CLICK = 16
     }

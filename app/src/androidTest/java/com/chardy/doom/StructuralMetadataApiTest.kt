@@ -4,6 +4,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -76,6 +77,61 @@ class StructuralMetadataApiTest {
             )
             assertEquals(MetadataUnavailableReason.TIMEOUT,
                 (timeout.elapsedOffsetMs as MetadataValue.Unavailable).reason)
+        } finally {
+            node.recycle()
+        }
+    }
+
+    @Test fun intermediateApiCeilingsKeepEachGetterBoundaryTyped() {
+        val node = AccessibilityNodeInfo.obtain().apply {
+            packageName = "com.instagram.android"
+            viewIdResourceName = "com.instagram.android:id/api_boundary"
+            setBoundsInScreen(Rect(0, 0, 10, 10))
+        }
+        try {
+            listOf(27, 32, 33, 34).forEach { requested ->
+                val ceiling = minOf(requested, Build.VERSION.SDK_INT)
+                val metadata = AndroidStructuralMetadataReader(ceiling).read(
+                    node, StructuralNodePosition(), StructuralCaptureContext.synthetic(),
+                )
+                if (ceiling >= 34) assertTrue(metadata.windowBounds is MetadataValue.Present)
+                else assertEquals(
+                    MetadataUnavailableReason.API,
+                    (metadata.windowBounds as MetadataValue.Unavailable).reason,
+                )
+                if (ceiling >= 33) assertEquals(
+                    MetadataUnavailableReason.ABSENT,
+                    (metadata.uniqueId as MetadataValue.Unavailable).reason,
+                ) else assertEquals(
+                    MetadataUnavailableReason.API,
+                    (metadata.uniqueId as MetadataValue.Unavailable).reason,
+                )
+                val headingBit = 1L shl StructuralBooleanField.HEADING.ordinal
+                val granularBit = 1L shl StructuralBooleanField.GRANULAR_SCROLLING_SUPPORTED.ordinal
+                assertEquals(ceiling >= 28, metadata.flags.known and headingBit != 0L)
+                assertEquals(ceiling >= 35, metadata.flags.known and granularBit != 0L)
+            }
+        } finally {
+            node.recycle()
+        }
+    }
+
+    @Test fun customActionLabelAndExtrasAreNotSerializedOrRead() {
+        val node = AccessibilityNodeInfo.obtain().apply {
+            packageName = "com.instagram.android"
+            viewIdResourceName = "com.instagram.android:id/canary"
+            addAction(AccessibilityNodeInfo.AccessibilityAction(0x7fff1234, "CANARY_ACTION_LABEL"))
+            extras.putString("canary_key", "CANARY_EXTRA_VALUE")
+        }
+        try {
+            val metadata = AndroidStructuralMetadataReader(35).read(
+                node, StructuralNodePosition(), StructuralCaptureContext.synthetic(),
+            )
+            val report = SanitizedStructuralReport.Builder().apply { add(metadata) }.build()!!
+            assertTrue(report.text.contains("UNKNOWN"))
+            assertFalse(report.text.contains("CANARY_ACTION_LABEL"))
+            assertFalse(report.text.contains("CANARY_EXTRA_VALUE"))
+            assertFalse(report.text.contains("canary_key"))
         } finally {
             node.recycle()
         }

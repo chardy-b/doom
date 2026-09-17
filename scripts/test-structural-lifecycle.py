@@ -245,6 +245,16 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
             self.assertNotIn("swipe", body.lower())
             self.assertIn("assertDebugControlsDisplayed", body)
 
+    def test_debug_anchor_readiness_is_request_scoped_and_reset_when_leaving_debug(self):
+        self.assertIn("debugReportControlsReadyForRequest", ACTIVITY)
+        self.assertIn("debugReportControlsReadyForRequest == debugRequest", ACTIVITY)
+        self.assertIn("debugReportControlsReadyForRequest = -1L", ACTIVITY)
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        body = tests.split("@Test fun leavingDebugThenStartingWarmDebugRequestReanchorsControls", 1)[1].split("@Test", 1)[0]
+        self.assertIn('onNodeWithText("Home").performClick()', body)
+        self.assertIn('onNodeWithText("Debug").performClick()', body)
+        self.assertIn("assertDebugControlsDisplayed()", body)
+
 
     def test_process_start_is_empty_and_all_clear_state_is_memory_only(self):
         self.assertIn("var connected by mutableStateOf(false)", OBSERVATION)

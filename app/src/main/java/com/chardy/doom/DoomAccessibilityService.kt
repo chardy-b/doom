@@ -18,9 +18,15 @@ import android.view.inputmethod.InputMethodManager
 private const val SAFE_FOREIGN_PACKAGE = "__foreign__"
 
 /** Copy only the closed package categories used by authority checks; never retain free-form IDs. */
-private fun safePackageToken(value: CharSequence?): String? = when {
+private fun safePackageToken(
+    value: CharSequence?,
+    doomPackage: String? = null,
+    recognizedImePackages: Set<String> = emptySet(),
+): String? = when {
     StructuralSanitizer.isExactAscii(value, "com.instagram.android") -> "com.instagram.android"
-    StructuralSanitizer.isExactAscii(value, "com.chardyb.doom") -> "com.chardyb.doom"
+    doomPackage != null && StructuralSanitizer.isExactAscii(value, doomPackage) -> doomPackage
+    StructuralSanitizer.isExactAscii(value, "com.android.systemui") -> SAFE_SYSTEM_UI_PACKAGE
+    recognizedImePackages.any { StructuralSanitizer.isExactAscii(value, it) } -> SAFE_RECOGNIZED_IME_PACKAGE
     value == null -> null
     else -> SAFE_FOREIGN_PACKAGE
 }
@@ -87,7 +93,7 @@ class DoomAccessibilityService : AccessibilityService() {
     private var removalRetry: Runnable? = null
     private val sessionTimer = InstagramSessionTimer { monotonicClock() }
     private val timerForeground = OverlayForegroundWatchdog(
-        INSTAGRAM, "com.chardyb.doom", WATCHDOG_UNCERTAINTY_GRACE_MS
+        INSTAGRAM, BuildConfig.APPLICATION_ID, WATCHDOG_UNCERTAINTY_GRACE_MS
     )
     private var timerView: View? = null
     private var timerUi: InstagramTimerOverlayUi? = null
@@ -122,7 +128,7 @@ class DoomAccessibilityService : AccessibilityService() {
         { manager, view, parameters -> manager.updateViewLayout(view, parameters) }
     private val foregroundWatchdog = OverlayForegroundWatchdog(
         instagramPackage = INSTAGRAM,
-        doomPackage = "com.chardyb.doom",
+        doomPackage = BuildConfig.APPLICATION_ID,
         uncertaintyGraceMs = WATCHDOG_UNCERTAINTY_GRACE_MS,
     )
     private val removalPolicy = OverlayRemovalPolicy(MAX_REMOVAL_ATTEMPTS)
@@ -137,7 +143,9 @@ class DoomAccessibilityService : AccessibilityService() {
             null
         }
         override fun eventRoot(): AccessibilityNodeInfo? = rootInActiveWindow
-        override fun readRootPackage(root: AccessibilityNodeInfo): String? = safePackageToken(root.packageName)
+        override fun readRootPackage(root: AccessibilityNodeInfo): String? = safePackageToken(
+            root.packageName, applicationContext.packageName, timerImePackages,
+        )
         override fun routeMessages(root: AccessibilityNodeInfo): MessagesRouteResult =
             InstagramMessagesRouter.route(root)
         override fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
@@ -166,7 +174,7 @@ class DoomAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         try {
-            val packageName = safePackageToken(event?.packageName)
+            val packageName = safePackageToken(event?.packageName, applicationContext.packageName)
             val traceCapturing = RemovalTraceStore.process.isCapturing()
             val eventKind = if (traceCapturing) traceEventKind(event) else RemovalTraceEvent.NA
             val owner = if (traceCapturing) traceOwner(packageName) else RemovalTraceOwner.NA
@@ -479,7 +487,6 @@ class DoomAccessibilityService : AccessibilityService() {
                         continue
                     }
                     val metadata = reader.read(node, entry.position.copy(bfsOrdinal = visited - 1), context)
-                    builder.add(metadata)
                     val elapsedOffset = metadata.elapsedOffsetMs
                     if (elapsedOffset is MetadataValue.Unavailable) when (elapsedOffset.reason) {
                         MetadataUnavailableReason.CLOCK_ROLLBACK -> {
@@ -488,13 +495,16 @@ class DoomAccessibilityService : AccessibilityService() {
                             Observation.record(null)
                             return false
                         }
-                        MetadataUnavailableReason.TIMEOUT,
-                        MetadataUnavailableReason.READ_ERROR -> {
+                        MetadataUnavailableReason.TIMEOUT -> {
+                            // A timed-out node is not a trustworthy structural observation. Stop
+                            // before adding it so the report never emits a misleading final row.
                             builder.markTruncated("time")
                             break
                         }
+                        MetadataUnavailableReason.READ_ERROR -> builder.markTruncated("time")
                         else -> Unit
                     }
+                    builder.add(metadata)
                     val depth = entry.position.depth
                     if (depth >= SanitizedStructuralReport.MAX_DEPTH) {
                         if (metadata.rawChildCount > 0) builder.markTruncated("depth")

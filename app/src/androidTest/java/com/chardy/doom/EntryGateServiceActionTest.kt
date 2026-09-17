@@ -48,6 +48,8 @@ class EntryGateServiceActionTest {
         INSTAGRAM,
         NULL_PACKAGE,
         FOREIGN,
+        SYSTEM_UI,
+        RECOGNIZED_IME,
         DOOM,
         MISSING,
         THROW,
@@ -120,6 +122,8 @@ class EntryGateServiceActionTest {
             return AccessibilityNodeInfo.obtain().apply {
                 packageName = when (rootBehavior) {
                     RootBehavior.NULL_PACKAGE -> null
+                    RootBehavior.SYSTEM_UI -> "com.android.systemui"
+                    RootBehavior.RECOGNIZED_IME -> "com.example.keyboard"
                     RootBehavior.FOREIGN -> "com.example.foreign"
                     RootBehavior.DOOM -> "com.chardyb.doom"
                     else -> "com.instagram.android"
@@ -132,6 +136,8 @@ class EntryGateServiceActionTest {
             val packageName = when {
                 StructuralSanitizer.isExactAscii(root.packageName, "com.instagram.android") -> "com.instagram.android"
                 StructuralSanitizer.isExactAscii(root.packageName, "com.chardyb.doom") -> "com.chardyb.doom"
+                StructuralSanitizer.isExactAscii(root.packageName, "com.android.systemui") -> SAFE_SYSTEM_UI_PACKAGE
+                StructuralSanitizer.isExactAscii(root.packageName, "com.example.keyboard") -> SAFE_RECOGNIZED_IME_PACKAGE
                 root.packageName == null -> null
                 else -> "__foreign__"
             }
@@ -2007,6 +2013,30 @@ class EntryGateServiceActionTest {
                 watchdog.run()
                 assertFalse(timer.running)
                 assertFalse(fresh.platform.attached)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun timerDismissalSurvivesSystemUiAndRecognizedImeButOrdinaryForeignClearsIt() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                startBubble(fresh)
+                val epoch = field(fresh.service, "timerEpoch").getLong(fresh.service)
+                invoke(fresh.service, "dismissTimer", epoch)
+                assertTrue(field(fresh.service, "timerDismissedThisVisit").getBoolean(fresh.service))
+
+                fresh.platform.rootBehavior = RootBehavior.SYSTEM_UI
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.android.systemui")
+                assertTrue(field(fresh.service, "timerDismissedThisVisit").getBoolean(fresh.service))
+
+                fresh.platform.rootBehavior = RootBehavior.RECOGNIZED_IME
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.keyboard")
+                assertTrue(field(fresh.service, "timerDismissedThisVisit").getBoolean(fresh.service))
+
+                fresh.platform.rootBehavior = RootBehavior.FOREIGN
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                assertFalse(field(fresh.service, "timerDismissedThisVisit").getBoolean(fresh.service))
             } finally { destroyFresh(fresh) }
         }
     }

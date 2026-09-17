@@ -77,6 +77,16 @@ class OverlayRemovalPolicyTest {
         assertEquals(OverlayRemovalAction.BYPASS, vetoed.confirmedDetached())
     }
 
+    @Test fun debugRequestWinsOverTimerCompletionAndMessagesRoute() {
+        fun winner(other: OverlayRemovalAction) = OverlayRemovalPolicy().also {
+            it.request(other)
+            it.request(OverlayRemovalAction.OPEN_DEBUG)
+        }.confirmedDetached()
+
+        assertEquals(OverlayRemovalAction.OPEN_DEBUG, winner(OverlayRemovalAction.COMPLETE))
+        assertEquals(OverlayRemovalAction.OPEN_DEBUG, winner(OverlayRemovalAction.NAVIGATE_MESSAGES))
+    }
+
     @Test fun normalMessageOrderingMatchesSafetyTable() {
         fun winner(first: OverlayRemovalAction, second: OverlayRemovalAction) =
             OverlayRemovalPolicy().also { it.request(first); it.request(second) }.confirmedDetached()

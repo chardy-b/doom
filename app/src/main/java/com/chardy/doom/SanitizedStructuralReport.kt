@@ -69,6 +69,7 @@ class SanitizedStructuralReport private constructor(
         private val nodes = ArrayList<StructuralNodeMetadata>(MAX_NODES)
         private val reasons = linkedSetOf<String>()
         private var visited = 0
+        private var invalidated = false
         private val minimumChars = header(context, TRUNCATION_REASONS, MAX_NODES, MAX_NODES).length
 
         init {
@@ -97,15 +98,26 @@ class SanitizedStructuralReport private constructor(
                     node.actionState.reason == MetadataUnavailableReason.READ_ERROR)
             ) markTruncated("actions")
             val elapsed = node.elapsedOffsetMs
-            if (elapsed is MetadataValue.Unavailable &&
-                elapsed.reason == MetadataUnavailableReason.TIMEOUT
-            ) markTruncated("time")
+            if (elapsed is MetadataValue.Unavailable) when (elapsed.reason) {
+                MetadataUnavailableReason.CLOCK_ROLLBACK -> {
+                    invalidated = true
+                    return
+                }
+                MetadataUnavailableReason.TIMEOUT -> {
+                    // A timeout stops capture before this node becomes a report row.
+                    markTruncated("time")
+                    return
+                }
+                else -> Unit
+            }
             nodes += node
         }
 
         fun build(): SanitizedStructuralReport? {
-            if (nodes.isEmpty()) return null
-            val allTokens = nodes.flatMap { listOfNotNull(it.resourceId, it.className, uidToken(it.uniqueId)) }
+            if (invalidated || nodes.isEmpty()) return null
+            val allTokens = nodes.flatMap {
+                listOfNotNull(it.resourceId, it.className, uidToken(it.uniqueId, it.resourceId))
+            }
                 .toSortedSet()
             val admitted = allTokens.take(maxUniqueTokens).toSet()
             if (allTokens.size > maxUniqueTokens) markTruncated("tokens")
@@ -119,7 +131,10 @@ class SanitizedStructuralReport private constructor(
                 val candidateNode = nodes[emitted]
                 val parent = candidateNode.position.parentIndex
                 if (parent is MetadataValue.Present && parent.value !in emittedIndexes) {
-                    markTruncated("bytes")
+                    // A row whose parent is not present cannot be emitted as structural
+                    // evidence. Keep the existing closed vocabulary: this is a node omission,
+                    // not a byte-field omission.
+                    markTruncated("nodes")
                     break
                 }
                 // The final header can gain the bytes reason (and contains comma-separated
@@ -199,7 +214,7 @@ class SanitizedStructuralReport private constructor(
                 append(" d=${p.depth} t=${p.bfsOrdinal} s=").append(p.siblingSlot.wireValue { scalar(it) })
                 append(" draw=${tuple(node.drawingOrder)} children=${node.reportedChildCount}")
                 append(" id=${token(node.resourceId)} class=${token(node.className)}")
-                append(" win=${tuple(node.windowId)} uid=${token(uidToken(node.uniqueId))}")
+                append(" win=${tuple(node.windowId)} uid=${uid(node.uniqueId, node.resourceId, admitted)}")
                 append(" screen=${bounds(node.screenBounds)} window=${bounds(node.windowBounds)}")
                 append(" norm=${normalized(node.normalizedScreenBounds)}")
                 append(" flags=${node.flags.known},${node.flags.value},${node.flags.error}")
@@ -223,9 +238,22 @@ class SanitizedStructuralReport private constructor(
             else -> value.toString()
         }
 
-        private fun uidToken(value: MetadataValue<String>): String? = when (value) {
-            is MetadataValue.Present -> value.value
+        private fun uidToken(value: MetadataValue<String>, resourceId: String?): String? = when (value) {
+            is MetadataValue.Present -> value.value.takeIf { it == resourceId }
             is MetadataValue.Unavailable -> null
+        }
+
+        private fun uid(
+            value: MetadataValue<String>,
+            resourceId: String?,
+            admitted: Set<String>,
+        ): String = when (value) {
+            is MetadataValue.Present -> {
+                if (value.value != resourceId) "u:${MetadataUnavailableReason.FREE_FORM.wire}"
+                else if (value.value in admitted) value.value
+                else "u:${MetadataUnavailableReason.TOKEN_LIMIT.wire}"
+            }
+            is MetadataValue.Unavailable -> "u:${value.reason.wire}"
         }
 
         private fun StructuralNodeMetadata.hasFlag(field: StructuralBooleanField): Boolean {
