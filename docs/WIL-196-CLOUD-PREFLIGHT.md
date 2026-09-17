@@ -1,40 +1,54 @@
-# WIL-196 Codex Cloud preflight
+# WIL-196 Codex Cloud preflight — candidate `366b2d2`
 
-This is historical pre-repair evidence. It is bound to the source commit explicitly recorded
-below (`9beba5fa89e83f0ef0b483d75f043e40314c5467`), not to the later candidate
-`bcc2dae79be290938a9317d132408280c7baf968` or its uncommitted repair tree. It must not be read
-as Android build/lint evidence for the repaired candidate.
+This record **supersedes the historical preflight previously stored at this path**. The old
+record covered commit `9beba5fa89e83f0ef0b483d75f043e40314c5467` and is not evidence for this
+candidate.
 
 Date: 2026-09-17 (UTC)
 
-## Candidate identity and scope
+## Candidate identity and source-tree binding
 
-- Requested candidate and exact starting `HEAD`: `9beba5fa89e83f0ef0b483d75f043e40314c5467`.
-- Verified starting `HEAD`: `9beba5fa89e83f0ef0b483d75f043e40314c5467` (exact match).
-- The supplied checkout's local branch name was `work`; validation and repairs were performed directly on the exact requested commit contents. No fetch, checkout, rebase, dependency/toolchain update, or SDK installation/update was performed.
-- Starting worktree was clean.
+- Requested candidate: `366b2d253818bb2c319ddfdbdac34430973e5ae9`.
+- Starting `HEAD`: `366b2d253818bb2c319ddfdbdac34430973e5ae9` (exact match), with a clean
+  worktree. The supplied checkout used the local branch name `work`; no fetch, checkout,
+  rebase, dependency/toolchain update, or SDK installation/update was performed.
+- All results below bind to that exact candidate source tree plus the minimal repair listed
+  here. They must not be attributed to another commit or to the historical source tree.
 
-The first mandated preflight exposed deterministic WIL-196 resource and compilation failures. The minimal repairs were:
+## Minimal deterministic repair and final changed files
 
-1. Escaped the apostrophe in the expanded Android accessibility-service disclosure so AAPT can compile it.
-2. Corrected Kotlin nullable generic inference for optional integer metadata and made the accepted unique-ID copy use a valid Kotlin/JVM string-copy expression.
-3. Converted `captureContext` to a block body so its guarded early returns compile.
-4. Matched the non-null `ComponentActivity.onNewIntent(Intent)` API signature.
-5. Added narrowly scoped `NewApi` lint suppressions around reads that are already protected by the adapter's explicit runtime/requested-API ceiling.
+The first `:app:assembleDebugAndroidTest` invocation failed in
+`:app:compileDebugAndroidTestKotlin`: `StructuralDiagnosticUiTest` directly called the
+protected Android `Activity.onNewIntent(Intent)` callback at five sites. The test now delivers
+those intents through the public instrumentation callback API. No production behavior,
+product scope, privacy or authority boundary, permission, network/storage behavior,
+dependency, workflow, evidence inventory, or signing behavior changed.
 
-No product scope, privacy boundary, action authority, permission, network/storage behavior, Gradle/dependency/workflow, evidence inventory, or signing behavior was changed.
+Final files changed from candidate `366b2d253818bb2c319ddfdbdac34430973e5ae9`:
 
-## Final changed files
-
-- `app/src/main/java/com/chardy/doom/AndroidStructuralMetadataReader.kt`
-- `app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt`
-- `app/src/main/java/com/chardy/doom/MainActivity.kt`
-- `app/src/main/res/values/strings.xml`
+- `app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt`
 - `docs/WIL-196-CLOUD-PREFLIGHT.md`
 
-## Command results
+## Host checks
 
-### Mandated Codex Cloud preflight
+All plan and repository host checks passed:
+
+- `python3 -B scripts/test-entry-gate-host.py`: 90 tests passed.
+- `python3 -B scripts/test-structural-lifecycle.py`: 47 tests passed.
+- `python3 -B scripts/test-overlay-evidence.py`: 8 tests passed.
+- `python3 -B scripts/test-fixture-evidence.py`: 21 tests passed.
+- `python3 -B scripts/test_wil155_host.py`: 5 tests passed.
+- `python3 -B scripts/test-session-timer-host.py`: 5 JUnit and 11 Python tests passed.
+- `python3 -B scripts/test-removal-trace.py`: 8 tests passed.
+- `python3 -B scripts/test-ci-isolation.py`: 6 tests passed.
+- `python3 -B scripts/test-android-junit-validator.py`: 8 tests passed.
+- `python3 -B scripts/test-integrated-ci-harness.py`: 17 tests passed.
+- `python3 -B scripts/test-internal-signing.py`: 16 tests passed.
+- `bash -n scripts/ci-device.sh scripts/ci-fixture.sh scripts/ci-overlay.sh scripts/ci-supplemental.sh scripts/sign-internal-apk.sh`: passed.
+- Python `xml.etree.ElementTree` parse of every XML file below `app/src`: 6 files parsed.
+- `git diff --check`: passed.
+
+## Final Codex Cloud Android preflight
 
 ```bash
 python3 scripts/test-internal-signing.py && \
@@ -44,52 +58,48 @@ python3 scripts/test-internal-signing.py && \
   :app:assembleDebug
 ```
 
-Final rerun: **PASS**, exit code 0 (`BUILD SUCCESSFUL`). The signing host suite ran **16 tests**, all passing.
+Final post-repair invocation: **PASS**, exit code 0 (`BUILD SUCCESSFUL`). The signing
+suite ran 16 tests, all passing. The 16 JUnit XML suite files under
+`app/build/test-results/testDebugUnitTest/` reported:
 
-JUnit XML under `app/build/test-results/testDebugUnitTest/` contained 16 suite files and these aggregate totals:
-
-- tests: **99**
+- tests: **105**
 - failures: **0**
 - errors: **0**
 - skipped: **0**
 
-The final lint XML at `app/build/reports/lint-results-debug.xml` contained:
-
-- errors/fatal issues: **0**
-- warnings: **13**
-
-The warnings are nonblocking existing/API-deprecation, dependency-availability, Compose modifier, drawing-allocation, static-field, clickable-view, RTL, and accessibility XML compatibility warnings. The preflight also printed the environment's nonblocking SDK XML version compatibility warning.
+`app/build/reports/lint-results-debug.xml` reported **0 errors/fatal issues** and **13
+warnings**. The warnings are nonblocking API-deprecation, dependency-availability, Compose,
+drawing-allocation, static-field, clickable-view, RTL, and accessibility compatibility
+findings. Gradle also emitted the environment's nonblocking SDK XML version compatibility
+warning.
 
 Debug APK:
 
 - path: `app/build/outputs/apk/debug/app-debug.apk`
-- size: **9,141,758 bytes**
-- SHA-256: `c3d3f778a803437667eb0f0410f8473c22ef7078d6bd98d3d567540d4087f8cf`
+- size: **8,926,079 bytes**
+- SHA-256: `c857e4790f891eff97e4bb489414c5afb5c52c349a3fe06d91ecdddef1ae5291`
 
-### Android-test compilation
+## Android-test compilation
 
 ```bash
 ./gradlew --no-daemon --stacktrace :app:assembleDebugAndroidTest
 ```
 
-Result: **PASS**, exit code 0 (`BUILD SUCCESSFUL`). `:app:compileDebugAndroidTestKotlin`, Java compilation, dexing, packaging, and `:app:assembleDebugAndroidTest` completed. The Kotlin compiler daemon terminated once during startup and Gradle recovered within the same successful invocation; no rerun was needed.
+The initial invocation exposed the protected-callback compilation failure described above.
+The post-repair invocation **passed**, exit code 0 (`BUILD SUCCESSFUL`), including
+`:app:compileDebugAndroidTestKotlin`, Java compilation, dexing, packaging, and
+`:app:assembleDebugAndroidTest`.
 
 Android-test APK:
 
 - path: `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`
-- size: **1,169,248 bytes**
-- SHA-256: `f2a8af5fd4050533be23220f530f5b5bdc389f29aff7b6be3967be6f65590e50`
-
-### Additional checks
-
-All XML files below `app/src` parsed successfully with Python `xml.etree.ElementTree`.
-
-```bash
-git diff --check
-```
-
-Result: **PASS**, exit code 0.
+- size: **1,177,812 bytes**
+- SHA-256: `ff58ba06fbec4172f7083ae93d00783a7feee6267cac47a5d15b325374e3bff0`
 
 ## Evidence boundary
 
-No emulator, `connectedAndroidTest`, device, adb, GitHub Actions, signing, release, or real-Instagram/consenting-phone validation was run. These results establish host tests, SDK-35 compilation/lint, APK assembly, and Android-test compilation only; they are not runtime, device, screenshot, route, overlay-detachment, or real-Instagram evidence.
+No emulator, `connectedAndroidTest`, device, adb, GitHub Actions, APK signing, release, or
+real-Instagram/consenting-phone validation was run. These results establish host behavior,
+SDK-35 compilation/lint, debug APK assembly, and Android-test compilation only. They do not
+establish runtime, device, screenshot, route, physical-overlay-detachment, or real-Instagram
+behavior, and no such claim is made.

@@ -71,7 +71,7 @@ class StructuralDiagnosticUiTest {
         }
         // The rule's warm Activity remains the test surface; the fixed action's UI route is
         // verified separately below without using a private report or an Activity authority.
-        rule.runOnIdle { rule.activity.onNewIntent(MainActivity.debugIntent(rule.activity)) }
+        deliverNewIntent(MainActivity.debugIntent(rule.activity))
         rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().assertIsDisplayed()
     }
 
@@ -79,10 +79,10 @@ class StructuralDiagnosticUiTest {
         seed()
         rule.runOnIdle {
             val before = rule.activity.currentDebugRequestSequence()
-            rule.activity.onNewIntent(MainActivity.debugIntent(rule.activity))
-            rule.activity.onNewIntent(MainActivity.debugIntent(rule.activity))
+            deliverNewIntent(MainActivity.debugIntent(rule.activity))
+            deliverNewIntent(MainActivity.debugIntent(rule.activity))
             assertEquals(before + 2L, rule.activity.currentDebugRequestSequence())
-            rule.activity.onNewIntent(MainActivity.debugIntent(rule.activity).putExtra("unexpected", 1))
+            deliverNewIntent(MainActivity.debugIntent(rule.activity).putExtra("unexpected", 1))
         }
         rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().assertIsDisplayed()
         rule.runOnIdle { assertTrue(Observation.report != null) }
@@ -95,7 +95,7 @@ class StructuralDiagnosticUiTest {
         rule.onNodeWithText("Preview breathing reminder").assertIsDisplayed()
         seed()
         rule.runOnIdle {
-            rule.activity.onNewIntent(MainActivity.debugIntent(rule.activity))
+            deliverNewIntent(MainActivity.debugIntent(rule.activity))
         }
         rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().performClick()
         rule.runOnIdle { assertTrue(Observation.revealed) }
@@ -113,6 +113,11 @@ class StructuralDiagnosticUiTest {
         Observation.setGateConsent(rule.activity, false)
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
+    }
+
+    private fun deliverNewIntent(intent: Intent) {
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            .callActivityOnNewIntent(rule.activity, intent)
     }
     @Before fun openDebug() {
         rule.onNodeWithText("Debug").performClick()
