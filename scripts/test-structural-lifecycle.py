@@ -11,6 +11,7 @@ OBSERVATION = (REPO / "app/src/main/java/com/chardy/doom/Observation.kt").read_t
 OVERLAY_VIEW = (REPO / "app/src/main/java/com/chardy/doom/EntryGateOverlayView.kt").read_text()
 ADAPTER = (REPO / "app/src/main/java/com/chardy/doom/AndroidStructuralMetadataReader.kt").read_text()
 METADATA = (REPO / "app/src/main/java/com/chardy/doom/StructuralMetadata.kt").read_text()
+ACTIVITY = (REPO / "app/src/main/java/com/chardy/doom/MainActivity.kt").read_text()
 
 
 class StructuralLifecycleSourceTest(unittest.TestCase):
@@ -214,6 +215,35 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
         self.assertNotIn("service.onServiceConnected()", tests)
         self.assertIn('getDeclaredMethod("onServiceConnected")', tests)
+
+    def test_debug_intent_rejects_unknown_extras_without_empty_bundle_read(self):
+        predicate = ACTIVITY.split("private fun isDebugIntent", 1)[1].split("}", 1)[0]
+        self.assertIn("intent.data == null", predicate)
+        self.assertIn("intent.categories.isNullOrEmpty()", predicate)
+        self.assertIn("intent.extras == null", predicate)
+        self.assertNotIn("extras?.isEmpty", predicate)
+        self.assertNotIn("extras!!", predicate)
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        malformed = tests.split("@Test fun warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay", 1)[1].split("@Test", 1)[0]
+        self.assertIn('putExtra("unexpected", 1)', malformed)
+        self.assertIn("callActivityOnNewIntent", tests)
+
+    def test_debug_navigation_is_one_shot_bring_into_view_and_consumes_after_visibility(self):
+        self.assertIn("BringIntoViewRequester", ACTIVITY)
+        self.assertIn("bringIntoViewRequester", ACTIVITY)
+        self.assertIn("bringIntoView()", ACTIVITY)
+        self.assertIn("debugScrollRequest = 0L", ACTIVITY)
+        self.assertNotIn("positionInParent", ACTIVITY)
+        self.assertNotIn("debugScroll.value +", ACTIVITY)
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        for name in (
+            "coldDebugIntentConsumesOnceAndTargetsReportControls",
+            "warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay",
+        ):
+            body = tests.split(f"@Test fun {name}", 1)[1].split("@Test", 1)[0]
+            self.assertNotIn("performScrollTo", body)
+            self.assertNotIn("swipe", body.lower())
+            self.assertIn("assertDebugControlsDisplayed", body)
 
 
     def test_process_start_is_empty_and_all_clear_state_is_memory_only(self):

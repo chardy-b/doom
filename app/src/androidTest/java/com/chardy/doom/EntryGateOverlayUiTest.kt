@@ -243,7 +243,7 @@ class EntryGateOverlayUiTest {
     ) {
         rule.scenario.onActivity {
             val actual = requireNotNull(ui)
-            val model = EntryGateOverlayModel.from(elapsedMs, 10_000, reducedMotion)
+            val model = EntryGateOverlayModel.from(10_000 - elapsedMs, 10_000, reducedMotion)
             actual.render(model)
             assertTrue(actual.phaseLabel.text == "Breathe in" || actual.phaseLabel.text == "Breathe out")
             if (name == "03-reminder-inhale" || name == "02-overlay-captured-status") {

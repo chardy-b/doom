@@ -1,19 +1,21 @@
-# WIL-196 Codex Cloud preflight — candidate `366b2d2`
+# WIL-196 Codex Cloud preflight — source `366b2d2`, committed as `6abb000`
 
-This record **supersedes the historical preflight previously stored at this path**. The old
-record covered commit `9beba5fa89e83f0ef0b483d75f043e40314c5467` and is not evidence for this
-candidate.
+This record covers the no-emulator preflight run against source commit
+`366b2d253818bb2c319ddfdbdac34430973e5ae9` plus the Android-test callback repair listed below.
+That tested source tree was then committed as `6abb000a4eced81db3cf2d5a47509001dcaab873`.
+The older record covered commit `9beba5fa89e83f0ef0b483d75f043e40314c5467` and is not evidence
+for either committed head.
 
 Date: 2026-09-17 (UTC)
 
 ## Candidate identity and source-tree binding
 
-- Requested candidate: `366b2d253818bb2c319ddfdbdac34430973e5ae9`.
-- Starting `HEAD`: `366b2d253818bb2c319ddfdbdac34430973e5ae9` (exact match), with a clean
+- Preflight source `HEAD`: `366b2d253818bb2c319ddfdbdac34430973e5ae9` (exact match), with a clean
   worktree. The supplied checkout used the local branch name `work`; no fetch, checkout,
   rebase, dependency/toolchain update, or SDK installation/update was performed.
-- All results below bind to that exact candidate source tree plus the minimal repair listed
-  here. They must not be attributed to another commit or to the historical source tree.
+- All results below bind to that source tree plus the minimal repair listed here; the resulting
+  code was committed at exact head `6abb000a4eced81db3cf2d5a47509001dcaab873`. They must not
+  be attributed to another commit or to the historical source tree.
 
 ## Minimal deterministic repair and final changed files
 
@@ -24,7 +26,7 @@ those intents through the public instrumentation callback API. No production beh
 product scope, privacy or authority boundary, permission, network/storage behavior,
 dependency, workflow, evidence inventory, or signing behavior changed.
 
-Final files changed from candidate `366b2d253818bb2c319ddfdbdac34430973e5ae9`:
+Final files changed from preflight source `366b2d253818bb2c319ddfdbdac34430973e5ae9`:
 
 - `app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt`
 - `docs/WIL-196-CLOUD-PREFLIGHT.md`

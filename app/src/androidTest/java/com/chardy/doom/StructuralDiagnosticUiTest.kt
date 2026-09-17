@@ -11,6 +11,10 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -21,6 +25,8 @@ import org.junit.Test
 class StructuralDiagnosticUiTest {
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
     private val clipboard get() = requireNotNull(rule.activity.getSystemService(ClipboardManager::class.java))
+    private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+    private val device get() = UiDevice.getInstance(instrumentation)
 
     @Test fun mergedPackageManagerActivitiesContainOnlyMainActivityAsExportedActivity() {
         val packageInfo = rule.activity.packageManager.getPackageInfo(
@@ -48,7 +54,7 @@ class StructuralDiagnosticUiTest {
         assertEquals(MainActivity::class.java.name, intent.component?.className)
         assertNull(intent.data)
         assertTrue(intent.categories.isNullOrEmpty())
-        assertTrue(intent.extras == null || intent.extras!!.isEmpty)
+        assertNull(intent.extras)
         assertEquals(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
             intent.flags and (Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -61,7 +67,9 @@ class StructuralDiagnosticUiTest {
             scenario.onActivity { activity ->
                 assertTrue(activity.currentDebugRequestSequence() > 0L)
             }
-            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            instrumentation.waitForIdleSync()
+            assertTrue(device.wait(Until.hasObject(By.text("REVEAL LOCAL REPORT")), 5_000))
+            assertTrue(device.wait(Until.hasObject(By.text("COPY REVIEWED REPORT")), 5_000))
             scenario.onActivity { activity ->
                 val sequence = activity.currentDebugRequestSequence()
                 assertFalse(activity.consumeDebugRequest(sequence))
@@ -72,7 +80,7 @@ class StructuralDiagnosticUiTest {
         // The rule's warm Activity remains the test surface; the fixed action's UI route is
         // verified separately below without using a private report or an Activity authority.
         deliverNewIntent(MainActivity.debugIntent(rule.activity))
-        rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().assertIsDisplayed()
+        assertDebugControlsDisplayed()
     }
 
     @Test fun warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay() {
@@ -83,8 +91,9 @@ class StructuralDiagnosticUiTest {
             deliverNewIntent(MainActivity.debugIntent(rule.activity))
             assertEquals(before + 2L, rule.activity.currentDebugRequestSequence())
             deliverNewIntent(MainActivity.debugIntent(rule.activity).putExtra("unexpected", 1))
+            assertEquals(before + 2L, rule.activity.currentDebugRequestSequence())
         }
-        rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().assertIsDisplayed()
+        assertDebugControlsDisplayed()
         rule.runOnIdle { assertTrue(Observation.report != null) }
     }
 
@@ -116,8 +125,11 @@ class StructuralDiagnosticUiTest {
     }
 
     private fun deliverNewIntent(intent: Intent) {
-        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
-            .callActivityOnNewIntent(rule.activity, intent)
+        instrumentation.callActivityOnNewIntent(rule.activity, intent)
+    }
+    private fun assertDebugControlsDisplayed() {
+        rule.onNodeWithText("REVEAL LOCAL REPORT").assertIsDisplayed()
+        rule.onNodeWithText("COPY REVIEWED REPORT").assertIsDisplayed()
     }
     @Before fun openDebug() {
         rule.onNodeWithText("Debug").performClick()

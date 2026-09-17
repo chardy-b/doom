@@ -72,6 +72,7 @@ class OverlayEvidenceManifestTest(unittest.TestCase):
         self.assertNotIn("captured =", source)
         self.assertIn('"03-reminder-inhale", reducedMotion = false, elapsedMs = 3_900', source)
         self.assertIn('"04-reminder-exhale", reducedMotion = false, elapsedMs = 9_900', source)
+        self.assertIn('EntryGateOverlayModel.from(10_000 - elapsedMs, 10_000, reducedMotion)', source)
         self.assertIn('assertEquals("Breathe in", actual.phaseLabel.text)', source)
         self.assertIn('assertEquals("Breathe out", actual.phaseLabel.text)', source)
 

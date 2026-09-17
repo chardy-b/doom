@@ -44,6 +44,21 @@ class BreathingVisualsTest {
         assertTrue(BreathingVisuals.geometry(.35f, width, 240f).any { it.left % (width / 32f) != 0f })
     }
 
+    @Test fun tallPortraitFitsTheBloomAndLandscapeIntentionallyCompressesVertically() {
+        fun extents(cells: List<BloomCell>): Pair<Float, Float> =
+            (cells.maxOf { it.right } - cells.minOf { it.left }) to
+                (cells.maxOf { it.bottom } - cells.minOf { it.top })
+
+        val tallPortrait = extents(BreathingVisuals.geometry(1f, 320f, 640f))
+        val landscape = extents(BreathingVisuals.geometry(1f, 640f, 320f))
+
+        assertEquals(280f, tallPortrait.first, .001f)
+        assertEquals(280f, tallPortrait.second, .001f)
+        assertEquals(560f, landscape.first, .001f)
+        assertEquals(280f, landscape.second, .001f)
+        assertTrue(landscape.first > landscape.second * 1.5f)
+    }
+
     @Test fun visibleAlphaFloorPreservesTheMinimumAndMaximumExtents() {
         fun extent(progress: Float): Float = BreathingVisuals.geometry(progress, 320f, 240f)
             .filter { it.alpha >= 0.25f }

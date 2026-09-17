@@ -14,6 +14,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -35,7 +37,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -50,7 +51,7 @@ class MainActivity : ComponentActivity() {
 
         private fun isDebugIntent(intent: Intent?): Boolean =
             intent?.action == ACTION_OPEN_DEBUG && intent.data == null && intent.categories.isNullOrEmpty() &&
-                (intent.extras == null || intent.extras?.isEmpty == true)
+                intent.extras == null
     }
 
     private var debugRequestSequence by mutableLongStateOf(0L)
@@ -151,10 +152,11 @@ fun DoomScreen() {
     var reduceMotion by rememberSaveable { mutableStateOf(false) }
     var traceFeedback by remember { mutableStateOf<String?>(null) }
     var traceRevision by remember { mutableLongStateOf(0L) }
-    var debugReportAnchorOffset by remember { mutableIntStateOf(-1) }
+    var debugReportControlsReady by remember { mutableStateOf(false) }
     var debugScrollRequest by remember { mutableLongStateOf(0L) }
     val homeScroll = rememberScrollState()
     val debugScroll = rememberScrollState()
+    val debugReportRequester = remember { BringIntoViewRequester() }
     val debugRequest = activity?.currentDebugRequestSequence() ?: 0L
     val systemStatic = remember {
         Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
@@ -190,11 +192,12 @@ fun DoomScreen() {
         }
     }
 
-    LaunchedEffect(debugScrollRequest, debugReportAnchorOffset) {
-        if (debugScrollRequest > 0L && destination == Destination.DEBUG && debugReportAnchorOffset >= 0) {
-            debugScroll.scrollTo(
-                (debugScroll.value + debugReportAnchorOffset).coerceIn(0, debugScroll.maxValue)
-            )
+    LaunchedEffect(debugScrollRequest, debugReportControlsReady, destination) {
+        if (debugScrollRequest > 0L && destination == Destination.DEBUG && debugReportControlsReady) {
+            debugReportRequester.bringIntoView()
+            // Consume the fixed-action request only after the actual scroll container has
+            // completed the bring-into-view operation.
+            debugScrollRequest = 0L
         }
     }
 
@@ -295,7 +298,8 @@ fun DoomScreen() {
                             { traceFeedback = it },
                             remaining,
                             systemStatic,
-                            { coordinates -> debugReportAnchorOffset = coordinates.positionInParent().y.toInt() },
+                            debugReportRequester,
+                            { debugReportControlsReady = true },
                         )
                     }
                     Spacer(Modifier.height(48.dp))
@@ -449,7 +453,8 @@ private fun Debug(
     setFeedback: (String) -> Unit,
     remaining: Long,
     systemStatic: Boolean,
-    onReportAnchorPositioned: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit,
+    reportRequester: BringIntoViewRequester,
+    onReportAnchorReady: () -> Unit,
 ) {
     val context = LocalContext.current
     Frame {
@@ -517,13 +522,16 @@ private fun Debug(
         Text(
             "SANITIZED STRUCTURAL REPORT",
             color = Gold,
-            modifier = Modifier.testTag("debug_report_controls").onGloballyPositioned(onReportAnchorPositioned),
+            modifier = Modifier
+                .testTag("debug_report_controls")
+                .bringIntoViewRequester(reportRequester)
+                .onGloballyPositioned { onReportAnchorReady() },
         )
         Text("Structure changes with scrolling and content. The sanitized report is separate from a diagnostic shadow prediction; neither blocks, protects, or controls actions; the optional entry pause is default-off and fail-open.", color = Paper)
         Text("Optional accessibility access can expose screen content to an app. Doom receives package identifiers for window events from all apps and, during a visible gate, reads only one active root's package attribution to decide whether the gate remains in Instagram; it reads no foreign window tree. With fresh v2 report consent and a connected observer, even when the optional gate is off, Doom traverses only Instagram: at most 128 nodes breadth-first through depth 8. It keeps sanitized resource/class identifiers, Doom-local parent and sibling indexes, bounded screen/window geometry, normalized screen bounds, sibling-relative drawing order, fixed action names, collection/item/range tuples, named numeric fields and closed boolean masks. A public unique ID is kept only when it equals an already accepted resource ID; other values become u:free_form. Unsupported, absent, invalid, unsafe and capped values use closed u:* markers. Reports have at most 64 tokens and 8,192 final ASCII bytes, emit whole rows and mark omitted structure truncated.", color = Paper)
         Text("Reports expose static Instagram resource names and class identifiers as structural metadata only, never UI text/content/account values. No text, descriptions, hints, errors, pane or tooltip titles, notification or account content, raw trees, framework objects, arbitrary/free-form IDs or private screenshots are collected. Bounds and named scalar metadata are the narrow v2 exception; at most 64 unique tokens and 8,192 final ASCII bytes, including the complete header, are retained. Rich rows can reduce practical capacity below 128, and metadata never selects targets or drives actions. Fresh v2 report consent is required; one report stays in process memory with no file persistence, logging, network, upload or automatic export.", color = Paper)
         Text("The 8,192-byte cap includes the final header and comma-separated truncation reasons. Rich rows can make practical capacity smaller than 128 nodes; only complete rows are emitted.", color = Orange)
-        Text("Clear removes the report and reveal/copy state; a later Instagram event may create a new hidden report. Returning directly to Doom preserves the latest hidden report for local review. Other foreign apps, revocation, observer stop, disconnect, interruption, reconnect and process death clear that state. A delayed Instagram event with a wrong or missing root invalidates it.", color = Paper)
+        Text("Clear removes the report and reveal/copy state; a later Instagram event may create a new hidden report. Returning directly to Doom preserves the latest hidden report for local review. A SystemUI, IME, or other foreign transition between Debug launch and verified Doom return may clear this process-only report; consenting-phone evidence is required for real behavior. Other foreign apps, revocation, observer stop, disconnect, interruption, reconnect and process death clear that state. A delayed Instagram event with a wrong or missing root invalidates it.", color = Paper)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(
                 checked = Observation.consent,
