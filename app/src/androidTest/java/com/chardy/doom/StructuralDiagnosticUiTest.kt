@@ -4,11 +4,18 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.test.core.app.ActivityScenario
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -19,6 +26,9 @@ import org.junit.Test
 class StructuralDiagnosticUiTest {
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
     private val clipboard get() = requireNotNull(rule.activity.getSystemService(ClipboardManager::class.java))
+    private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+    private val device get() = UiDevice.getInstance(instrumentation)
+    private val manualServices = mutableListOf<DoomAccessibilityService>()
 
     @Test fun mergedPackageManagerActivitiesContainOnlyMainActivityAsExportedActivity() {
         val packageInfo = rule.activity.packageManager.getPackageInfo(
@@ -39,6 +49,93 @@ class StructuralDiagnosticUiTest {
         assertEquals(listOf("com.chardy.doom.MainActivity"), exportedActivities)
     }
 
+    @Test fun debugIntentIsExplicitInternalNavigationWithoutPayload() {
+        val intent = MainActivity.debugIntent(rule.activity)
+        assertEquals(MainActivity.ACTION_OPEN_DEBUG, intent.action)
+        assertEquals(rule.activity.packageName, intent.component?.packageName)
+        assertEquals(MainActivity::class.java.name, intent.component?.className)
+        assertNull(intent.data)
+        assertTrue(intent.categories.isNullOrEmpty())
+        assertNull(intent.extras)
+        assertEquals(
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            intent.flags and (Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        )
+    }
+
+    @Test fun coldDebugIntentConsumesOnceAndTargetsReportControls() {
+        // Keep the nested cold Activity in its own task so closing it cannot close the
+        // ActivityScenarioRule-owned Activity.
+        val coldIntent = MainActivity.debugIntent(rule.activity).apply {
+            addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+        }
+        val scenario = ActivityScenario.launch<MainActivity>(coldIntent)
+        try {
+            scenario.onActivity { activity ->
+                assertTrue(activity.currentDebugRequestSequence() > 0L)
+            }
+            instrumentation.waitForIdleSync()
+            assertTrue(device.wait(Until.hasObject(By.text("REVEAL LOCAL REPORT")), 5_000))
+            assertTrue(device.wait(Until.hasObject(By.text("COPY REVIEWED REPORT")), 5_000))
+            scenario.onActivity { activity ->
+                val sequence = activity.currentDebugRequestSequence()
+                assertFalse(activity.consumeDebugRequest(sequence))
+            }
+        } finally {
+            scenario.close()
+        }
+        // The rule's warm Activity remains the test surface; the fixed action's UI route is
+        // verified separately below without using a private report or an Activity authority.
+        deliverNewIntent(MainActivity.debugIntent(rule.activity))
+        assertDebugControlsDisplayed()
+    }
+
+    @Test fun warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay() {
+        seed()
+        rule.runOnIdle {
+            val before = rule.activity.currentDebugRequestSequence()
+            deliverNewIntent(MainActivity.debugIntent(rule.activity))
+            deliverNewIntent(MainActivity.debugIntent(rule.activity))
+            assertEquals(before + 2L, rule.activity.currentDebugRequestSequence())
+            deliverNewIntent(MainActivity.debugIntent(rule.activity).putExtra("unexpected", 1))
+            assertEquals(before + 2L, rule.activity.currentDebugRequestSequence())
+        }
+        assertDebugControlsDisplayed()
+        rule.runOnIdle {
+            assertTrue(Observation.report != null)
+            // The malformed replacement must not leave a second request queued.
+            val sequence = rule.activity.currentDebugRequestSequence()
+            assertFalse(rule.activity.consumeDebugRequest(sequence))
+        }
+    }
+
+    @Test fun leavingDebugThenStartingWarmDebugRequestReanchorsControls() {
+        seed()
+        rule.onNodeWithText("Home").performClick()
+        rule.onNodeWithText("Debug").performClick()
+        deliverNewIntent(MainActivity.debugIntent(rule.activity))
+        assertDebugControlsDisplayed()
+    }
+
+    @Test fun previewCancelAndConsumedDebugRequestSurviveRotationWithoutPersistingReport() {
+        rule.onNodeWithText("Home").performClick()
+        rule.onNodeWithText("Preview breathing reminder").performClick()
+        rule.runOnIdle { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        rule.onNodeWithText("Preview breathing reminder").assertIsDisplayed()
+        seed()
+        rule.runOnIdle {
+            deliverNewIntent(MainActivity.debugIntent(rule.activity))
+        }
+        rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().performClick()
+        rule.runOnIdle { assertTrue(Observation.revealed) }
+        val before = rule.runOnIdle { Observation.report }
+        rule.activityRule.scenario.recreate()
+        rule.runOnIdle {
+            assertSame(before, Observation.report)
+            assertTrue(Observation.revealed)
+        }
+    }
+
     @Before fun reset() = rule.runOnIdle {
         Observation.setSessionTimerEnabled(rule.activity, true)
         RemovalTraceStore.process.clear()
@@ -46,10 +143,20 @@ class StructuralDiagnosticUiTest {
         Observation.accept(rule.activity, false)
         clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
     }
+
+    private fun deliverNewIntent(intent: Intent) {
+        instrumentation.callActivityOnNewIntent(rule.activity, intent)
+    }
+    private fun assertDebugControlsDisplayed() {
+        rule.onNodeWithText("REVEAL LOCAL REPORT").assertIsDisplayed()
+        rule.onNodeWithText("COPY REVIEWED REPORT").assertIsDisplayed()
+    }
     @Before fun openDebug() {
         rule.onNodeWithText("Debug").performClick()
     }
     @After fun cleanup() = rule.runOnIdle {
+        manualServices.forEach { service -> runCatching { service.onDestroy() } }
+        manualServices.clear()
         Observation.setSessionTimerEnabled(rule.activity, true)
         RemovalTraceStore.process = RemovalTraceStore()
         Observation.setGateConsent(rule.activity, false)
@@ -74,10 +181,18 @@ class StructuralDiagnosticUiTest {
     private fun tap(text: String) = rule.onNodeWithText(text).performScrollTo().performClick()
     private fun shown(text: String) = rule.onNodeWithText(text).performScrollTo().assertIsDisplayed()
     private fun sample(depth: Int = 0) = SanitizedStructuralReport.Builder().apply {
-        add(depth, "com.instagram.android:id/feed_tab", "android.widget.TextView", 0,
-            false, false, false, true, false)
-        add(depth, "com.instagram.android:id/row_feed_media", "android.view.View", 0,
-            false, false, false, false, false)
+        add(StructuralNodeMetadata(
+            position = StructuralNodePosition(depth = depth, bfsOrdinal = 0),
+            resourceId = "com.instagram.android:id/feed_tab", className = "TextView",
+            flags = StructuralBooleanMasks(
+                known = 1L shl StructuralBooleanField.SELECTED.ordinal,
+                value = 1L shl StructuralBooleanField.SELECTED.ordinal,
+            ),
+        ))
+        add(StructuralNodeMetadata(
+            position = StructuralNodePosition(index = 1, depth = depth, bfsOrdinal = 1),
+            resourceId = "com.instagram.android:id/row_feed_media", className = "View",
+        ))
     }.build()!!
     private fun seed(depth: Int = 0) = rule.runOnIdle {
         Observation.accept(rule.activity, true)
@@ -94,6 +209,11 @@ class StructuralDiagnosticUiTest {
     private fun assertActionsDisabled() {
         rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().assertIsNotEnabled()
         rule.onNodeWithText("COPY REVIEWED REPORT").performScrollTo().assertIsNotEnabled()
+    }
+
+    private fun track(service: DoomAccessibilityService): DoomAccessibilityService {
+        manualServices += service
+        return service
     }
 
     @Test fun removalTraceControlsShowTruthfulStatesAndRefreshIsNonDestructive() {
@@ -142,7 +262,7 @@ class StructuralDiagnosticUiTest {
     @Suppress("DEPRECATION")
     private fun sendEvent(
         service: DoomAccessibilityService,
-        packageName: String,
+        packageName: String?,
         className: String? = null
     ) {
         val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
@@ -159,14 +279,18 @@ class StructuralDiagnosticUiTest {
             this.packageName = packageName
             viewIdResourceName = "com.instagram.android:id/feed_tab"
             className = "android.widget.TextView"
-            text = "SECRET_MESSAGE"
-            contentDescription = "SECRET_ACCOUNT"
-            hintText = "SECRET_HINT"
-            error = "SECRET_ERROR"
+            text = "PROHIBITED_TEXT_CANARY"
+            contentDescription = "PROHIBITED_DESCRIPTION_CANARY"
+            hintText = "PROHIBITED_HINT_CANARY"
+            error = "PROHIBITED_ERROR_CANARY"
         }
         // Collector owns/recycles this node, including on mismatched roots.
-        DoomAccessibilityService::class.java.getDeclaredMethod("collect", AccessibilityNodeInfo::class.java)
-            .apply { isAccessible = true }.invoke(service, root)
+        val startedElapsedMs = SystemClock.elapsedRealtime()
+        DoomAccessibilityService::class.java.getDeclaredMethod(
+            "collect", AccessibilityNodeInfo::class.java, StructuralCaptureContext::class.java
+        ).apply { isAccessible = true }.invoke(
+            service, root, StructuralCaptureContext.synthetic(startedElapsedMs = startedElapsedMs),
+        )
     }
 
     @Test fun disclosureAndControlsNeverClaimProtectionOrAuthorizeActions() {
@@ -188,6 +312,65 @@ class StructuralDiagnosticUiTest {
         rule.onNodeWithText("INSTAGRAM · PROTECTED").assertDoesNotExist()
         rule.onNodeWithText("LABEL FEED").assertDoesNotExist()
         rule.onNodeWithText("similarity", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun reportOnlyEventCollectsWithGateConsentOff() {
+        val service = track(DoomAccessibilityService())
+        rule.runOnIdle {
+            ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+                .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
+            Observation.accept(rule.activity, true)
+            Observation.setGateConsent(rule.activity, false)
+            Observation.connected = true
+            val root = AccessibilityNodeInfo.obtain().apply {
+                packageName = "com.instagram.android"
+                viewIdResourceName = "com.instagram.android:id/report_only_event_root"
+                className = "android.view.View"
+            }
+            val platform = object : OverlayPlatform {
+                override fun isAttached(view: android.view.View) = false
+                override fun removeImmediate(manager: android.view.WindowManager, view: android.view.View) = Unit
+                override fun currentRoot() = root
+                override fun eventRoot() = root
+                override fun routeMessages(root: AccessibilityNodeInfo) = MessagesRouteResult.FAILED
+                override fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
+                override fun performHome() = false
+                override fun openDebug() = false
+            }
+            DoomAccessibilityService::class.java.getDeclaredField("overlayPlatform")
+                .apply { isAccessible = true }.set(service, platform)
+            sendEvent(service, "com.instagram.android")
+            assertFalse(Observation.gateConsent)
+            assertNotNull(Observation.report)
+            assertEquals(EntryGateState.OUTSIDE, Observation.entryGateState)
+        }
+    }
+
+    @Test fun captureRollbackClearsAndTimeoutStopsBeforeEmittingTimedOutRow() {
+        val service = track(DoomAccessibilityService())
+        rule.runOnIdle {
+            ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+                .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
+            Observation.accept(rule.activity, true)
+            Observation.connected = true
+            val clock = DoomAccessibilityService::class.java
+                .getDeclaredField("monotonicClock").apply { isAccessible = true }
+            fun capture(now: Long) {
+                clock.set(service, { now })
+                val root = AccessibilityNodeInfo.obtain().apply {
+                    packageName = "com.instagram.android"
+                    viewIdResourceName = "com.instagram.android:id/timing_canary"
+                }
+                DoomAccessibilityService::class.java.getDeclaredMethod(
+                    "collect", AccessibilityNodeInfo::class.java, StructuralCaptureContext::class.java
+                ).apply { isAccessible = true }.invoke(
+                    service, root, StructuralCaptureContext.synthetic(startedElapsedMs = 1_000L),
+                )
+                assertNull(Observation.report)
+            }
+            capture(999L)
+            capture(11_001L)
+        }
     }
 
     @Test fun entryGateConsentIsSeparateDefaultOffAndRevocable() {
@@ -214,10 +397,12 @@ class StructuralDiagnosticUiTest {
         rule.runOnIdle {
             var skipCalls = 0
             var leaveCalls = 0
+            var debugCalls = 0
             val overlay = EntryGateOverlayViewFactory.create(
                 rule.activity,
                 onSkipToMessages = { skipCalls++ },
-                onLeaveInstagram = { leaveCalls++ }
+                onLeaveInstagram = { leaveCalls++ },
+                onDebugReport = { debugCalls++ },
             )
 
             assertTrue(overlay.skipToMessages.performClick())
@@ -226,6 +411,8 @@ class StructuralDiagnosticUiTest {
             assertTrue(overlay.leaveInstagram.performClick())
             assertEquals(1, skipCalls)
             assertEquals(1, leaveCalls)
+            assertTrue(overlay.debugReport.performClick())
+            assertEquals(1, debugCalls)
             assertEquals("Breathe in", overlay.phaseLabel.text.toString())
         }
     }
@@ -310,14 +497,14 @@ class StructuralDiagnosticUiTest {
             assertEquals(OverlayCopyResult.UNAVAILABLE, Observation.copyCurrentReportFromOverlay(rule.activity))
             assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
 
-            val overlay = EntryGateOverlayViewFactory.create(rule.activity, {}, {})
+            val overlay = EntryGateOverlayViewFactory.create(rule.activity, {}, {}, {})
             assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text.toString())
             overlay.dispose()
         }
     }
 
     @Test fun doomEventsPreserveReportButForeignOrMissingRootInvalidatesAllReportState() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         rule.runOnIdle {
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
@@ -326,7 +513,7 @@ class StructuralDiagnosticUiTest {
         revealAndCopy()
         val first = rule.runOnIdle { Observation.report }
         rule.runOnIdle {
-            collectSyntheticRoot(service, rule.activity.packageName)
+            sendEvent(service, rule.activity.packageName, MainActivity::class.java.name)
             assertSame(first, Observation.report)
             assertTrue(Observation.revealed)
             assertTrue(Observation.copied)
@@ -334,22 +521,22 @@ class StructuralDiagnosticUiTest {
         listOf("com.example.foreign", null).forEach { packageName ->
             seed(1)
             revealAndCopy()
-            rule.runOnIdle { collectSyntheticRoot(service, packageName) }
+            rule.runOnIdle { sendEvent(service, packageName) }
             assertEmpty()
             assertActionsDisabled()
             rule.runOnIdle { assertTrue(Observation.connected) }
         }
         rule.runOnIdle {
-            collectSyntheticRoot(service, "com.instagram.android")
+            sendEvent(service, "com.instagram.android")
             assertNotNull(Observation.report)
-            assertFalse(Observation.report!!.text.contains("SECRET"))
+            assertFalse(Observation.report!!.text.contains("PROHIBITED"))
             assertFalse(Observation.revealed)
             assertFalse(Observation.copied)
         }
     }
 
     @Test fun onlyMainActivityWindowEventQualifiesAsDirectReturn() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         rule.runOnIdle {
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
@@ -366,7 +553,7 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun strongerForeignCleanupClearsPendingMainActivityReturnMarker() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         rule.runOnIdle {
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
@@ -382,7 +569,7 @@ class StructuralDiagnosticUiTest {
         seed()
         revealAndCopy()
         // An unbound service has no active root; use the real event entry point.
-        rule.runOnIdle { sendEvent(DoomAccessibilityService(), "com.instagram.android") }
+        rule.runOnIdle { sendEvent(track(DoomAccessibilityService()), "com.instagram.android") }
         assertEmpty()
         assertActionsDisabled()
     }
@@ -404,7 +591,8 @@ class StructuralDiagnosticUiTest {
     @Test fun bothOldConsentKeysCannotAuthorizeAndInvalidCopyNeverTouchesClipboard() {
         rule.runOnIdle {
             rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
-                .clear().putBoolean("accepted", true).putBoolean("structural_fingerprints_v1", true).commit()
+                .clear().putBoolean("accepted", true).putBoolean("structural_fingerprints_v1", true)
+                .putBoolean("sanitized_structural_report_v1", true).commit()
             Observation.load(rule.activity)
             assertFalse(Observation.consent)
             Observation.connected = true
@@ -426,8 +614,31 @@ class StructuralDiagnosticUiTest {
         shown("Observation off · service disconnected")
     }
 
+    @Test fun v2ConsentIsExplicitAndIndependentFromRemovedV1Authorization() {
+        rule.runOnIdle {
+            val prefs = rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
+            prefs.edit().clear()
+                .putBoolean("sanitized_structural_report_v1", true)
+                .putBoolean("instagram_diagnostic_entry_gate_v1", true)
+                .commit()
+            Observation.load(rule.activity)
+            assertFalse(Observation.consent)
+            assertTrue(Observation.gateConsent)
+
+            prefs.edit().putBoolean("sanitized_structural_report_v2", false).commit()
+            Observation.load(rule.activity)
+            assertFalse(Observation.consent)
+            Observation.accept(rule.activity, true)
+            assertTrue(Observation.consent)
+            assertTrue(prefs.getBoolean("sanitized_structural_report_v2", false))
+            Observation.accept(rule.activity, false)
+            assertFalse(Observation.consent)
+            assertFalse(prefs.getBoolean("sanitized_structural_report_v2", true))
+        }
+    }
+
     @Test fun interruptionDisconnectAndDestructionClearEverythingAndRejectDelayedCallbacks() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         val endings: List<() -> Unit> = listOf(
             { service.onInterrupt() }, { service.onUnbind(null) },
             { service.onDestroy() }, { DoomAccessibilityService.disableObservation() })
@@ -452,7 +663,7 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun connectionAlwaysClearsStateAndInterruptedObserverRequiresConnectionCallback() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         rule.runOnIdle {
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
@@ -494,7 +705,7 @@ class StructuralDiagnosticUiTest {
             val prefs = rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
             assertEquals(
                 mapOf(
-                    "sanitized_structural_report_v1" to true,
+                    "sanitized_structural_report_v2" to true,
                     "instagram_diagnostic_entry_gate_v1" to false,
                     "instagram_session_timer_enabled_v1" to true
                 ),

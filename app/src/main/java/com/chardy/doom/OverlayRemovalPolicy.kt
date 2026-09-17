@@ -1,7 +1,7 @@
 package com.chardy.doom
 
 internal enum class OverlayRemovalAction {
-    HOME, COMPLETE, NAVIGATE_MESSAGES, BYPASS, PRESERVE_REPORT, RESET_OUTSIDE
+    HOME, COMPLETE, NAVIGATE_MESSAGES, BYPASS, PRESERVE_REPORT, OPEN_DEBUG, RESET_OUTSIDE
 }
 internal enum class OverlayRemovalDecision { RETRY, DISABLE_SERVICE }
 
@@ -34,7 +34,8 @@ internal class OverlayRemovalPolicy(private val maxAttempts: Int = 20) {
         if (action == OverlayRemovalAction.RESET_OUTSIDE ||
             pending == null || pending == OverlayRemovalAction.COMPLETE ||
             pending == OverlayRemovalAction.NAVIGATE_MESSAGES ||
-            pending == OverlayRemovalAction.PRESERVE_REPORT
+            pending == OverlayRemovalAction.PRESERVE_REPORT ||
+            pending == OverlayRemovalAction.OPEN_DEBUG
         ) pending = action
     }
 
@@ -74,8 +75,9 @@ internal class OverlayRemovalPolicy(private val maxAttempts: Int = 20) {
         OverlayRemovalAction.COMPLETE -> 0
         OverlayRemovalAction.NAVIGATE_MESSAGES -> 1
         OverlayRemovalAction.PRESERVE_REPORT -> 2
-        OverlayRemovalAction.BYPASS -> 3
-        OverlayRemovalAction.HOME -> 4
-        OverlayRemovalAction.RESET_OUTSIDE -> 5
+        OverlayRemovalAction.OPEN_DEBUG -> 3
+        OverlayRemovalAction.BYPASS -> 4
+        OverlayRemovalAction.HOME -> 5
+        OverlayRemovalAction.RESET_OUTSIDE -> 6
     }
 }

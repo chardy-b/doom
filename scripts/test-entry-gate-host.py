@@ -16,8 +16,10 @@ MAIN = [
     "OverlayRemovalPolicy.kt",
     "OverlayCallbackGuard.kt",
     "OverlayForegroundWatchdog.kt",
+    "TimerDismissalRoot.kt",
     "EntryGateOverlayModel.kt",
     "BreathingVisuals.kt",
+    "StructuralMetadata.kt",
     "SanitizedStructuralReport.kt",
     "OverlayRemovalTrace.kt",
     "RemovalTraceStore.kt",
@@ -29,9 +31,11 @@ TESTS = [
     "OverlayRemovalPolicyTest.kt",
     "OverlayCallbackGuardTest.kt",
     "OverlayForegroundWatchdogTest.kt",
+    "TimerDismissalRootTest.kt",
     "EntryGateOverlayModelTest.kt",
     "BreathingVisualsTest.kt",
     "SanitizedStructuralReportTest.kt",
+    "StructuralMetadataTest.kt",
     "OverlayRemovalTraceTest.kt",
 ]
 TEST_CLASSES = [
@@ -41,9 +45,11 @@ TEST_CLASSES = [
     "com.chardy.doom.OverlayRemovalPolicyTest",
     "com.chardy.doom.OverlayCallbackGuardTest",
     "com.chardy.doom.OverlayForegroundWatchdogTest",
+    "com.chardy.doom.TimerDismissalRootTest",
     "com.chardy.doom.EntryGateOverlayModelTest",
     "com.chardy.doom.BreathingVisualsTest",
     "com.chardy.doom.SanitizedStructuralReportTest",
+    "com.chardy.doom.StructuralMetadataTest",
     "com.chardy.doom.OverlayRemovalTraceTest",
 ]
 

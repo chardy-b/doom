@@ -23,7 +23,7 @@ internal class SegmentedBreathProgressView(context:Context):View(context){
   segments.forEachIndexed{i,fraction->val left=i*(segmentWidth+gap);canvas.drawRect(left,0f,left+segmentWidth,height.toFloat(),track);canvas.drawRect(left,0f,left+segmentWidth*fraction.coerceIn(0f,1f),height.toFloat(),fill)}
  }
 }
-internal class EntryGateOverlayUi(val root:View,val phaseLabel:TextView,val skipToMessages:Button,val leaveInstagram:Button,private val pixel:PixelBreathingView,private val progress:SegmentedBreathProgressView){
+internal class EntryGateOverlayUi(val root:View,val phaseLabel:TextView,val skipToMessages:Button,val leaveInstagram:Button,val debugReport:Button,private val pixel:PixelBreathingView,private val progress:SegmentedBreathProgressView){
  private var disposed=false
  private var lastPhase:String?=null
  fun render(model:EntryGateOverlayModel){
@@ -31,10 +31,10 @@ internal class EntryGateOverlayUi(val root:View,val phaseLabel:TextView,val skip
   if(lastPhase!=model.frame.label){phaseLabel.text=model.frame.label;lastPhase=model.frame.label}
   pixel.render(model.frame.bloom,model.reduceMotion);progress.render(model.frame.segments)
  }
- fun dispose(){if(disposed)return;disposed=true;skipToMessages.setOnClickListener(null);leaveInstagram.setOnClickListener(null);skipToMessages.isEnabled=false;leaveInstagram.isEnabled=false;pixel.visibility=View.INVISIBLE}
+ fun dispose(){if(disposed)return;disposed=true;skipToMessages.setOnClickListener(null);leaveInstagram.setOnClickListener(null);debugReport.setOnClickListener(null);skipToMessages.isEnabled=false;leaveInstagram.isEnabled=false;debugReport.isEnabled=false;pixel.visibility=View.INVISIBLE}
 }
 internal object EntryGateOverlayViewFactory{
- fun create(context:Context,onSkipToMessages:()->Unit,onLeaveInstagram:()->Unit):EntryGateOverlayUi{
+ fun create(context:Context,onSkipToMessages:()->Unit,onLeaveInstagram:()->Unit,onDebugReport:()->Unit):EntryGateOverlayUi{
   fun dp(v:Int)=(v*context.resources.displayMetrics.density).toInt()
   val compactLandscape=context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE
   val verticalPadding=if(compactLandscape)8 else 20
@@ -56,8 +56,13 @@ internal object EntryGateOverlayViewFactory{
   val progress=SegmentedBreathProgressView(context);body.addView(progress,LinearLayout.LayoutParams(-1,dp(if(compactLandscape)8 else 10)))
   val skip=button(context,"Skip to Messages",BreathingVisuals.INK,BreathingVisuals.GOLD,dp(52)).apply{setOnClickListener{onSkipToMessages()}}
   val leave=button(context,"Leave Instagram",BreathingVisuals.PAPER,BreathingVisuals.PANEL,dp(48)).apply{setOnClickListener{onLeaveInstagram()}}
+  val debug=button(context,"Debug report",BreathingVisuals.GOLD,BreathingVisuals.INK,dp(48)).apply{
+   setOnClickListener{onDebugReport()}
+   background=android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+  }
   body.addView(skip,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(if(compactLandscape)6 else 16)});body.addView(leave,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(if(compactLandscape)4 else 8)})
-  return EntryGateOverlayUi(scroll,phase,skip,leave,pixel,progress)
+  body.addView(debug,LinearLayout.LayoutParams(-2,-2).apply{topMargin=dp(2);gravity=Gravity.CENTER_HORIZONTAL})
+  return EntryGateOverlayUi(scroll,phase,skip,leave,debug,pixel,progress)
  }
  private fun button(c:Context,label:String,text:Int,fill:Int,height:Int)=Button(c).apply{this.text=label;textSize=16f;minHeight=height;minimumHeight=height;isAllCaps=false;setTextColor(ColorStateList.valueOf(text));background=GradientDrawable().apply{setColor(fill);setStroke(2,BreathingVisuals.GOLD);cornerRadius=4f};stateListAnimator=null}
 }

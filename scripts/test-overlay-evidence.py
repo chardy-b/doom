@@ -67,6 +67,21 @@ class OverlayEvidenceManifestTest(unittest.TestCase):
         self.assertLess(runner.index(pull), runner.index("python3 scripts/overlay-evidence-manifest.py"))
         self.assertIn("supplemental-apk/app-debug.apk", runner)
 
+    def test_breathing_captures_bind_names_to_explicit_phase_times(self):
+        source = (ROOT / "app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt").read_text()
+        self.assertNotIn("captured =", source)
+        self.assertIn('"03-reminder-inhale", reducedMotion = false, elapsedMs = 3_900', source)
+        self.assertIn('"04-reminder-exhale", reducedMotion = false, elapsedMs = 9_900', source)
+        self.assertIn('EntryGateOverlayModel.from(10_000 - elapsedMs, 10_000, reducedMotion)', source)
+        self.assertIn('assertEquals("Breathe in", actual.phaseLabel.text)', source)
+        self.assertIn('assertEquals("Breathe out", actual.phaseLabel.text)', source)
+
+    def test_debug_capture_uses_the_fixed_action_destination(self):
+        source = (ROOT / "app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt").read_text()
+        self.assertIn("instrumentation.callActivityOnNewIntent(activity, MainActivity.debugIntent(activity))", source)
+        self.assertNotIn("activity.startActivity(MainActivity.debugIntent(activity))", source)
+        self.assertIn('assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))', source)
+
     def test_missing_or_empty_apk_is_rejected(self):
         self.apk.unlink()
         with self.assertRaises(ValueError): self.manifest()
