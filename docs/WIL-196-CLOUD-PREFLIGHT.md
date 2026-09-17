@@ -1,16 +1,16 @@
-# WIL-196 final Codex Cloud preflight — exact candidate `f37b8f1`
+# WIL-196 final Codex Cloud preflight — exact candidate `db6c46c`
 
 Date: 2026-09-17 (UTC)
 
 This record covers the mandatory no-emulator preflight for exact source candidate
-`f37b8f1484e8b7aaefe15d30e90f2cd874312bda`. The supplied checkout was clean at that commit.
-The checkout exposed the local branch name `work`; the requested branch name
-`wil-196-sunset-debug-report` was not present locally. No checkout, fetch, rebase, SDK
-installation/update, dependency change, or toolchain change was performed.
+`db6c46cf171735f6c45724066ab035b2b96c0c90`. The supplied checkout was clean at that commit.
+The checkout exposed the local branch name `work`, rather than the requested branch name
+`wil-196-sunset-debug-report`. No checkout, fetch, rebase, SDK installation/update, dependency
+change, or toolchain change was performed.
 
 No deterministic compile, API, unit-test, lint-error, or Android-test compile failure occurred,
-so no source repair was needed. The only changed file produced by this preflight is this exact-head
-record.
+so no source repair was needed. The only source-tree change produced by this preflight is this
+exact-head record.
 
 ## Host checks
 
@@ -59,7 +59,7 @@ Debug APK:
 
 - path: `app/build/outputs/apk/debug/app-debug.apk`
 - size: **8,926,347 bytes**
-- SHA-256: `70d3c01454b727edc69644baa5929ced77c222d13ad41db7b762ec9e7f511b4e`
+- SHA-256: `1d6166ec1ec517851b081c62def06a6d492c550d77dbe00fc0d262794b3089b3`
 
 ## Android-test compilation
 
@@ -75,8 +75,8 @@ compile errors.
 Android-test APK:
 
 - path: `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`
-- size: **1,180,988 bytes**
-- SHA-256: `20046e28a848dda06523af3af30ef47c46d128115927a76b5844bc8c9b23556c`
+- size: **1,181,004 bytes**
+- SHA-256: `a5194024a2956cbe56d90f6803b861b64e7a8f0a9e12aeacda77f2d635b881e2`
 
 ## Final static checks and evidence boundary
 
@@ -86,6 +86,6 @@ Python `xml.etree.ElementTree` parsing passed for all **6** XML files below `app
 No emulator, `connectedAndroidTest`, device, adb, GitHub Actions, protected signing, release, or
 real-Instagram/consenting-phone validation was run. These results establish host behavior,
 SDK-35 compilation/lint, debug APK assembly, and Android-test compilation for exact source
-candidate `f37b8f1484e8b7aaefe15d30e90f2cd874312bda` only. They do not establish runtime, device,
+candidate `db6c46cf171735f6c45724066ab035b2b96c0c90` only. They do not establish runtime, device,
 screenshot, route, physical-overlay-detachment, or real-Instagram behavior, and no such claim is
 made.
