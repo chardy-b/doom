@@ -1,5 +1,6 @@
 package com.chardy.doom
 
+import android.annotation.SuppressLint
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
@@ -64,17 +65,19 @@ internal class AndroidStructuralMetadataReader(
         )
     }
 
+    @SuppressLint("NewApi")
     private fun readUniqueId(node: AccessibilityNodeInfo, resource: String?): MetadataValue<String> {
         if (!atLeast(33)) return MetadataValue.Unavailable(MetadataUnavailableReason.API)
         return try {
             val supplied = node.uniqueId ?: return MetadataValue.Unavailable(MetadataUnavailableReason.ABSENT)
-            if (resource != null && supplied == resource) MetadataValue.Present(String(resource))
+            if (resource != null && supplied == resource) MetadataValue.Present(resource.toCharArray().concatToString())
             else MetadataValue.Unavailable(MetadataUnavailableReason.FREE_FORM)
         } catch (_: RuntimeException) {
             MetadataValue.Unavailable(MetadataUnavailableReason.READ_ERROR)
         }
     }
 
+    @SuppressLint("NewApi")
     private fun readBounds(node: AccessibilityNodeInfo, inWindow: Boolean): MetadataValue<BoundsPx> {
         val rect = Rect()
         return try {
@@ -123,6 +126,7 @@ internal class AndroidStructuralMetadataReader(
             Triple(emptyList(), 0, true)
         }
 
+    @SuppressLint("NewApi")
     private fun readCollection(node: AccessibilityNodeInfo): MetadataValue<StructuralCollection> =
         if (!atLeast(19)) MetadataValue.Unavailable(MetadataUnavailableReason.API) else try {
             val info = node.collectionInfo ?: return MetadataValue.Unavailable(MetadataUnavailableReason.ABSENT)
@@ -170,6 +174,7 @@ internal class AndroidStructuralMetadataReader(
         MetadataValue.Unavailable(MetadataUnavailableReason.READ_ERROR)
     }
 
+    @SuppressLint("NewApi")
     private fun readFlags(node: AccessibilityNodeInfo): StructuralBooleanMasks {
         var known = 0L
         var value = 0L
@@ -214,7 +219,7 @@ internal class AndroidStructuralMetadataReader(
         return StructuralBooleanMasks(known, value, error)
     }
 
-    private fun <T> apiValue(api: Int, read: () -> T): MetadataValue<T> =
+    private fun <T> apiValue(api: Int, read: () -> T?): MetadataValue<T> =
         if (!atLeast(api)) MetadataValue.Unavailable(MetadataUnavailableReason.API)
         else readValue(read)
 
@@ -230,6 +235,7 @@ internal class AndroidStructuralMetadataReader(
     companion object {
         const val INSTAGRAM_PACKAGE = "com.instagram.android"
 
+        @SuppressLint("NewApi")
         fun contextFromEvent(
             event: AccessibilityEvent,
             apiLevel: Int = Build.VERSION.SDK_INT,

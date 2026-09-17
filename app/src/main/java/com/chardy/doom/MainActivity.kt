@@ -76,9 +76,8 @@ class MainActivity : ComponentActivity() {
         setContent { DoomTheme { DoomScreen() } }
     }
 
-    override fun onNewIntent(intent: Intent?) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent == null) return
         setIntent(intent)
         if (isDebugIntent(intent)) {
             debugRequestSequence++

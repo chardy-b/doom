@@ -514,17 +514,19 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     @Suppress("DEPRECATION")
-    private fun captureContext(event: AccessibilityEvent?): StructuralCaptureContext? = try {
+    private fun captureContext(event: AccessibilityEvent?): StructuralCaptureContext? {
         if (event == null) return null
-        val metrics = android.util.DisplayMetrics()
-        val display = (getSystemService(WINDOW_SERVICE) as? WindowManager)?.defaultDisplay ?: return null
-        display.getRealMetrics(metrics)
-        AndroidStructuralMetadataReader.contextFromEvent(
-            event, width = metrics.widthPixels, height = metrics.heightPixels,
-            densityDpi = metrics.densityDpi, startedElapsedMs = monotonicClock(),
-        )
-    } catch (_: RuntimeException) {
-        null
+        return try {
+            val metrics = android.util.DisplayMetrics()
+            val display = (getSystemService(WINDOW_SERVICE) as? WindowManager)?.defaultDisplay ?: return null
+            display.getRealMetrics(metrics)
+            AndroidStructuralMetadataReader.contextFromEvent(
+                event, width = metrics.widthPixels, height = metrics.heightPixels,
+                densityDpi = metrics.densityDpi, startedElapsedMs = monotonicClock(),
+            )
+        } catch (_: RuntimeException) {
+            null
+        }
     }
 
     /** Shared gate authority: deliberately independent of timer preference/dismissal/veto. */
