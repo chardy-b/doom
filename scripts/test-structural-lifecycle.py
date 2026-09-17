@@ -105,8 +105,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         preservation = tests.split("@Test fun doomEventsPreserveReportButForeignOrMissingRootInvalidatesAllReportState", 1)[1].split("@Test", 1)[0]
         self.assertIn('getDeclaredMethod("attachBaseContext", Context::class.java)', preservation)
         self.assertIn('invoke(service, rule.activity.applicationContext)', preservation)
-        self.assertIn('collectSyntheticRoot(service, rule.activity.packageName)', preservation)
-        self.assertNotIn('sendEvent(service, rule.activity.packageName)', preservation)
+        self.assertIn('sendEvent(service, rule.activity.packageName, MainActivity::class.java.name)', preservation)
+        self.assertNotIn('collectSyntheticRoot(service, rule.activity.packageName)', preservation)
         self.assertIn('listOf("com.example.foreign", null)', tests)
         self.assertIn("rule.activity.packageName", tests)
         self.assertNotIn('listOf(rule.activity.packageName, null)', tests)

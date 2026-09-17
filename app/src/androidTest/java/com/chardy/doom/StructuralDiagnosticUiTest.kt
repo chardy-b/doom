@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
@@ -27,6 +28,7 @@ class StructuralDiagnosticUiTest {
     private val clipboard get() = requireNotNull(rule.activity.getSystemService(ClipboardManager::class.java))
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val device get() = UiDevice.getInstance(instrumentation)
+    private val manualServices = mutableListOf<DoomAccessibilityService>()
 
     @Test fun mergedPackageManagerActivitiesContainOnlyMainActivityAsExportedActivity() {
         val packageInfo = rule.activity.packageManager.getPackageInfo(
@@ -62,7 +64,12 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun coldDebugIntentConsumesOnceAndTargetsReportControls() {
-        val scenario = ActivityScenario.launch<MainActivity>(MainActivity.debugIntent(rule.activity))
+        // Keep the nested cold Activity in its own task so closing it cannot close the
+        // ActivityScenarioRule-owned Activity.
+        val coldIntent = MainActivity.debugIntent(rule.activity).apply {
+            addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+        }
+        val scenario = ActivityScenario.launch<MainActivity>(coldIntent)
         try {
             scenario.onActivity { activity ->
                 assertTrue(activity.currentDebugRequestSequence() > 0L)
@@ -148,6 +155,8 @@ class StructuralDiagnosticUiTest {
         rule.onNodeWithText("Debug").performClick()
     }
     @After fun cleanup() = rule.runOnIdle {
+        manualServices.forEach { service -> runCatching { service.onDestroy() } }
+        manualServices.clear()
         Observation.setSessionTimerEnabled(rule.activity, true)
         RemovalTraceStore.process = RemovalTraceStore()
         Observation.setGateConsent(rule.activity, false)
@@ -202,6 +211,11 @@ class StructuralDiagnosticUiTest {
         rule.onNodeWithText("COPY REVIEWED REPORT").performScrollTo().assertIsNotEnabled()
     }
 
+    private fun track(service: DoomAccessibilityService): DoomAccessibilityService {
+        manualServices += service
+        return service
+    }
+
     @Test fun removalTraceControlsShowTruthfulStatesAndRefreshIsNonDestructive() {
         var now = 90_000L
         RemovalTraceStore.process = RemovalTraceStore({ now })
@@ -248,7 +262,7 @@ class StructuralDiagnosticUiTest {
     @Suppress("DEPRECATION")
     private fun sendEvent(
         service: DoomAccessibilityService,
-        packageName: String,
+        packageName: String?,
         className: String? = null
     ) {
         val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
@@ -271,9 +285,12 @@ class StructuralDiagnosticUiTest {
             error = "PROHIBITED_ERROR_CANARY"
         }
         // Collector owns/recycles this node, including on mismatched roots.
+        val startedElapsedMs = SystemClock.elapsedRealtime()
         DoomAccessibilityService::class.java.getDeclaredMethod(
             "collect", AccessibilityNodeInfo::class.java, StructuralCaptureContext::class.java
-        ).apply { isAccessible = true }.invoke(service, root, StructuralCaptureContext.synthetic())
+        ).apply { isAccessible = true }.invoke(
+            service, root, StructuralCaptureContext.synthetic(startedElapsedMs = startedElapsedMs),
+        )
     }
 
     @Test fun disclosureAndControlsNeverClaimProtectionOrAuthorizeActions() {
@@ -298,7 +315,7 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun reportOnlyEventCollectsWithGateConsentOff() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         rule.runOnIdle {
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
@@ -330,7 +347,7 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun captureRollbackClearsAndTimeoutStopsBeforeEmittingTimedOutRow() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         rule.runOnIdle {
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
@@ -487,7 +504,7 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun doomEventsPreserveReportButForeignOrMissingRootInvalidatesAllReportState() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         rule.runOnIdle {
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
@@ -496,7 +513,7 @@ class StructuralDiagnosticUiTest {
         revealAndCopy()
         val first = rule.runOnIdle { Observation.report }
         rule.runOnIdle {
-            collectSyntheticRoot(service, rule.activity.packageName)
+            sendEvent(service, rule.activity.packageName, MainActivity::class.java.name)
             assertSame(first, Observation.report)
             assertTrue(Observation.revealed)
             assertTrue(Observation.copied)
@@ -504,13 +521,13 @@ class StructuralDiagnosticUiTest {
         listOf("com.example.foreign", null).forEach { packageName ->
             seed(1)
             revealAndCopy()
-            rule.runOnIdle { collectSyntheticRoot(service, packageName) }
+            rule.runOnIdle { sendEvent(service, packageName) }
             assertEmpty()
             assertActionsDisabled()
             rule.runOnIdle { assertTrue(Observation.connected) }
         }
         rule.runOnIdle {
-            collectSyntheticRoot(service, "com.instagram.android")
+            sendEvent(service, "com.instagram.android")
             assertNotNull(Observation.report)
             assertFalse(Observation.report!!.text.contains("PROHIBITED"))
             assertFalse(Observation.revealed)
@@ -519,7 +536,7 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun onlyMainActivityWindowEventQualifiesAsDirectReturn() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         rule.runOnIdle {
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
@@ -536,7 +553,7 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun strongerForeignCleanupClearsPendingMainActivityReturnMarker() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         rule.runOnIdle {
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
@@ -552,7 +569,7 @@ class StructuralDiagnosticUiTest {
         seed()
         revealAndCopy()
         // An unbound service has no active root; use the real event entry point.
-        rule.runOnIdle { sendEvent(DoomAccessibilityService(), "com.instagram.android") }
+        rule.runOnIdle { sendEvent(track(DoomAccessibilityService()), "com.instagram.android") }
         assertEmpty()
         assertActionsDisabled()
     }
@@ -621,7 +638,7 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun interruptionDisconnectAndDestructionClearEverythingAndRejectDelayedCallbacks() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         val endings: List<() -> Unit> = listOf(
             { service.onInterrupt() }, { service.onUnbind(null) },
             { service.onDestroy() }, { DoomAccessibilityService.disableObservation() })
@@ -646,7 +663,7 @@ class StructuralDiagnosticUiTest {
     }
 
     @Test fun connectionAlwaysClearsStateAndInterruptedObserverRequiresConnectionCallback() {
-        val service = DoomAccessibilityService()
+        val service = track(DoomAccessibilityService())
         rule.runOnIdle {
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)

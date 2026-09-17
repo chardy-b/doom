@@ -26,10 +26,12 @@ import java.util.Collections
 class EntryGateServiceActionTest {
     @get:Rule val rule = ActivityScenarioRule(MainActivity::class.java)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+    private val manualServices = mutableListOf<DoomAccessibilityService>()
+    private val manualFixtures = mutableListOf<Fixture>()
 
     @Test fun timerPreferenceDismissalAndSafetyVetoAreIndependentOfGateAuthority() {
         rule.scenario.onActivity { activity ->
-            val service = DoomAccessibilityService()
+            val service = track(DoomAccessibilityService())
             Observation.accept(activity, true)
             Observation.setGateConsent(activity, true)
             Observation.connected = true
@@ -210,6 +212,11 @@ class EntryGateServiceActionTest {
 
     @After fun cleanUp() {
         rule.scenario.onActivity {
+            manualFixtures.forEach { fixture ->
+                runCatching { fixture.ui.dispose() }
+                runCatching { fixture.service.onDestroy() }
+            }
+            manualServices.forEach { service -> runCatching { service.onDestroy() } }
             Observation.setGateConsent(it, false)
             Observation.accept(it, false)
             Observation.setSessionTimerEnabled(it, true)
@@ -221,6 +228,8 @@ class EntryGateServiceActionTest {
         DoomAccessibilityService::class.java.getDeclaredField("instance")
             .apply { isAccessible = true }
             .set(null, null)
+        manualFixtures.clear()
+        manualServices.clear()
         instrumentation.waitForIdleSync()
     }
 
@@ -302,7 +311,7 @@ class EntryGateServiceActionTest {
     @Test fun actualDebugButtonRejectsStaleOrMissingAuthorityBeforeRemoval() {
         val cases = listOf("overlay", "ticket", "token", "connection")
         cases.forEach { missing ->
-            val fixture = fixture()
+            val fixture = fixture(attached = true)
             rule.scenario.onActivity {
                 when (missing) {
                     "overlay" -> field(fixture.service, "overlay").set(fixture.service, null)
@@ -1390,7 +1399,7 @@ class EntryGateServiceActionTest {
             Observation.accept(activity, true)
             Observation.setGateConsent(activity, true)
             Observation.connected = true
-            service = DoomAccessibilityService()
+            service = track(DoomAccessibilityService())
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, activity.applicationContext)
             platform = FakePlatform(false, true, RootBehavior.INSTAGRAM, MessagesRouteResult.CLICKED,
@@ -1596,7 +1605,7 @@ class EntryGateServiceActionTest {
             Observation.accept(activity, true)
             Observation.setGateConsent(activity, true)
             Observation.connected = true
-            service = DoomAccessibilityService()
+            service = track(DoomAccessibilityService())
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, activity.applicationContext)
             platform = FakePlatform(false, true, RootBehavior.INSTAGRAM, MessagesRouteResult.CLICKED,
@@ -2385,6 +2394,7 @@ class EntryGateServiceActionTest {
             })
             field(service, "overlayUi").set(service, ui)
             result = Fixture(service, platform, ticket, token, view, ui, activity)
+            manualFixtures += result
         }
         instrumentation.waitForIdleSync()
         return result
@@ -2447,6 +2457,11 @@ class EntryGateServiceActionTest {
 
     private fun gate(service: DoomAccessibilityService): InstagramEntryGate =
         field(service, "entryGate").get(service) as InstagramEntryGate
+
+    private fun track(service: DoomAccessibilityService): DoomAccessibilityService {
+        manualServices += service
+        return service
+    }
 
     private fun field(target: Any, name: String): Field =
         target.javaClass.getDeclaredField(name).apply { isAccessible = true }

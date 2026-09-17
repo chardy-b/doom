@@ -51,8 +51,9 @@ class StructuralMetadataApiTest {
             uniqueId = "free-form-public-value"
         }
         try {
-            val metadata = AndroidStructuralMetadataReader(35).read(
-                node, StructuralNodePosition(), StructuralCaptureContext.synthetic(),
+            val metadata = AndroidStructuralMetadataReader(35, nowMs = { 1_100L }).read(
+                node, StructuralNodePosition(),
+                StructuralCaptureContext.synthetic(startedElapsedMs = 1_000L),
             )
             assertEquals(MetadataUnavailableReason.FREE_FORM,
                 (metadata.uniqueId as MetadataValue.Unavailable).reason)
@@ -91,8 +92,9 @@ class StructuralMetadataApiTest {
         try {
             listOf(27, 32, 33, 34).forEach { requested ->
                 val ceiling = minOf(requested, Build.VERSION.SDK_INT)
-                val metadata = AndroidStructuralMetadataReader(ceiling).read(
-                    node, StructuralNodePosition(), StructuralCaptureContext.synthetic(),
+                val metadata = AndroidStructuralMetadataReader(ceiling, nowMs = { 1_100L }).read(
+                    node, StructuralNodePosition(),
+                    StructuralCaptureContext.synthetic(startedElapsedMs = 1_000L),
                 )
                 if (ceiling >= 34) assertTrue(metadata.windowBounds is MetadataValue.Present)
                 else assertEquals(
@@ -124,8 +126,9 @@ class StructuralMetadataApiTest {
             extras.putString("canary_key", "CANARY_EXTRA_VALUE")
         }
         try {
-            val metadata = AndroidStructuralMetadataReader(35).read(
-                node, StructuralNodePosition(), StructuralCaptureContext.synthetic(),
+            val metadata = AndroidStructuralMetadataReader(35, nowMs = { 1_100L }).read(
+                node, StructuralNodePosition(),
+                StructuralCaptureContext.synthetic(startedElapsedMs = 1_000L),
             )
             val report = SanitizedStructuralReport.Builder().apply { add(metadata) }.build()!!
             assertTrue(report.text.contains("UNKNOWN"))

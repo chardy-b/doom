@@ -205,7 +205,12 @@ class EntryGateOverlayUiTest {
             capture("01-home")
             // Exercise the same explicit fixed-action destination used by the detached
             // accessibility overlay; the nav bar is not the Debug-entry evidence path.
-            rule.scenario.onActivity { activity -> activity.startActivity(MainActivity.debugIntent(activity)) }
+            // Deliver the already-approved internal action to the rule-owned Activity. Starting
+            // another instance here leaves ActivityScenario teardown in PAUSED/RESUMED races;
+            // cold system launch is covered by the canonical navigation test.
+            rule.scenario.onActivity { activity ->
+                instrumentation.callActivityOnNewIntent(activity, MainActivity.debugIntent(activity))
+            }
             assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))
             assertTrue(swipeUntilVisible("DOOM-OWNED QUICK DEMO"))
             val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
