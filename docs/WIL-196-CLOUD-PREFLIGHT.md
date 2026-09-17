@@ -1,42 +1,34 @@
-# WIL-196 Codex Cloud preflight — source `366b2d2`, committed as `6abb000`
-
-This record covers the no-emulator preflight run against source commit
-`366b2d253818bb2c319ddfdbdac34430973e5ae9` plus the Android-test callback repair listed below.
-That tested source tree was then committed as `6abb000a4eced81db3cf2d5a47509001dcaab873`.
-The older record covered commit `9beba5fa89e83f0ef0b483d75f043e40314c5467` and is not evidence
-for either committed head.
+# WIL-196 Codex Cloud preflight — candidate `501d174` plus minimal compile repair
 
 Date: 2026-09-17 (UTC)
 
-## Candidate identity and source-tree binding
+## Candidate identity and repair binding
 
-- Preflight source `HEAD`: `366b2d253818bb2c319ddfdbdac34430973e5ae9` (exact match), with a clean
-  worktree. The supplied checkout used the local branch name `work`; no fetch, checkout,
-  rebase, dependency/toolchain update, or SDK installation/update was performed.
-- All results below bind to that source tree plus the minimal repair listed here; the resulting
-  code was committed at exact head `6abb000a4eced81db3cf2d5a47509001dcaab873`. They must not
-  be attributed to another commit or to the historical source tree.
+- The checkout started clean at exact `HEAD`
+  `501d1743b05fc566a5d1ce3a67c8c4538cbaf73c`. The supplied checkout's local branch name was
+  `work`; no fetch, checkout, rebase, SDK installation/update, dependency change, or toolchain
+  change was performed.
+- The first requested Gradle preflight reached `:app:compileDebugKotlin` and failed because the
+  candidate's new `BringIntoViewRequester` use requires an explicit opt-in to Compose's
+  experimental foundation API. `MainActivity.kt` now has only the required file-level opt-in.
+- Final results below bind to exact candidate
+  `501d1743b05fc566a5d1ce3a67c8c4538cbaf73c` plus that minimal repair and this superseding
+  record. They must not be attributed to the unmodified candidate or an older preflight.
 
-## Minimal deterministic repair and final changed files
+Changed files from the exact candidate:
 
-The first `:app:assembleDebugAndroidTest` invocation failed in
-`:app:compileDebugAndroidTestKotlin`: `StructuralDiagnosticUiTest` directly called the
-protected Android `Activity.onNewIntent(Intent)` callback at five sites. The test now delivers
-those intents through the public instrumentation callback API. No production behavior,
-product scope, privacy or authority boundary, permission, network/storage behavior,
-dependency, workflow, evidence inventory, or signing behavior changed.
-
-Final files changed from preflight source `366b2d253818bb2c319ddfdbdac34430973e5ae9`:
-
-- `app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt`
+- `app/src/main/java/com/chardy/doom/MainActivity.kt`
 - `docs/WIL-196-CLOUD-PREFLIGHT.md`
+
+No product behavior, privacy or authority boundary, permission, dependency, workflow, evidence
+inventory, fixture, signing, routing, selector, detachment, or cooldown behavior changed.
 
 ## Host checks
 
-All plan and repository host checks passed:
+All repository and WIL-196 plan host checks passed:
 
-- `python3 -B scripts/test-entry-gate-host.py`: 90 tests passed.
-- `python3 -B scripts/test-structural-lifecycle.py`: 47 tests passed.
+- `python3 -B scripts/test-entry-gate-host.py`: 91 tests passed.
+- `python3 -B scripts/test-structural-lifecycle.py`: 49 tests passed.
 - `python3 -B scripts/test-overlay-evidence.py`: 8 tests passed.
 - `python3 -B scripts/test-fixture-evidence.py`: 21 tests passed.
 - `python3 -B scripts/test_wil155_host.py`: 5 tests passed.
@@ -46,9 +38,10 @@ All plan and repository host checks passed:
 - `python3 -B scripts/test-android-junit-validator.py`: 8 tests passed.
 - `python3 -B scripts/test-integrated-ci-harness.py`: 17 tests passed.
 - `python3 -B scripts/test-internal-signing.py`: 16 tests passed.
-- `bash -n scripts/ci-device.sh scripts/ci-fixture.sh scripts/ci-overlay.sh scripts/ci-supplemental.sh scripts/sign-internal-apk.sh`: passed.
-- Python `xml.etree.ElementTree` parse of every XML file below `app/src`: 6 files parsed.
-- `git diff --check`: passed.
+- `bash -n scripts/ci-device.sh scripts/ci-fixture.sh scripts/ci-overlay.sh scripts/ci-supplemental.sh scripts/sign-internal-apk.sh`:
+  passed.
+- Python `xml.etree.ElementTree` parsing: all 6 XML files below `app/src` parsed.
+- `git diff --check`: passed before Android work and after the final documentation update.
 
 ## Final Codex Cloud Android preflight
 
@@ -60,26 +53,24 @@ python3 scripts/test-internal-signing.py && \
   :app:assembleDebug
 ```
 
-Final post-repair invocation: **PASS**, exit code 0 (`BUILD SUCCESSFUL`). The signing
-suite ran 16 tests, all passing. The 16 JUnit XML suite files under
+The final post-repair invocation passed with exit code 0 (`BUILD SUCCESSFUL`). The signing suite
+ran 16 tests, all passing. The 16 JUnit XML suite files under
 `app/build/test-results/testDebugUnitTest/` reported:
 
-- tests: **105**
+- tests: **106**
 - failures: **0**
 - errors: **0**
 - skipped: **0**
 
-`app/build/reports/lint-results-debug.xml` reported **0 errors/fatal issues** and **13
-warnings**. The warnings are nonblocking API-deprecation, dependency-availability, Compose,
-drawing-allocation, static-field, clickable-view, RTL, and accessibility compatibility
-findings. Gradle also emitted the environment's nonblocking SDK XML version compatibility
-warning.
+`app/build/reports/lint-results-debug.xml` reported **0 errors/fatal issues** and **13 warnings**.
+The warnings are nonblocking findings; the build also printed the environment's nonblocking SDK
+XML version compatibility warning.
 
 Debug APK:
 
 - path: `app/build/outputs/apk/debug/app-debug.apk`
 - size: **8,926,079 bytes**
-- SHA-256: `c857e4790f891eff97e4bb489414c5afb5c52c349a3fe06d91ecdddef1ae5291`
+- SHA-256: `f81a51335b6fd14be46db31b59cb0b127bc0f6d119600446963807542fa26582`
 
 ## Android-test compilation
 
@@ -87,20 +78,20 @@ Debug APK:
 ./gradlew --no-daemon --stacktrace :app:assembleDebugAndroidTest
 ```
 
-The initial invocation exposed the protected-callback compilation failure described above.
-The post-repair invocation **passed**, exit code 0 (`BUILD SUCCESSFUL`), including
-`:app:compileDebugAndroidTestKotlin`, Java compilation, dexing, packaging, and
-`:app:assembleDebugAndroidTest`.
+The post-repair invocation passed with exit code 0 (`BUILD SUCCESSFUL`), including Kotlin and
+Java Android-test compilation, dexing, packaging, and `:app:assembleDebugAndroidTest`. Compiler
+deprecation and one existing Java type-mismatch warning were nonfatal; there were no compile
+errors.
 
 Android-test APK:
 
 - path: `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`
-- size: **1,177,812 bytes**
-- SHA-256: `ff58ba06fbec4172f7083ae93d00783a7feee6267cac47a5d15b325374e3bff0`
+- size: **1,178,188 bytes**
+- SHA-256: `cfa9cda675d7a9fb73e507a2715f5adceaa5e3d4887652c1f8fd51b2f0b0d074`
 
 ## Evidence boundary
 
-No emulator, `connectedAndroidTest`, device, adb, GitHub Actions, APK signing, release, or
+No emulator, `connectedAndroidTest`, device, adb, GitHub Actions, protected signing, release, or
 real-Instagram/consenting-phone validation was run. These results establish host behavior,
 SDK-35 compilation/lint, debug APK assembly, and Android-test compilation only. They do not
 establish runtime, device, screenshot, route, physical-overlay-detachment, or real-Instagram
