@@ -94,7 +94,12 @@ class StructuralDiagnosticUiTest {
             assertEquals(before + 2L, rule.activity.currentDebugRequestSequence())
         }
         assertDebugControlsDisplayed()
-        rule.runOnIdle { assertTrue(Observation.report != null) }
+        rule.runOnIdle {
+            assertTrue(Observation.report != null)
+            // The malformed replacement must not leave a second request queued.
+            val sequence = rule.activity.currentDebugRequestSequence()
+            assertFalse(rule.activity.consumeDebugRequest(sequence))
+        }
     }
 
     @Test fun leavingDebugThenStartingWarmDebugRequestReanchorsControls() {

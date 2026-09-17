@@ -91,10 +91,9 @@ class MainActivity : ComponentActivity() {
             debugRequestSequence++
             debugRequestPending = true
             debugRequestConsumed = false
-        } else {
-            // A replaced/malformed intent cannot replay a previously pending destination.
-            debugRequestPending = false
         }
+        // An unrelated or malformed intent grants no request and leaves an already pending
+        // valid request for the current composition to consume.
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

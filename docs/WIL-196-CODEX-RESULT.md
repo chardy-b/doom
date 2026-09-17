@@ -1,101 +1,75 @@
 # WIL-196 repair result
 
-Repair scope was limited to this worktree. The requested candidate was checked out at the
-following exact starting head:
+This repair started from the exact requested candidate:
 
 ```text
-7ce3207712cc9b34f9cd45b1900cc74033058c72
+head:   4df0506d920e59f4a196fffbb14cd988ab2e20ee
 branch: wil-196-sunset-debug-report
-worktree: clean
+state:  clean
 ```
 
-No commit, push, PR, signing, release, or Linear update was performed. The worktree is left
-uncommitted as requested.
+The worktree is intentionally left uncommitted. No push, PR, Linear update, Gradle command,
+emulator, device, adb, signing, or release action was performed.
 
 ## TDD result
 
-RED was the supplied independent review of the exact starting head:
-`/mnt/HC_Volume_106820083/artifacts/doom-wil-196/opus-review-7ce3207.md`. It reported one
-High timer-dismissal regression plus the bounded Medium/Low repairs addressed here. No
-unexecuted Android or Gradle failure is represented as test evidence.
+The supplied review finding was the runtime RED: two valid Debug intents followed by a malformed
+replacement in one idle turn could have the malformed `onNewIntent` clear `debugRequestPending`
+before recomposition, so the valid request was not consumed and the report controls were not
+anchored.
 
-GREEN focused host checks after the repairs:
+The focused host RED was then reproduced after strengthening the test/guard: `test-structural-
+lifecycle.py` ran 50 tests with one failure because the candidate contained
+`debugRequestPending = false` in `onNewIntent`.
 
-- `test-entry-gate-host.py`: **98 JVM tests passed**.
+The GREEN is the smallest fail-safe repair:
+
+- exact valid Debug intents still increment the request sequence and set the pending bit;
+- malformed/unrelated intents still grant no request and do not increment the sequence;
+- an already pending valid request is left for the current composition to consume;
+- one-shot consumption still clears the pending bit and marks the request consumed;
+- the warm UI test asserts both control visibility and that the malformed intent did not leave a
+  second request queued.
+
+Focused GREEN: `test-structural-lifecycle.py` — **50 tests passed**.
+
+## Changed files
+
+- `app/src/main/java/com/chardy/doom/MainActivity.kt` — preserve a pending valid request across
+  malformed/unrelated `onNewIntent` calls.
+- `app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt` — assert malformed
+  replacement does not queue a second request.
+- `scripts/test-structural-lifecycle.py` — source guard for the pending-request invariant.
+- `docs/WIL-196-CODEX-RESULT.md` — this exact-head result record.
+
+The existing single `ActivityScenario` cold-intent test was left in place. A rule-owned recreate
+or warm-intent mechanism would not reliably establish the initial `onCreate` intent without
+broadening this repair; the cold path remains canonical API-35 emulator evidence.
+
+## Required host checks
+
+All requested host checks passed after the repair:
+
+- `test-entry-gate-host.py`: **98 tests passed**.
 - `test-structural-lifecycle.py`: **50 tests passed**.
-- `test-session-timer-host.py`: **5 JVM tests and 11 Python tests passed**.
+- `test-overlay-evidence.py`: **8 tests passed**.
+- `test-fixture-evidence.py`: **21 tests passed**.
+- `test_wil155_host.py`: **5 tests passed**.
+- `test-internal-signing.py`: **16 tests passed**.
+- `bash -n scripts/ci-device.sh scripts/ci-fixture.sh scripts/sign-internal-apk.sh`: passed.
+- `git diff --check`: passed.
 
-The full requested host checks also passed:
+No XML file changed, so changed-XML parsing was not applicable.
 
-- `test-overlay-evidence.py`: **8 tests**.
-- `test-fixture-evidence.py`: **21 tests**.
-- `test_wil155_host.py`: **5 tests**.
-- `test-internal-signing.py`: **16 tests**.
-- Shell syntax for `scripts/ci-device.sh`, `scripts/ci-fixture.sh`, and
-  `scripts/sign-internal-apk.sh`.
-- XML parsing for the changed `app/src/main/res/values/strings.xml`.
-- `git diff --check`.
+## Remaining evidence
 
-No Gradle command, emulator, device, adb, or connected Android test was run.
+This repair has no new Android compilation, unit-test, lint, APK, or Android-test compilation
+result. The previously recorded Codex Cloud preflight is bound to its own exact candidate and is
+not attributed to this head.
 
-## Repairs and bounded tests
-
-- Root package classification preserves only closed `system_ui` and `recognized_ime` tokens
-  before ordinary foreign sanitization. Service-level timer tests prove SystemUI and a
-  recognized IME preserve `timerDismissedThisVisit`, while ordinary foreign clears it.
-- Unique-ID serialization now emits exact `u:free_form`, `u:absent`, `u:api`, and
-  `u:read_error` wires; only a unique ID equal to the accepted resource token is retained.
-  Exact wire tests cover unavailable and accepted/unsafe cases.
-- Timeout stops before adding the timed-out row and marks `time`; clock rollback invalidates
-  the whole capture. A dangling parent uses existing `nodes` truncation vocabulary. Disclosure
-  text now states these rules and the typed unique-ID markers.
-- Debug anchor readiness is request-scoped and reset on leaving Debug; the warm-request
-  regression requires fresh anchor placement before bring-into-view.
-- Intermediate API-ceiling tests, custom action-label/extras canaries, and OPEN_DEBUG
-  precedence pairs against COMPLETE and NAVIGATE_MESSAGES were added.
-- The documented SystemUI/IME/foreign transition risk between Debug launch and verified Doom
-  return remains a consenting-phone acceptance item. Detachment, authority, privacy, routing,
-  cooldown, permissions, inventories, and signing behavior were not weakened.
-
-Changed files from the exact starting head:
-
-- `README.md`
-- `app/src/androidTest/java/com/chardy/doom/EntryGateServiceActionTest.kt`
-- `app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt`
-- `app/src/androidTest/java/com/chardy/doom/StructuralMetadataApiTest.kt`
-- `app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt`
-- `app/src/main/java/com/chardy/doom/MainActivity.kt`
-- `app/src/main/java/com/chardy/doom/SanitizedStructuralReport.kt`
-- `app/src/main/java/com/chardy/doom/TimerDismissalRoot.kt`
-- `app/src/main/res/values/strings.xml`
-- `app/src/test/java/com/chardy/doom/OverlayRemovalPolicyTest.kt`
-- `app/src/test/java/com/chardy/doom/SanitizedStructuralReportTest.kt`
-- `app/src/test/java/com/chardy/doom/StructuralMetadataTest.kt`
-- `app/src/test/java/com/chardy/doom/TimerDismissalRootTest.kt`
-- `docs/WIL-149-VALIDATION.md`
-- `docs/WIL-196-CLOUD-PREFLIGHT.md`
-- `docs/WIL-196-CODEX-RESULT.md`
-- `scripts/test-entry-gate-host.py`
-- `scripts/test-structural-lifecycle.py`
-
-## Provenance and remaining evidence
-
-The earlier Android preflight remains recorded in
-[`docs/WIL-196-CLOUD-PREFLIGHT.md`](WIL-196-CLOUD-PREFLIGHT.md), but is explicitly bound to
-candidate `501d174` and must not be attributed to this `7ce3207` repair. This repair has no
-new Gradle evidence.
-
-The exact four canonical, fourteen supplemental, and thirteen fixture evidence contracts still
-require authorized exact-head CI/device execution and review. Remaining unrun evidence includes
-Android compilation/lint/assembly, Android-test compilation and execution, emulator/device
-timing, screenshots, physical overlay detachment, SystemUI/IME/foreign Debug-return behavior,
-real Instagram metadata, Messages routing, protected signing, and consenting-phone acceptance.
-Host checks do not establish any of those results.
-
-Uncommitted provenance digest, excluding this result document, is to be recorded only after the
-final documentation edit and final host checks:
-
-```text
-git diff --binary HEAD -- . ':(exclude)docs/WIL-196-CODEX-RESULT.md' | sha256sum
-b9dce98f6eb148ae12ca35562ee2ff177fa892e808e45efefb5717c6ddeef87c  -
-```
+Still requiring authorized exact-head CI/device evidence are Android compilation and lint,
+canonical API-35 instrumentation for cold/warm/repeated/rotation/malformed Debug navigation,
+supplemental and fixture lanes, screenshots and timing, physical overlay detachment and
+foreign/SystemUI/IME return behavior, protected signing provenance, and consenting-phone
+validation with real Instagram metadata and Messages routing. Host checks do not establish any
+of those results.

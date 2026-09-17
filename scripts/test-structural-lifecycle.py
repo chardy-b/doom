@@ -223,6 +223,14 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("intent.extras == null", predicate)
         self.assertNotIn("extras?.isEmpty", predicate)
         self.assertNotIn("extras!!", predicate)
+        on_new_intent = ACTIVITY.split("override fun onNewIntent", 1)[1].split(
+            "override fun onSaveInstanceState", 1
+        )[0]
+        self.assertNotIn(
+            "debugRequestPending = false",
+            on_new_intent,
+            "malformed/unrelated intents must not cancel an already pending valid request",
+        )
         tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
         malformed = tests.split("@Test fun warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay", 1)[1].split("@Test", 1)[0]
         self.assertIn('putExtra("unexpected", 1)', malformed)
