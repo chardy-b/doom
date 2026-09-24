@@ -64,6 +64,15 @@ route behavior, physical detachment, protected signing, or real-Instagram behavi
 
 ## Remaining risk
 
+Independent review of `932c8d2` found that `MainActivity.onNewIntent` and
+`consumeDebugRequest` changed the Activity's launch-Intent identity. AndroidX
+`ActivityScenario` uses that identity to associate lifecycle callbacks, explaining the remaining
+API-35 teardown timeouts despite task isolation. The Activity now keeps its original launch Intent;
+the fixed Debug action remains one-shot through the existing request sequence, pending flag, and
+saved consumed state. Instrumentation and host guards assert that warm delivery preserves the
+launch identity. The successful synthetic-root path again asserts that text, content description,
+hint, and error canaries are absent from the serialized report.
+
 The repaired source still requires a new authorized exact-head API-35 run. In particular, the
 owned-task lifecycle, Android ActivityScenario teardown, post-rotation visibility, screenshot
 restoration, and complete canonical execution have not been re-proven on an emulator here.

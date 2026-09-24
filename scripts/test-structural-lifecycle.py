@@ -244,9 +244,15 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
             on_new_intent,
             "malformed/unrelated intents must not cancel an already pending valid request",
         )
+        self.assertNotIn("setIntent(", on_new_intent)
+        consume_request = ACTIVITY.split("internal fun consumeDebugRequest", 1)[1].split(
+            "internal fun currentDebugRequestSequence", 1
+        )[0]
+        self.assertNotIn("setIntent(", consume_request)
         tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
         malformed = tests.split("@Test fun warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay", 1)[1].split("@Test", 1)[0]
         self.assertIn('putExtra("unexpected", 1)', malformed)
+        self.assertIn("launchIdentity.filterEquals(rule.activity.intent)", malformed)
         self.assertIn("callActivityOnNewIntent", tests)
 
     def test_debug_navigation_is_one_shot_bring_into_view_and_consumes_after_visibility(self):

@@ -92,6 +92,7 @@ class StructuralDiagnosticUiTest {
 
     @Test fun warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay() {
         seed()
+        val launchIdentity = rule.runOnIdle { Intent(rule.activity.intent) }
         rule.runOnIdle {
             val before = rule.activity.currentDebugRequestSequence()
             deliverNewIntent(MainActivity.debugIntent(rule.activity))
@@ -102,6 +103,7 @@ class StructuralDiagnosticUiTest {
         }
         assertDebugControlsDisplayed()
         rule.runOnIdle {
+            assertTrue(launchIdentity.filterEquals(rule.activity.intent))
             assertTrue(Observation.report != null)
             // The malformed replacement must not leave a second request queued.
             val sequence = rule.activity.currentDebugRequestSequence()
@@ -704,6 +706,10 @@ class StructuralDiagnosticUiTest {
                 assertFalse(Observation.copied)
                 collectSyntheticRoot(service, "com.instagram.android")
                 assertNotNull(Observation.report)
+                assertFalse(Observation.report!!.text.contains("PROHIBITED_TEXT_CANARY"))
+                assertFalse(Observation.report!!.text.contains("PROHIBITED_DESCRIPTION_CANARY"))
+                assertFalse(Observation.report!!.text.contains("PROHIBITED_HINT_CANARY"))
+                assertFalse(Observation.report!!.text.contains("PROHIBITED_ERROR_CANARY"))
                 assertFalse(Observation.revealed)
                 assertFalse(Observation.copied)
             }

@@ -86,14 +86,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
         if (isDebugIntent(intent)) {
             debugRequestSequence++
             debugRequestPending = true
             debugRequestConsumed = false
         }
         // An unrelated or malformed intent grants no request and leaves an already pending
-        // valid request for the current composition to consume.
+        // valid request for the current composition to consume. Keep Activity.intent equal to
+        // the launch Intent: ActivityScenario keys lifecycle tracking to that identity, while
+        // this one-shot request already has explicit in-memory and saved-state bookkeeping.
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -105,7 +106,6 @@ class MainActivity : ComponentActivity() {
         if (!debugRequestPending || sequence != debugRequestSequence) return false
         debugRequestPending = false
         debugRequestConsumed = true
-        setIntent(Intent(intent).apply { action = null })
         return true
     }
 
