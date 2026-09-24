@@ -1,10 +1,10 @@
-# WIL-196 final Codex Cloud preflight — exact candidate `0ad225a`
+# WIL-196 final Codex Cloud preflight — exact candidate `4c9a901`
 
 Date: 2026-09-24 (UTC)
 
 This record covers the mandatory no-emulator preflight for exact source candidate
-`0ad225a1eeed2153d277934fda8a6f5c18bb8d00`, after the API-35 ActivityScenario isolation
-repair. `git rev-parse HEAD` confirmed that exact commit before host or Android work, and the
+`4c9a90166340e6047a4fedc3e78bd0cc38a071b3`, after the independent-review lifecycle repair.
+`git rev-parse HEAD` confirmed that exact commit before host or Android work, and the
 supplied checkout was clean. The checkout exposed the local branch name `work`, rather than the
 requested branch name `wil-196-sunset-debug-report`. No checkout, fetch, rebase, SDK
 installation/update, dependency change, or toolchain change was performed.
@@ -61,7 +61,7 @@ Debug APK:
 
 - path: `app/build/outputs/apk/debug/app-debug.apk`
 - size: **8,926,347 bytes**
-- SHA-256: `4a8709831c73b78712cc0ab39d8927d3ead297a5f0ea43d1a8a8e4109b7220a0`
+- SHA-256: `47dc44fffde416a7caa9bf7014d9bd7c1e19b2c7dbd63a4492d46772dcd7c345`
 
 ## Android-test compilation and assembly
 
@@ -77,8 +77,8 @@ compile errors.
 Android-test APK:
 
 - path: `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`
-- size: **1,182,808 bytes**
-- SHA-256: `a345d80f6608459d2c161cdcf03a7fe01fa0db54b8c2002df76bebaca398bd14`
+- size: **1,183,204 bytes**
+- SHA-256: `bb3f0ee18b763d961e9a1183e9515a9e5bbc6c9aaed681e2e370c3d46772ed1b`
 
 ## Final evidence boundary
 
@@ -86,6 +86,6 @@ No emulator, `connectedAndroidTest`, device, adb, GitHub Actions, protected sign
 real-Instagram/consenting-phone validation was run. Emulator/device evidence is still pending.
 These results establish host behavior, SDK-35 compilation/lint, debug APK assembly, and
 Android-test compilation/assembly for exact source candidate
-`0ad225a1eeed2153d277934fda8a6f5c18bb8d00` only. They do not establish runtime, device,
+`4c9a90166340e6047a4fedc3e78bd0cc38a071b3` only. They do not establish runtime, device,
 screenshot, route, physical-overlay-detachment, or real-Instagram behavior, and no such claim is
 made.
