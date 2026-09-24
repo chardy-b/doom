@@ -79,7 +79,10 @@ class OverlayEvidenceManifestTest(unittest.TestCase):
     def test_debug_capture_uses_the_fixed_action_destination(self):
         source = (ROOT / "app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt").read_text()
         self.assertIn("instrumentation.callActivityOnNewIntent(activity, MainActivity.debugIntent(activity))", source)
-        self.assertNotIn("activity.startActivity(MainActivity.debugIntent(activity))", source)
+        self.assertNotIn("startActivity(MainActivity.debugIntent(activity))", source)
+        self.assertIn("launchOwnedScenario", source)
+        self.assertIn("ownedScenario = scenario", source)
+        self.assertNotIn("rule.scenario.onActivity { it.recreate() }", source)
         self.assertIn('assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))', source)
 
     def test_missing_or_empty_apk_is_rejected(self):

@@ -67,7 +67,7 @@ class StructuralDiagnosticUiTest {
         // Keep the nested cold Activity in its own task so closing it cannot close the
         // ActivityScenarioRule-owned Activity.
         val coldIntent = MainActivity.debugIntent(rule.activity).apply {
-            addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
         }
         val scenario = ActivityScenario.launch<MainActivity>(coldIntent)
         try {
@@ -119,20 +119,29 @@ class StructuralDiagnosticUiTest {
 
     @Test fun previewCancelAndConsumedDebugRequestSurviveRotationWithoutPersistingReport() {
         rule.onNodeWithText("Home").performClick()
-        rule.onNodeWithText("Preview breathing reminder").performClick()
+        rule.onNodeWithText("Preview breathing reminder").performScrollTo().performClick()
         rule.runOnIdle { rule.activity.onBackPressedDispatcher.onBackPressed() }
-        rule.onNodeWithText("Preview breathing reminder").assertIsDisplayed()
+        rule.onNodeWithText("Preview breathing reminder").performScrollTo().assertIsDisplayed()
         seed()
-        rule.runOnIdle {
-            deliverNewIntent(MainActivity.debugIntent(rule.activity))
-        }
-        rule.onNodeWithText("REVEAL LOCAL REPORT").performScrollTo().performClick()
-        rule.runOnIdle { assertTrue(Observation.revealed) }
-        val before = rule.runOnIdle { Observation.report }
-        rule.activityRule.scenario.recreate()
-        rule.runOnIdle {
-            assertSame(before, Observation.report)
-            assertTrue(Observation.revealed)
+        val rotationScenario = ActivityScenario.launch<MainActivity>(MainActivity.debugIntent(rule.activity).apply {
+            addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+        })
+        try {
+            waitForDebugControls()
+            device.findObject(By.text("REVEAL LOCAL REPORT")).click()
+            instrumentation.waitForIdleSync()
+            rotationScenario.onActivity { assertTrue(Observation.revealed) }
+            var before: SanitizedStructuralReport? = null
+            rotationScenario.onActivity { before = Observation.report }
+            rotationScenario.recreate()
+            waitForDebugControls()
+            assertTrue(device.wait(Until.hasObject(By.text("DOOM-OWNED QUICK DEMO")), 5_000))
+            rotationScenario.onActivity {
+                assertSame(before, Observation.report)
+                assertTrue(Observation.revealed)
+            }
+        } finally {
+            rotationScenario.close()
         }
     }
 
@@ -146,6 +155,10 @@ class StructuralDiagnosticUiTest {
 
     private fun deliverNewIntent(intent: Intent) {
         instrumentation.callActivityOnNewIntent(rule.activity, intent)
+    }
+    private fun waitForDebugControls() {
+        assertTrue(device.wait(Until.hasObject(By.text("REVEAL LOCAL REPORT")), 5_000))
+        assertTrue(device.wait(Until.hasObject(By.text("COPY REVIEWED REPORT")), 5_000))
     }
     private fun assertDebugControlsDisplayed() {
         rule.onNodeWithText("REVEAL LOCAL REPORT").assertIsDisplayed()
@@ -526,13 +539,13 @@ class StructuralDiagnosticUiTest {
             assertActionsDisabled()
             rule.runOnIdle { assertTrue(Observation.connected) }
         }
+        seed(2)
+        revealAndCopy()
         rule.runOnIdle {
             sendEvent(service, "com.instagram.android")
-            assertNotNull(Observation.report)
-            assertFalse(Observation.report!!.text.contains("PROHIBITED"))
-            assertFalse(Observation.revealed)
-            assertFalse(Observation.copied)
         }
+        assertEmpty()
+        assertActionsDisabled()
     }
 
     @Test fun onlyMainActivityWindowEventQualifiesAsDirectReturn() {

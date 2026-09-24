@@ -110,6 +110,19 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn('listOf("com.example.foreign", null)', tests)
         self.assertIn("rule.activity.packageName", tests)
         self.assertNotIn('listOf(rule.activity.packageName, null)', tests)
+        self.assertIn('sendEvent(service, "com.instagram.android")', preservation)
+
+    def test_instrumentation_activity_ownership_is_explicit_and_rule_activity_is_not_replaced(self):
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        overlay = (REPO / "app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt").read_text()
+        self.assertIn("FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT", tests)
+        self.assertIn("rotationScenario.recreate()", tests)
+        self.assertNotIn("rule.activityRule.scenario.recreate()", tests)
+        self.assertNotIn("rule.scenario.recreate()", tests)
+        self.assertIn("launchOwnedScenario", overlay)
+        self.assertIn("ownedScenario", overlay)
+        self.assertIn("FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT", overlay)
+        self.assertNotRegex(overlay, r"rule\.scenario\.onActivity\s*\{\s*it\.recreate\(\)\s*\}")
 
     def test_interrupt_marks_disconnected_and_clears_before_any_later_record(self):
         self.assertIn("override fun onInterrupt()", SERVICE)

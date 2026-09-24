@@ -1,5 +1,6 @@
 package com.chardy.doom
 
+import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.drawable.ColorDrawable
 import android.os.SystemClock
@@ -7,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.ScrollView
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -25,6 +27,14 @@ class EntryGateOverlayUiTest {
     @get:Rule val rule = ActivityScenarioRule(MainActivity::class.java)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val device get() = UiDevice.getInstance(instrumentation)
+    private var ownedScenario: ActivityScenario<MainActivity>? = null
+    private val activeScenario: ActivityScenario<MainActivity>
+        get() = ownedScenario ?: rule.scenario
+
+    private fun launchOwnedScenario(): ActivityScenario<MainActivity> =
+        ActivityScenario.launch<MainActivity>(Intent(instrumentation.targetContext, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+        })
 
     private fun swipeUntilVisible(text: String): Boolean {
         if (device.wait(Until.hasObject(By.text(text)), 1_000)) return true
@@ -132,6 +142,8 @@ class EntryGateOverlayUiTest {
         val originalUserRotation = device.executeShellCommand("settings get system user_rotation")
             .trim().takeIf { it.matches(Regex("[0-3]")) } ?: "0"
         var overlay: EntryGateOverlayUi? = null
+        val scenario = launchOwnedScenario()
+        ownedScenario = scenario
         try {
             mount { overlay = it }
             renderAndCapture(overlay, "01-overlay-unavailable", reducedMotion = false, elapsedMs = 10_000)
@@ -171,11 +183,13 @@ class EntryGateOverlayUiTest {
             device.unfreezeRotation()
             device.executeShellCommand("settings put system font_scale $originalFontScale")
             recreateActivity()
+            scenario.close()
+            ownedScenario = null
         }
     }
 
     private fun captureDashboardTimerStates() {
-        val original = rule.scenario.let { var value=true; it.onActivity { value=Observation.sessionTimerEnabled }; value }
+        val original = activeScenario.let { var value=true; it.onActivity { value=Observation.sessionTimerEnabled }; value }
         try {
             assertTrue(swipeUntilVisible("Instagram session timer"))
             val switch = device.findObject(By.desc("Instagram session timer"))
@@ -190,7 +204,7 @@ class EntryGateOverlayUiTest {
             switch.click()
             assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000)); assertTrue(switch.isChecked)
             capture("10-dashboard-timer-reenabled")
-        } finally { rule.scenario.onActivity { Observation.setSessionTimerEnabled(it, original) } }
+        } finally { activeScenario.onActivity { Observation.setSessionTimerEnabled(it, original) } }
     }
 
     @Test @SupplementalEvidence fun supplementaryFooterScreenshotScrollsOnlyInItsSeparateTest() {
@@ -198,32 +212,35 @@ class EntryGateOverlayUiTest {
             "reminder_settings_v1", android.content.Context.MODE_PRIVATE
         )
         preferences.edit().clear().commit()
-        recreateActivity()
+        val scenario = launchOwnedScenario()
+        ownedScenario = scenario
         try {
             assertTopResumed()
-            waitForDraw(rule.scenario)
+            waitForDraw(activeScenario)
             capture("01-home")
             // Exercise the same explicit fixed-action destination used by the detached
             // accessibility overlay; the nav bar is not the Debug-entry evidence path.
-            // Deliver the already-approved internal action to the rule-owned Activity. Starting
+            // Deliver the already-approved internal action to this owned Activity. Starting
             // another instance here leaves ActivityScenario teardown in PAUSED/RESUMED races;
             // cold system launch is covered by the canonical navigation test.
-            rule.scenario.onActivity { activity ->
+            activeScenario.onActivity { activity ->
                 instrumentation.callActivityOnNewIntent(activity, MainActivity.debugIntent(activity))
             }
             assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))
             assertTrue(swipeUntilVisible("DOOM-OWNED QUICK DEMO"))
             val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
             assertTrue(swipeUntilVisible(footer))
-            waitForDraw(rule.scenario)
+            waitForDraw(activeScenario)
             capture("02-debug")
         } finally {
             preferences.edit().clear().commit()
+            scenario.close()
+            ownedScenario = null
         }
     }
 
     private fun mount(assign: (EntryGateOverlayUi) -> Unit) {
-        rule.scenario.onActivity { activity ->
+        activeScenario.onActivity { activity ->
             val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
             activity.findViewById<ViewGroup>(android.R.id.content)
                 .addView(ui.root, ViewGroup.LayoutParams(-1, -1))
@@ -233,7 +250,7 @@ class EntryGateOverlayUiTest {
     }
 
     private fun unmount(ui: EntryGateOverlayUi?) {
-        rule.scenario.onActivity {
+        activeScenario.onActivity {
             ui?.dispose()
             ui?.root?.let { root -> (root.parent as? ViewGroup)?.removeView(root) }
         }
@@ -246,7 +263,7 @@ class EntryGateOverlayUiTest {
         reducedMotion: Boolean,
         elapsedMs: Long
     ) {
-        rule.scenario.onActivity {
+        activeScenario.onActivity {
             val actual = requireNotNull(ui)
             val model = EntryGateOverlayModel.from(10_000 - elapsedMs, 10_000, reducedMotion)
             actual.render(model)
@@ -258,12 +275,12 @@ class EntryGateOverlayUiTest {
             assertTrue(actual.root.parent != null)
         }
         assertTopResumed()
-        waitForDraw(rule.scenario)
+        waitForDraw(activeScenario)
         capture(name)
     }
 
     private fun recreateActivity() {
-        rule.scenario.onActivity { it.recreate() }
+        activeScenario.onActivity { it.recreate() }
         instrumentation.waitForIdleSync()
         SystemClock.sleep(250)
         assertTopResumed()
@@ -272,7 +289,7 @@ class EntryGateOverlayUiTest {
     private fun captureTimer(name: String, collapsed: Boolean) {
         var ui: InstagramTimerOverlayUi? = null
         var moved = false; var settled = false
-        rule.scenario.onActivity { activity ->
+        activeScenario.onActivity { activity ->
             ui = InstagramTimerOverlayViewFactory.create(activity, {}, {}, { _, _ -> moved = true }, { settled = true })
             activity.findViewById<ViewGroup>(android.R.id.content).addView(ui!!.root)
             ui!!.render(InstagramTimerModel("4:12", "Instagram time, 4 minutes, 12 seconds", collapsed, true))
@@ -292,8 +309,8 @@ class EntryGateOverlayUiTest {
                 assertTrue(moved); assertTrue(settled)
             }
         }
-        assertTopResumed(); waitForDraw(rule.scenario); capture(name)
-        rule.scenario.onActivity { ui?.let { (it.root.parent as? ViewGroup)?.removeView(it.root); it.dispose() } }
+        assertTopResumed(); waitForDraw(activeScenario); capture(name)
+        activeScenario.onActivity { ui?.let { (it.root.parent as? ViewGroup)?.removeView(it.root); it.dispose() } }
     }
 
     private fun assertTopResumed() {
