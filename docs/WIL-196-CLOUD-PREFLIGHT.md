@@ -1,22 +1,20 @@
-# WIL-196 final Codex Cloud preflight — exact candidate `4c9a901`
+# WIL-196 mandatory no-emulator compile gate — exact candidate `9f531cb`
 
-Date: 2026-09-24 (UTC)
+Date: 2026-09-25 (UTC)
 
-This record covers the mandatory no-emulator preflight for exact source candidate
-`4c9a90166340e6047a4fedc3e78bd0cc38a071b3`, after the independent-review lifecycle repair.
-`git rev-parse HEAD` confirmed that exact commit before host or Android work, and the
-supplied checkout was clean. The checkout exposed the local branch name `work`, rather than the
-requested branch name `wil-196-sunset-debug-report`. No checkout, fetch, rebase, SDK
-installation/update, dependency change, or toolchain change was performed.
+This record covers the mandatory no-emulator compile gate after the evidence-only API-35
+repairs. The evidence is bound to source candidate
+`9f531cb91e469562e2140b181b50b2f539ec86ce`. Before any check, `git rev-parse HEAD`
+returned that exact SHA and `git status --short` returned no entries, confirming a clean
+checkout on the locally supplied `work` branch.
 
-No deterministic compile, API, unit-test, lint-error, or Android-test compile failure occurred,
-so no source repair was needed. The only source-tree change produced by this preflight is this
-exact-head record; production behavior and assertions are unchanged.
+No checkout, fetch, rebase, emulator, device, adb, SDK installation/update, dependency change,
+or toolchain change was performed. No deterministic compile or lint failure occurred, so no
+source or test repair was made. This evidence document is the only resulting tracked change.
 
-## Host checks
+## Required host checks
 
-All host checks required by the repository instructions and WIL-196 plan passed before Android
-work:
+The host checks ran before Gradle and all passed:
 
 - `python3 -B scripts/test-entry-gate-host.py`: **98 JVM tests passed**.
 - `python3 -B scripts/test-structural-lifecycle.py`: **51 tests passed**.
@@ -34,7 +32,7 @@ work:
 - Python `xml.etree.ElementTree` parsing: all **6** XML files below `app/src` passed.
 - `git diff --check`: passed on the clean exact candidate before Android work.
 
-## Final Codex Cloud Android preflight
+## Pinned SDK-35 application preflight
 
 ```bash
 python3 scripts/test-internal-signing.py && \
@@ -44,7 +42,7 @@ python3 scripts/test-internal-signing.py && \
   :app:assembleDebug
 ```
 
-The requested invocation passed with exit code 0 (`BUILD SUCCESSFUL`). The signing suite ran
+The exact invocation passed with exit code 0 (`BUILD SUCCESSFUL in 6m`). The signing suite ran
 **16 tests**, all passing. The **16** JUnit XML suite files under
 `app/build/test-results/testDebugUnitTest/` reported:
 
@@ -54,14 +52,15 @@ The requested invocation passed with exit code 0 (`BUILD SUCCESSFUL`). The signi
 - skipped: **0**
 
 `app/build/reports/lint-results-debug.xml` reported **0 errors/fatal issues** and **13 warnings**.
-The warnings are nonblocking. The build also printed the environment's nonblocking SDK XML
-version compatibility warning and existing Kotlin/Java deprecation warnings.
+The build emitted one nonblocking SDK XML-version compatibility warning and **10** existing
+Kotlin/Java deprecation-warning lines. It also reported that `libandroidx.graphics.path.so` could
+not be stripped and was packaged unchanged. None was a compile or lint error.
 
 Debug APK:
 
 - path: `app/build/outputs/apk/debug/app-debug.apk`
 - size: **8,926,347 bytes**
-- SHA-256: `47dc44fffde416a7caa9bf7014d9bd7c1e19b2c7dbd63a4492d46772dcd7c345`
+- SHA-256: `5644943ef4f9875be608a301a9cf4a830bf96d40ddaf4603afa02a8a0f9d3e18`
 
 ## Android-test compilation and assembly
 
@@ -69,23 +68,22 @@ Debug APK:
 ./gradlew --no-daemon --stacktrace :app:assembleDebugAndroidTest
 ```
 
-The invocation passed with exit code 0 (`BUILD SUCCESSFUL`), including Kotlin and Java
-Android-test compilation, dexing, packaging, and `:app:assembleDebugAndroidTest`. Existing
-deprecation warnings and one existing Java type-mismatch warning were nonfatal; there were no
+The exact invocation passed with exit code 0 (`BUILD SUCCESSFUL in 1m 9s`). It completed Kotlin
+and Java Android-test compilation, dexing, packaging, and `:app:assembleDebugAndroidTest`. The
+build emitted one nonblocking SDK XML-version compatibility warning and **43** existing Kotlin/
+Java warning lines: deprecation warnings plus one Java type-mismatch warning. There were no
 compile errors.
 
 Android-test APK:
 
 - path: `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`
-- size: **1,183,204 bytes**
-- SHA-256: `bb3f0ee18b763d961e9a1183e9515a9e5bbc6c9aaed681e2e370c3d46772ed1b`
+- size: **1,183,208 bytes**
+- SHA-256: `07681202ebd41d57963333ceacea8d539c9c8554aeb79fd54ba209f2752f59d0`
 
-## Final evidence boundary
+## Explicit no-device boundary
 
-No emulator, `connectedAndroidTest`, device, adb, GitHub Actions, protected signing, release, or
-real-Instagram/consenting-phone validation was run. Emulator/device evidence is still pending.
-These results establish host behavior, SDK-35 compilation/lint, debug APK assembly, and
-Android-test compilation/assembly for exact source candidate
-`4c9a90166340e6047a4fedc3e78bd0cc38a071b3` only. They do not establish runtime, device,
-screenshot, route, physical-overlay-detachment, or real-Instagram behavior, and no such claim is
-made.
+No emulator, device, adb, `connectedAndroidTest`, GitHub Actions, protected signing, release, or
+real-Instagram/consenting-phone validation was run. These results establish host behavior,
+pinned SDK-35 compilation and lint, debug APK assembly, and Android-test compilation/assembly for
+exact source candidate `9f531cb91e469562e2140b181b50b2f539ec86ce` only. They do not establish
+runtime, device, screenshot, route, physical-overlay-detachment, or real-Instagram behavior.
