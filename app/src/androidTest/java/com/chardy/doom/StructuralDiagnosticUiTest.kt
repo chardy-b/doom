@@ -67,7 +67,8 @@ class StructuralDiagnosticUiTest {
         // Keep the nested cold Activity in its own task so closing it cannot close the
         // ActivityScenarioRule-owned Activity.
         val coldIntent = MainActivity.debugIntent(rule.activity).apply {
-            addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT
         }
         val scenario = ActivityScenario.launch<MainActivity>(coldIntent)
         try {
@@ -126,7 +127,8 @@ class StructuralDiagnosticUiTest {
         rule.onNodeWithText("Preview breathing reminder").performScrollTo().assertIsDisplayed()
         seed()
         val rotationScenario = ActivityScenario.launch<MainActivity>(MainActivity.debugIntent(rule.activity).apply {
-            addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT
         })
         try {
             waitForDebugControls()
@@ -163,6 +165,7 @@ class StructuralDiagnosticUiTest {
         assertTrue(device.wait(Until.hasObject(By.text("COPY REVIEWED REPORT")), 5_000))
     }
     private fun assertDebugControlsDisplayed() {
+        waitForDebugControls()
         rule.onNodeWithText("REVEAL LOCAL REPORT").assertIsDisplayed()
         rule.onNodeWithText("COPY REVIEWED REPORT").assertIsDisplayed()
     }

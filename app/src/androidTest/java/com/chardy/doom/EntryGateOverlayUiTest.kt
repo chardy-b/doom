@@ -226,8 +226,8 @@ class EntryGateOverlayUiTest {
             activeScenario.onActivity { activity ->
                 instrumentation.callActivityOnNewIntent(activity, MainActivity.debugIntent(activity))
             }
-            assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))
             assertTrue(swipeUntilVisible("DOOM-OWNED QUICK DEMO"))
+            assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))
             val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
             assertTrue(swipeUntilVisible(footer))
             waitForDraw(activeScenario)

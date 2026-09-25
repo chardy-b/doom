@@ -115,7 +115,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
     def test_instrumentation_activity_ownership_is_explicit_and_rule_activity_is_not_replaced(self):
         tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
         overlay = (REPO / "app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt").read_text()
-        self.assertIn("FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT", tests)
+        self.assertIn("flags = Intent.FLAG_ACTIVITY_NEW_TASK or", tests)
+        self.assertNotIn("addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK", tests)
         self.assertIn("rotationScenario.recreate()", tests)
         self.assertNotIn("rule.activityRule.scenario.recreate()", tests)
         self.assertNotIn("rule.scenario.recreate()", tests)
@@ -271,6 +272,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
             self.assertNotIn("performScrollTo", body)
             self.assertNotIn("swipe", body.lower())
             self.assertIn("assertDebugControlsDisplayed", body)
+        helper = tests.split("private fun assertDebugControlsDisplayed()", 1)[1].split("@Before", 1)[0]
+        self.assertIn("waitForDebugControls()", helper)
 
     def test_debug_anchor_readiness_is_request_scoped_and_reset_when_leaving_debug(self):
         self.assertIn("debugReportControlsReadyForRequest", ACTIVITY)

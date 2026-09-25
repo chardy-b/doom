@@ -64,6 +64,16 @@ route behavior, physical detachment, protected signing, or real-Instagram behavi
 
 ## Remaining risk
 
+Exact API-35 run `36075040553` proved 109 canonical tests reached execution before the
+workflow timeout. Two warm Debug tests asserted visibility before the app's asynchronous
+bring-into-view completed; the next isolated cold-rotation scenario retained `CLEAR_TOP` and
+`SINGLE_TOP` while adding new-task flags, so Android reused the rule Activity and AndroidX ignored
+the mismatched launch identity. The tests now wait (without scrolling) for automatic visibility and
+replace, rather than add to, the cold scenario's task flags. Supplemental run `36075040492` proved
+the fixture suite passed 6/6 and identified one evidence-order defect: an upward-only helper looked
+for Quick Demo after scrolling below it to Report. The capture now traverses those sections in page
+order. Production code is unchanged by this repair.
+
 Independent review of `932c8d2` found that `MainActivity.onNewIntent` and
 `consumeDebugRequest` changed the Activity's launch-Intent identity. AndroidX
 `ActivityScenario` uses that identity to associate lifecycle callbacks, explaining the remaining

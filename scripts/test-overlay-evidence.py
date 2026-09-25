@@ -83,6 +83,10 @@ class OverlayEvidenceManifestTest(unittest.TestCase):
         self.assertIn("launchOwnedScenario", source)
         self.assertIn("ownedScenario = scenario", source)
         self.assertNotIn("rule.scenario.onActivity { it.recreate() }", source)
+        self.assertLess(
+            source.index('assertTrue(swipeUntilVisible("DOOM-OWNED QUICK DEMO"))'),
+            source.index('assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))'),
+        )
         self.assertIn('assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))', source)
 
     def test_missing_or_empty_apk_is_rejected(self):
