@@ -10,7 +10,7 @@ import androidx.compose.runtime.setValue
 
 /** Main-thread state. Only two consents and the timer-enabled preference are persisted. */
 object Observation {
-    private const val CONSENT_KEY = "sanitized_structural_report_v1"
+    private const val CONSENT_KEY = "sanitized_structural_report_v2"
     private const val ENTRY_GATE_CONSENT_KEY = "instagram_diagnostic_entry_gate_v1"
     internal const val SESSION_TIMER_ENABLED_KEY = "instagram_session_timer_enabled_v1"
     var gateConsent by mutableStateOf(false)
@@ -53,6 +53,8 @@ object Observation {
     fun load(context: Context) {
         reminderSettings = ReminderSettingsStore.read(context)
         val prefs = context.getSharedPreferences("consent", Context.MODE_PRIVATE)
+        prefs.edit().remove("accepted").remove("structural_fingerprints_v1")
+            .remove("sanitized_structural_report_v1").apply()
         consent = prefs.getBoolean(CONSENT_KEY, false)
         gateConsent = prefs.getBoolean(ENTRY_GATE_CONSENT_KEY, false)
         sessionTimerEnabled = prefs.getBoolean(SESSION_TIMER_ENABLED_KEY, true)
@@ -85,7 +87,8 @@ object Observation {
 
     fun accept(context: Context, accepted: Boolean) {
         context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
-            .remove("accepted").remove("structural_fingerprints_v1").putBoolean(CONSENT_KEY, accepted).apply()
+            .remove("accepted").remove("structural_fingerprints_v1")
+            .remove("sanitized_structural_report_v1").putBoolean(CONSENT_KEY, accepted).apply()
         if (consent != accepted) clear()
         consent = accepted
         if (!accepted) {
@@ -102,6 +105,12 @@ object Observation {
 
     fun revealReport() {
         if (canReveal) revealed = true
+    }
+
+    /** A new Debug entry hides review state without discarding the current process-local report. */
+    internal fun hideReport() {
+        revealed = false
+        copied = false
     }
 
     fun copyReport(context: Context) {

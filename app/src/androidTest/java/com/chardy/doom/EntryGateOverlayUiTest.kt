@@ -1,5 +1,6 @@
 package com.chardy.doom
 
+import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.drawable.ColorDrawable
 import android.os.SystemClock
@@ -7,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.ScrollView
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -25,6 +27,14 @@ class EntryGateOverlayUiTest {
     @get:Rule val rule = ActivityScenarioRule(MainActivity::class.java)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val device get() = UiDevice.getInstance(instrumentation)
+    private var ownedScenario: ActivityScenario<MainActivity>? = null
+    private val activeScenario: ActivityScenario<MainActivity>
+        get() = ownedScenario ?: rule.scenario
+
+    private fun launchOwnedScenario(): ActivityScenario<MainActivity> =
+        ActivityScenario.launch<MainActivity>(Intent(instrumentation.targetContext, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+        })
 
     private fun swipeUntilVisible(text: String): Boolean {
         if (device.wait(Until.hasObject(By.text(text)), 1_000)) return true
@@ -41,7 +51,7 @@ class EntryGateOverlayUiTest {
     @Test @SupplementalEvidence fun nativeOverlayIsDoomStyledSemanticAndTargeted() {
         var ui: EntryGateOverlayUi? = null
         rule.scenario.onActivity { activity ->
-            ui = EntryGateOverlayViewFactory.create(activity, {}, {})
+            ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
             val content = activity.findViewById<ViewGroup>(android.R.id.content)
             content.addView(ui!!.root, ViewGroup.LayoutParams(-1, -1))
             ui!!.render(EntryGateOverlayModel.from(10_000, 10_000, false))
@@ -55,6 +65,10 @@ class EntryGateOverlayUiTest {
             assertTrue(actual.skipToMessages.minimumHeight >= (48 * it.resources.displayMetrics.density).toInt())
             assertTrue(actual.skipToMessages.isFocusable)
             assertTrue(actual.skipToMessages.isClickable)
+            assertTrue(actual.leaveInstagram.minimumHeight >= (48 * it.resources.displayMetrics.density).toInt())
+            assertTrue(actual.debugReport.minimumHeight >= (48 * it.resources.displayMetrics.density).toInt())
+            assertTrue(actual.debugReport.isFocusable)
+            assertTrue(actual.debugReport.isClickable)
             actual.dispose()
             (actual.root.parent as? ViewGroup)?.removeView(actual.root)
         }
@@ -74,7 +88,7 @@ class EntryGateOverlayUiTest {
                 val density = context.resources.displayMetrics.density
                 val width = (widthDp * density).toInt()
                 val height = (heightDp * density).toInt()
-                val ui = EntryGateOverlayViewFactory.create(context, {}, {})
+                val ui = EntryGateOverlayViewFactory.create(context, {}, {}, {})
                 ui.root.measure(
                     View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
@@ -100,6 +114,7 @@ class EntryGateOverlayUiTest {
                 }
                 assertReachable(ui.skipToMessages)
                 assertReachable(ui.leaveInstagram)
+                assertReachable(ui.debugReport)
                 ui.dispose()
                 val timerUi = InstagramTimerOverlayViewFactory.create(context, {}, {}, { _, _ -> }, {})
                 timerUi.render(InstagramTimerModel("1:23:45", "Instagram time, 1 hour, 23 minutes, 45 seconds", false, true))
@@ -127,31 +142,33 @@ class EntryGateOverlayUiTest {
         val originalUserRotation = device.executeShellCommand("settings get system user_rotation")
             .trim().takeIf { it.matches(Regex("[0-3]")) } ?: "0"
         var overlay: EntryGateOverlayUi? = null
+        val scenario = launchOwnedScenario()
+        ownedScenario = scenario
         try {
             mount { overlay = it }
-            renderAndCapture(overlay, "01-overlay-unavailable", reducedMotion = false, captured = false)
-            renderAndCapture(overlay, "02-overlay-captured-status", reducedMotion = false, captured = true)
-            renderAndCapture(overlay, "03-overlay-reduced-motion", reducedMotion = true, captured = false)
+            renderAndCapture(overlay, "01-overlay-unavailable", reducedMotion = false, elapsedMs = 10_000)
+            renderAndCapture(overlay, "02-overlay-captured-status", reducedMotion = false, elapsedMs = 3_900)
+            renderAndCapture(overlay, "03-overlay-reduced-motion", reducedMotion = true, elapsedMs = 3_900)
             unmount(overlay); overlay = null
             captureTimer("07-timer-expanded-dismiss", collapsed = false)
             captureTimer("08-timer-compact-icon", collapsed = true)
             captureDashboardTimerStates()
             mount { overlay = it }
-            renderAndCapture(overlay, "03-reminder-inhale", reducedMotion = false, captured = false)
-            renderAndCapture(overlay, "04-reminder-exhale", reducedMotion = false, captured = true)
-            renderAndCapture(overlay, "05-reminder-reduced-motion", reducedMotion = true, captured = false)
+            renderAndCapture(overlay, "03-reminder-inhale", reducedMotion = false, elapsedMs = 3_900)
+            renderAndCapture(overlay, "04-reminder-exhale", reducedMotion = false, elapsedMs = 9_900)
+            renderAndCapture(overlay, "05-reminder-reduced-motion", reducedMotion = true, elapsedMs = 3_900)
             unmount(overlay); overlay = null
 
             device.executeShellCommand("settings put system font_scale 2.0")
             recreateActivity()
             mount { overlay = it }
-            renderAndCapture(overlay, "04-overlay-large-font", reducedMotion = true, captured = false)
+            renderAndCapture(overlay, "04-overlay-large-font", reducedMotion = true, elapsedMs = 3_900)
             unmount(overlay); overlay = null
 
             device.setOrientationLeft()
             recreateActivity()
             mount { overlay = it }
-            renderAndCapture(overlay, "05-overlay-landscape", reducedMotion = true, captured = false)
+            renderAndCapture(overlay, "05-overlay-landscape", reducedMotion = true, elapsedMs = 3_900)
             unmount(overlay); overlay = null
 
             unmount(overlay)
@@ -166,11 +183,13 @@ class EntryGateOverlayUiTest {
             device.unfreezeRotation()
             device.executeShellCommand("settings put system font_scale $originalFontScale")
             recreateActivity()
+            scenario.close()
+            ownedScenario = null
         }
     }
 
     private fun captureDashboardTimerStates() {
-        val original = rule.scenario.let { var value=true; it.onActivity { value=Observation.sessionTimerEnabled }; value }
+        val original = activeScenario.let { var value=true; it.onActivity { value=Observation.sessionTimerEnabled }; value }
         try {
             assertTrue(swipeUntilVisible("Instagram session timer"))
             val switch = device.findObject(By.desc("Instagram session timer"))
@@ -185,7 +204,7 @@ class EntryGateOverlayUiTest {
             switch.click()
             assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000)); assertTrue(switch.isChecked)
             capture("10-dashboard-timer-reenabled")
-        } finally { rule.scenario.onActivity { Observation.setSessionTimerEnabled(it, original) } }
+        } finally { activeScenario.onActivity { Observation.setSessionTimerEnabled(it, original) } }
     }
 
     @Test @SupplementalEvidence fun supplementaryFooterScreenshotScrollsOnlyInItsSeparateTest() {
@@ -193,25 +212,36 @@ class EntryGateOverlayUiTest {
             "reminder_settings_v1", android.content.Context.MODE_PRIVATE
         )
         preferences.edit().clear().commit()
-        recreateActivity()
+        val scenario = launchOwnedScenario()
+        ownedScenario = scenario
         try {
             assertTopResumed()
-            waitForDraw(rule.scenario)
+            waitForDraw(activeScenario)
             capture("01-home")
-            device.findObject(By.text("Debug")).click()
+            // Exercise the same explicit fixed-action destination used by the detached
+            // accessibility overlay; the nav bar is not the Debug-entry evidence path.
+            // Deliver the already-approved internal action to this owned Activity. Starting
+            // another instance here leaves ActivityScenario teardown in PAUSED/RESUMED races;
+            // cold system launch is covered by the canonical navigation test.
+            activeScenario.onActivity { activity ->
+                instrumentation.callActivityOnNewIntent(activity, MainActivity.debugIntent(activity))
+            }
             assertTrue(swipeUntilVisible("DOOM-OWNED QUICK DEMO"))
+            assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))
             val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"
             assertTrue(swipeUntilVisible(footer))
-            waitForDraw(rule.scenario)
+            waitForDraw(activeScenario)
             capture("02-debug")
         } finally {
             preferences.edit().clear().commit()
+            scenario.close()
+            ownedScenario = null
         }
     }
 
     private fun mount(assign: (EntryGateOverlayUi) -> Unit) {
-        rule.scenario.onActivity { activity ->
-            val ui = EntryGateOverlayViewFactory.create(activity, {}, {})
+        activeScenario.onActivity { activity ->
+            val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
             activity.findViewById<ViewGroup>(android.R.id.content)
                 .addView(ui.root, ViewGroup.LayoutParams(-1, -1))
             assign(ui)
@@ -220,7 +250,7 @@ class EntryGateOverlayUiTest {
     }
 
     private fun unmount(ui: EntryGateOverlayUi?) {
-        rule.scenario.onActivity {
+        activeScenario.onActivity {
             ui?.dispose()
             ui?.root?.let { root -> (root.parent as? ViewGroup)?.removeView(root) }
         }
@@ -231,21 +261,26 @@ class EntryGateOverlayUiTest {
         ui: EntryGateOverlayUi?,
         name: String,
         reducedMotion: Boolean,
-        captured: Boolean
+        elapsedMs: Long
     ) {
-        rule.scenario.onActivity {
+        activeScenario.onActivity {
             val actual = requireNotNull(ui)
-            actual.render(EntryGateOverlayModel.from(if (captured) 5_000 else 10_000, 10_000, reducedMotion))
+            val model = EntryGateOverlayModel.from(10_000 - elapsedMs, 10_000, reducedMotion)
+            actual.render(model)
             assertTrue(actual.phaseLabel.text == "Breathe in" || actual.phaseLabel.text == "Breathe out")
+            if (name == "03-reminder-inhale" || name == "02-overlay-captured-status") {
+                assertEquals("Breathe in", actual.phaseLabel.text)
+            }
+            if (name == "04-reminder-exhale") assertEquals("Breathe out", actual.phaseLabel.text)
             assertTrue(actual.root.parent != null)
         }
         assertTopResumed()
-        waitForDraw(rule.scenario)
+        waitForDraw(activeScenario)
         capture(name)
     }
 
     private fun recreateActivity() {
-        rule.scenario.onActivity { it.recreate() }
+        activeScenario.onActivity { it.recreate() }
         instrumentation.waitForIdleSync()
         SystemClock.sleep(250)
         assertTopResumed()
@@ -254,7 +289,7 @@ class EntryGateOverlayUiTest {
     private fun captureTimer(name: String, collapsed: Boolean) {
         var ui: InstagramTimerOverlayUi? = null
         var moved = false; var settled = false
-        rule.scenario.onActivity { activity ->
+        activeScenario.onActivity { activity ->
             ui = InstagramTimerOverlayViewFactory.create(activity, {}, {}, { _, _ -> moved = true }, { settled = true })
             activity.findViewById<ViewGroup>(android.R.id.content).addView(ui!!.root)
             ui!!.render(InstagramTimerModel("4:12", "Instagram time, 4 minutes, 12 seconds", collapsed, true))
@@ -274,8 +309,8 @@ class EntryGateOverlayUiTest {
                 assertTrue(moved); assertTrue(settled)
             }
         }
-        assertTopResumed(); waitForDraw(rule.scenario); capture(name)
-        rule.scenario.onActivity { ui?.let { (it.root.parent as? ViewGroup)?.removeView(it.root); it.dispose() } }
+        assertTopResumed(); waitForDraw(activeScenario); capture(name)
+        activeScenario.onActivity { ui?.let { (it.root.parent as? ViewGroup)?.removeView(it.root); it.dispose() } }
     }
 
     private fun assertTopResumed() {

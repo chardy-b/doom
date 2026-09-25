@@ -18,9 +18,9 @@ Check the active Linear ticket for acceptance criteria and dependencies. Do not 
 
 - Make the smallest change that satisfies the active ticket.
 - Do not add `INTERNET`, storage, notification-reader, contacts, SMS, account, gesture, key, or unrelated accessibility capabilities.
-- Do not read, log, persist, transmit, or test with Instagram text, usernames, messages, captions, notification content, content descriptions, raw trees, coordinates, or screenshots of private content.
+- Do not read, log, persist, transmit, or test with Instagram text, usernames, messages, captions, notification content, content descriptions, raw trees, coordinates, or screenshots of private content. The freshly consented v2 structural report is the narrow exception for bounded scalar screen/window bounds, Doom-local relationship indexes, named numeric/boolean metadata, and sanitized identifiers; these values remain process-memory only and never select targets or drive actions. Framework objects, arbitrary/free-form IDs, and private screenshots remain forbidden.
 - Keep Instagram intervention separately consented and default off.
-- Never release Home, Messages, completion, or bypass actions before physical overlay detachment is confirmed.
+- Never release Home, Messages, completion, bypass, or Debug-launch actions before physical overlay detachment is confirmed.
 - Preserve stale-ticket and revoked-consent rejection.
 - The Messages exception may target only `com.instagram.android:id/direct_tab` after an explicit current-overlay tap and all current authority checks. Do not add text search, traversal fallback, coordinates, gestures, retries, or another target.
 - Do not weaken protected signing, exact-SHA checks, evidence manifests, or APK payload comparison.

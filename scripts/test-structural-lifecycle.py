@@ -9,6 +9,9 @@ SERVICE = (REPO / "app/src/main/java/com/chardy/doom/DoomAccessibilityService.kt
 ROUTER = (REPO / "app/src/main/java/com/chardy/doom/InstagramMessagesRouter.kt").read_text()
 OBSERVATION = (REPO / "app/src/main/java/com/chardy/doom/Observation.kt").read_text()
 OVERLAY_VIEW = (REPO / "app/src/main/java/com/chardy/doom/EntryGateOverlayView.kt").read_text()
+ADAPTER = (REPO / "app/src/main/java/com/chardy/doom/AndroidStructuralMetadataReader.kt").read_text()
+METADATA = (REPO / "app/src/main/java/com/chardy/doom/StructuralMetadata.kt").read_text()
+ACTIVITY = (REPO / "app/src/main/java/com/chardy/doom/MainActivity.kt").read_text()
 
 
 class StructuralLifecycleSourceTest(unittest.TestCase):
@@ -17,7 +20,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         keep = event.index("if (overlay != null) return")
         self.assertLess(event.index("entryGate.cooldownActive()"), keep)
         self.assertLess(event.index("!Observation.consent || !Observation.connected"), keep)
-        for operation in ("beginInstagramSessionIfEligible()", "overlayPlatform.eventRoot()", "collect(root)"):
+        for operation in ("beginInstagramSessionIfEligible()", "overlayPlatform.eventRoot()", "collect(root, captureContext)"):
             self.assertLess(keep, event.index(operation))
 
     def test_revocation_preflight_covers_visible_overlay_and_running_timer(self):
@@ -25,6 +28,40 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         preflight = event.split("// Doom's own", 1)[0]
         self.assertIn("if ((overlay != null || sessionTimer.running) &&", preflight)
         self.assertNotIn("overlay != null || ticket != null", preflight)
+
+    def test_report_only_collection_requires_report_consent_and_connection_not_gate_consent(self):
+        event = SERVICE.split("// Suppression is checked", 1)[1].split('@Suppress', 1)[0]
+        denial = event.split("// Report-only collection", 1)[1].split(
+            "// A successful Debug departure", 1
+        )[0]
+        self.assertIn("if (!Observation.consent || !Observation.connected)", denial)
+        self.assertNotIn("!Observation.gateConsent", denial)
+        self.assertIn("val activeTicket = if (Observation.gateConsent)", event)
+        self.assertIn("collect(root, captureContext)", event)
+
+    def test_report_only_regression_is_an_actual_accessibility_event_test(self):
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        body = tests.split("@Test fun reportOnlyEventCollectsWithGateConsentOff", 1)[1].split("@Test", 1)[0]
+        self.assertIn("service.onAccessibilityEvent(event)", tests)
+        self.assertIn("Observation.setGateConsent(rule.activity, false)", body)
+        self.assertIn("Observation.connected = true", body)
+        self.assertIn("assertNotNull(Observation.report)", body)
+
+    def test_debug_callback_rechecks_all_authority_after_detachment_and_launches_once(self):
+        debug = SERVICE.split("private fun requestDebugReport", 1)[1].split(
+            "private fun requestOverlayRemoval", 1
+        )[0]
+        self.assertIn("overlayToken !== token", debug)
+        self.assertIn("!Observation.gateConsent", debug)
+        confirmed = SERVICE.split("OverlayRemovalAction.OPEN_DEBUG", 1)[1].split(
+            "OverlayRemovalAction.NAVIGATE_MESSAGES", 1
+        )[0]
+        for required in ("Observation.consent", "Observation.gateConsent", "Observation.connected",
+                         "Observation.hideReport()", "debugDepartureTicket = departureTicket",
+                         "overlayPlatform.openDebug()", "callbackGuard.consumeDetached(detachedToken)"):
+            self.assertIn(required, confirmed)
+        self.assertLess(confirmed.index("Observation.connected"), confirmed.index("currentRoot()"))
+        self.assertLess(confirmed.index("Observation.hideReport()"), confirmed.index("openDebug()"))
 
     def test_closing_or_stale_visible_event_keeps_the_old_safety_veto(self):
         body = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
@@ -60,22 +97,33 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         body = SERVICE.split("private fun collect", 1)[1].split("override fun onInterrupt", 1)[0]
         self.assertIn("INSTAGRAM", body)
         self.assertNotIn("BuildConfig.APPLICATION_ID", body)
-        self.assertIn("rootPackage == applicationContext.packageName", body)
-        self.assertRegex(body, r'if \(rootPackage != INSTAGRAM\)\s*\{\s*'
-                              r'root\.recycle\(\)\s*Observation\.record\(null\)\s*return\s*\}')
-        self.assertLess(body.index("queue.add(root to 0)"), body.index("try {"))
-        self.assertRegex(body, r'finally \{\s*while \(queue.isNotEmpty\(\)\) '
-                              r'queue.removeFirst\(\).first.recycle\(\)\s*\}')
+        self.assertIn("StructuralSanitizer.isExactAscii", body)
+        self.assertLess(body.index("queue.add(QueueEntry(root"), body.index("try {"))
+        self.assertIn("while (queue.isNotEmpty()) queue.removeFirst().node.recycle()", body)
 
         tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
         preservation = tests.split("@Test fun doomEventsPreserveReportButForeignOrMissingRootInvalidatesAllReportState", 1)[1].split("@Test", 1)[0]
         self.assertIn('getDeclaredMethod("attachBaseContext", Context::class.java)', preservation)
         self.assertIn('invoke(service, rule.activity.applicationContext)', preservation)
-        self.assertIn('collectSyntheticRoot(service, rule.activity.packageName)', preservation)
-        self.assertNotIn('sendEvent(service, rule.activity.packageName)', preservation)
+        self.assertIn('sendEvent(service, rule.activity.packageName, MainActivity::class.java.name)', preservation)
+        self.assertNotIn('collectSyntheticRoot(service, rule.activity.packageName)', preservation)
         self.assertIn('listOf("com.example.foreign", null)', tests)
         self.assertIn("rule.activity.packageName", tests)
         self.assertNotIn('listOf(rule.activity.packageName, null)', tests)
+        self.assertIn('sendEvent(service, "com.instagram.android")', preservation)
+
+    def test_instrumentation_activity_ownership_is_explicit_and_rule_activity_is_not_replaced(self):
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        overlay = (REPO / "app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt").read_text()
+        self.assertIn("flags = Intent.FLAG_ACTIVITY_NEW_TASK or", tests)
+        self.assertNotIn("addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK", tests)
+        self.assertIn("rotationScenario.recreate()", tests)
+        self.assertNotIn("rule.activityRule.scenario.recreate()", tests)
+        self.assertNotIn("rule.scenario.recreate()", tests)
+        self.assertIn("launchOwnedScenario", overlay)
+        self.assertIn("ownedScenario", overlay)
+        self.assertIn("FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT", overlay)
+        self.assertNotRegex(overlay, r"rule\.scenario\.onActivity\s*\{\s*it\.recreate\(\)\s*\}")
 
     def test_interrupt_marks_disconnected_and_clears_before_any_later_record(self):
         self.assertIn("override fun onInterrupt()", SERVICE)
@@ -91,7 +139,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
                               r'Observation.connected = true')
 
     def test_fresh_consent_and_no_superseded_implementation(self):
-        self.assertIn('"sanitized_structural_report_v1"', OBSERVATION)
+        self.assertIn('"sanitized_structural_report_v2"', OBSERVATION)
         self.assertFalse((REPO / "app/src/main/java/com/chardy/doom/StructuralFingerprint.kt").exists())
         ui = (REPO / "app/src/main/java/com/chardy/doom/MainActivity.kt").read_text()
         for old in ("SampleLabel", "similarity", "Opaque fingerprint", "LABEL FEED"):
@@ -101,12 +149,61 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
 
     def test_collector_reads_only_approved_metadata(self):
         import re
-        reads = set(re.findall(r"node\.([A-Za-z]+)", SERVICE))
-        self.assertEqual(reads, {"packageName", "childCount", "viewIdResourceName", "className", "isClickable",
-                                 "isScrollable", "isEditable", "isSelected", "isChecked", "getChild", "recycle"})
-        for forbidden in ("performAction", "dispatchGesture", "takeScreenshot", "Log."):
-            self.assertNotIn(forbidden, SERVICE)
-        self.assertIn("builder.markTruncated()", SERVICE)
+        reads = set(re.findall(r"node\.([A-Za-z]+)", ADAPTER))
+        expected = {"packageName", "viewIdResourceName", "className", "childCount", "windowId", "uniqueId",
+                    "getBoundsInWindow", "getBoundsInScreen", "drawingOrder", "isCheckable", "isChecked",
+                    "isClickable", "isEnabled", "isFocusable", "isFocused", "isLongClickable", "isPassword",
+                    "isScrollable", "isSelected", "isAccessibilityFocused", "isVisibleToUser", "isEditable",
+                    "canOpenPopup", "isContentInvalid", "isDismissable", "isMultiLine", "isContextClickable",
+                    "isImportantForAccessibility", "isShowingHintText", "isHeading", "isScreenReaderFocusable",
+                    "isTextEntryKey", "isTextSelectable", "isAccessibilityDataSensitive",
+                    "isGranularScrollingSupported", "actionList", "collectionInfo", "collectionItemInfo",
+                    "rangeInfo", "inputType", "liveRegion", "movementGranularities", "textSelectionStart",
+                    "textSelectionEnd", "maxTextLength"}
+        self.assertTrue(expected.issubset(reads), sorted(expected - reads))
+        for forbidden in ("getText", "contentDescription", "getBeforeText", "hintText", "getHintText",
+                          "getError", "getStateDescription", "getPaneTitle", "getTooltipText",
+                          "getContainerTitle", "getSupplementalDescription", "getExtras",
+                          "availableExtraData", "getAvailableExtraData", "getExtraRenderingInfo",
+                          "getLabel", "getParcelableData", "toString", "hashCode", "getSource",
+                          "getRecord", "refreshWithExtraData", "getLabelFor", "getLabeledBy",
+                          "getTraversalBefore", "getTraversalAfter", "getParent", "getWindow",
+                          "performAction", "dispatchGesture", "takeScreenshot", "getEventTime", "Log."):
+            self.assertNotIn(forbidden, ADAPTER + SERVICE)
+        self.assertIsNone(re.search(r"\.text(?:\b|\s*\()", ADAPTER + SERVICE))
+        self.assertIn('builder.markTruncated("foreign")', SERVICE)
+
+    def test_adapter_event_and_nested_getters_are_allowlisted_and_mutation_checked(self):
+        import re
+        event_reads = set(re.findall(r"event\.([A-Za-z]+)", ADAPTER))
+        self.assertTrue({"eventType", "contentChangeTypes", "windowChanges", "action",
+                         "movementGranularity"}.issubset({f for f in event_reads}))
+        nested_reads = set(re.findall(r"info\.([A-Za-z]+)", ADAPTER))
+        self.assertTrue({"rowCount", "columnCount", "isHierarchical", "selectionMode",
+                         "itemCount", "importantForAccessibilityItemCount", "rowIndex",
+                         "rowSpan", "columnIndex", "columnSpan", "isHeading", "isSelected",
+                         "type", "min", "max", "current"}.issubset(nested_reads))
+
+        forbidden = (
+            r"\b(?:node|event|info|record|action)\s*\.\s*(?:text|contentDescription|hintText|label|extras|"
+            r"availableExtraData|uniqueId\s*\.\s*toString)\b",
+            r"\.(?:getText|getContentDescription|getHintText|getLabel|getExtras|performAction|"
+            r"dispatchGesture|takeScreenshot)\s*\(",
+            r"\b(?:node|event|info|record|action)\s*\.\s*toString\s*\(",
+            r"(?:Gson|Moshi|Jackson|kotlinx\.serialization|JSONObject|Bundle)\b",
+        )
+
+        def assert_clean(source):
+            for pattern in forbidden:
+                self.assertIsNone(re.search(pattern, source), pattern)
+
+        assert_clean(ADAPTER + SERVICE)
+        for injected in (
+            "node.getText()", "event.contentDescription", "info.getExtras()",
+            "record.toString()", "action.getLabel()",
+        ):
+            with self.assertRaises(AssertionError):
+                assert_clean(ADAPTER + "\n" + injected)
 
     def test_disclosures_explain_static_resource_discovery_and_new_bounds(self):
         for path in ("README.md", "app/src/main/java/com/chardy/doom/MainActivity.kt",
@@ -132,6 +229,61 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
         self.assertNotIn("service.onServiceConnected()", tests)
         self.assertIn('getDeclaredMethod("onServiceConnected")', tests)
+
+    def test_debug_intent_rejects_unknown_extras_without_empty_bundle_read(self):
+        predicate = ACTIVITY.split("private fun isDebugIntent", 1)[1].split("}", 1)[0]
+        self.assertIn("intent.data == null", predicate)
+        self.assertIn("intent.categories.isNullOrEmpty()", predicate)
+        self.assertIn("intent.extras == null", predicate)
+        self.assertNotIn("extras?.isEmpty", predicate)
+        self.assertNotIn("extras!!", predicate)
+        on_new_intent = ACTIVITY.split("override fun onNewIntent", 1)[1].split(
+            "override fun onSaveInstanceState", 1
+        )[0]
+        self.assertNotIn(
+            "debugRequestPending = false",
+            on_new_intent,
+            "malformed/unrelated intents must not cancel an already pending valid request",
+        )
+        self.assertNotIn("setIntent(", on_new_intent)
+        consume_request = ACTIVITY.split("internal fun consumeDebugRequest", 1)[1].split(
+            "internal fun currentDebugRequestSequence", 1
+        )[0]
+        self.assertNotIn("setIntent(", consume_request)
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        malformed = tests.split("@Test fun warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay", 1)[1].split("@Test", 1)[0]
+        self.assertIn('putExtra("unexpected", 1)', malformed)
+        self.assertIn("launchIdentity.filterEquals(rule.activity.intent)", malformed)
+        self.assertIn("callActivityOnNewIntent", tests)
+
+    def test_debug_navigation_is_one_shot_bring_into_view_and_consumes_after_visibility(self):
+        self.assertIn("BringIntoViewRequester", ACTIVITY)
+        self.assertIn("bringIntoViewRequester", ACTIVITY)
+        self.assertIn("bringIntoView()", ACTIVITY)
+        self.assertIn("debugScrollRequest = 0L", ACTIVITY)
+        self.assertNotIn("positionInParent", ACTIVITY)
+        self.assertNotIn("debugScroll.value +", ACTIVITY)
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        for name in (
+            "coldDebugIntentConsumesOnceAndTargetsReportControls",
+            "warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay",
+        ):
+            body = tests.split(f"@Test fun {name}", 1)[1].split("@Test", 1)[0]
+            self.assertNotIn("performScrollTo", body)
+            self.assertNotIn("swipe", body.lower())
+            self.assertIn("assertDebugControlsDisplayed", body)
+        helper = tests.split("private fun assertDebugControlsDisplayed()", 1)[1].split("@Before", 1)[0]
+        self.assertIn("waitForDebugControls()", helper)
+
+    def test_debug_anchor_readiness_is_request_scoped_and_reset_when_leaving_debug(self):
+        self.assertIn("debugReportControlsReadyForRequest", ACTIVITY)
+        self.assertIn("debugReportControlsReadyForRequest == debugRequest", ACTIVITY)
+        self.assertIn("debugReportControlsReadyForRequest = -1L", ACTIVITY)
+        tests = (REPO / "app/src/androidTest/java/com/chardy/doom/StructuralDiagnosticUiTest.kt").read_text()
+        body = tests.split("@Test fun leavingDebugThenStartingWarmDebugRequestReanchorsControls", 1)[1].split("@Test", 1)[0]
+        self.assertIn('onNodeWithText("Home").performClick()', body)
+        self.assertIn('onNodeWithText("Debug").performClick()', body)
+        self.assertIn("assertDebugControlsDisplayed()", body)
 
 
     def test_process_start_is_empty_and_all_clear_state_is_memory_only(self):
@@ -163,11 +315,11 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
 
 
     def test_traversal_bounds_cover_enqueued_nodes_depth_and_missing_children(self):
-        self.assertIn("while (queue.isNotEmpty() && nodes < SanitizedStructuralReport.MAX_NODES)", SERVICE)
-        self.assertIn("if (depth < SanitizedStructuralReport.MAX_DEPTH)", SERVICE)
-        self.assertIn("SanitizedStructuralReport.MAX_NODES - nodes - queue.size", SERVICE)
-        self.assertIn("builder.markTruncated()", SERVICE)
-        self.assertIn("if (queue.isNotEmpty()) builder.markTruncated()", SERVICE)
+        self.assertIn("while (queue.isNotEmpty() && visited < SanitizedStructuralReport.MAX_NODES)", SERVICE)
+        self.assertIn("if (depth >= SanitizedStructuralReport.MAX_DEPTH)", SERVICE)
+        self.assertIn("SanitizedStructuralReport.MAX_NODES - visited - queue.size", SERVICE)
+        self.assertIn("builder.markTruncated(\"nodes\")", SERVICE)
+        self.assertIn('if (queue.isNotEmpty()) builder.markTruncated("nodes")', SERVICE)
         self.assertRegex(SERVICE, r'finally \{\s+node.recycle\(\)\s+\}')
 
     def test_report_paths_have_no_implicit_export_or_persistence(self):
@@ -189,10 +341,10 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
 
 
     def test_foreign_or_unattributed_children_are_skipped_before_metadata_reads(self):
-        body = SERVICE.split("val (node, depth) = queue.removeFirst()", 1)[1]
-        self.assertRegex(body, r'if \(node.packageName\?\.toString\(\) != INSTAGRAM\) \{\s+'
-                              r'builder.markTruncated\(\)\s+continue\s+\}')
-        self.assertLess(body.index("node.packageName"), body.index("node.childCount"))
+        body = SERVICE.split("val entry = queue.removeFirst()", 1)[1]
+        self.assertIn("if (node.packageName?.let", body)
+        self.assertIn('builder.markTruncated("foreign")', body)
+        self.assertLess(body.index("node.packageName"), body.index("reader.read"))
 
     def test_entry_overlay_is_default_off_bounded_and_remove_before_actions(self):
         policy = (REPO / "app/src/main/java/com/chardy/doom/InstagramEntryGate.kt").read_text()
@@ -272,6 +424,21 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("removalPolicy.confirmedDetached()", removal)
         self.assertLess(removal.index("confirmedDetached()"), removal.index("performHome"))
 
+    def test_debug_departure_is_detached_authorized_report_preserving_and_nonterminal(self):
+        confirmed = SERVICE.split("OverlayRemovalAction.OPEN_DEBUG", 1)[1].split(
+            "OverlayRemovalAction.NAVIGATE_MESSAGES", 1
+        )[0]
+        self.assertIn("hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)", confirmed)
+        self.assertIn("overlayPlatform.currentRoot()", confirmed)
+        self.assertIn("overlayPlatform.readRootPackage(root)", confirmed)
+        self.assertIn("entryGate.bypass(departureTicket)", confirmed)
+        self.assertIn("Observation.hideReport()", confirmed)
+        self.assertIn("debugDepartureTicket = departureTicket", confirmed)
+        self.assertIn("overlayPlatform.openDebug()", confirmed)
+        self.assertLess(confirmed.index("entryGate.bypass(departureTicket)"), confirmed.index("overlayPlatform.openDebug()"))
+        for forbidden in ("entryGate.complete", "finishMessagesRoute", "routeMessages", "recordTerminal"):
+            self.assertNotIn(forbidden, confirmed)
+
     def test_foreign_event_reads_one_package_only_root_and_skips_collection(self):
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split(
             '@Suppress("DEPRECATION")', 1
@@ -290,7 +457,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
 
     def test_doom_events_require_positive_main_activity_signal_for_preservation(self):
         self.assertIn("TYPE_WINDOW_STATE_CHANGED", SERVICE)
-        self.assertIn('className?.toString() == MainActivity::class.java.name', SERVICE)
+        self.assertIn('StructuralSanitizer.isExactAscii(event.className, MainActivity::class.java.name)', SERVICE)
         self.assertIn("isMainActivityReturn(event)", SERVICE)
         self.assertIn("Ignore all other Doom-owned events", SERVICE)
         own_events = SERVICE.split("if (packageName == applicationContext.packageName)", 1)[1].split(
@@ -305,7 +472,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
     def test_removal_priority_keeps_safety_and_explicit_actions_above_preserve(self):
         policy = (REPO / "app/src/main/java/com/chardy/doom/OverlayRemovalPolicy.kt").read_text()
         self.assertLess(policy.index("COMPLETE -> 0"), policy.index("NAVIGATE_MESSAGES -> 1"))
-        self.assertLess(policy.index("HOME -> 4"), policy.index("RESET_OUTSIDE -> 5"))
+        self.assertLess(policy.index("HOME -> 5"), policy.index("RESET_OUTSIDE -> 6"))
 
     def test_non_preservation_cleanup_clears_verified_return_marker_centrally(self):
         confirmed = SERVICE.split("private fun confirmOverlayRemoved", 1)[1].split(
@@ -356,7 +523,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("Observation.consent", service)
         self.assertIn("Observation.connected", service)
         self.assertIn("currentRoot()", service)
-        self.assertIn("root.packageName?.toString() == INSTAGRAM", service)
+        self.assertIn("safePackageToken(root.packageName) == INSTAGRAM", service)
         self.assertLess(service.index("hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)"), service.index("currentRoot()"))
         authority = SERVICE.split("private fun hasDetachedTerminalAuthority", 1)[1]
         self.assertIn("token.ticket == ticket", authority)
@@ -413,7 +580,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("systemWindowInsetBottom", OVERLAY_VIEW)
         self.assertIn("displayCutout", OVERLAY_VIEW)
         self.assertNotIn('contentDescription = "Diagnostic status"', OVERLAY_VIEW)
-        for required in ('"Breathe in"', '"Skip to Messages"', '"Leave Instagram"', "PixelBreathingView", "SegmentedBreathProgressView"):
+        for required in ('"Breathe in"', '"Skip to Messages"', '"Leave Instagram"', '"Debug report"', "PixelBreathingView", "SegmentedBreathProgressView"):
             self.assertIn(required, OVERLAY_VIEW)
         for forbidden in ("countdown", "copyCurrentReport", "status", "REPORT CAPTURED", "Take a breath"):
             self.assertNotIn(forbidden, OVERLAY_VIEW)

@@ -15,6 +15,22 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.InputMethodManager
 
+private const val SAFE_FOREIGN_PACKAGE = "__foreign__"
+
+/** Copy only the closed package categories used by authority checks; never retain free-form IDs. */
+private fun safePackageToken(
+    value: CharSequence?,
+    doomPackage: String? = null,
+    recognizedImePackages: Set<String> = emptySet(),
+): String? = when {
+    StructuralSanitizer.isExactAscii(value, "com.instagram.android") -> "com.instagram.android"
+    doomPackage != null && StructuralSanitizer.isExactAscii(value, doomPackage) -> doomPackage
+    StructuralSanitizer.isExactAscii(value, "com.android.systemui") -> SAFE_SYSTEM_UI_PACKAGE
+    recognizedImePackages.any { StructuralSanitizer.isExactAscii(value, it) } -> SAFE_RECOGNIZED_IME_PACKAGE
+    value == null -> null
+    else -> SAFE_FOREIGN_PACKAGE
+}
+
 internal interface OverlayPlatform {
     fun isAttached(view: View): Boolean
     fun removeImmediate(manager: WindowManager, view: View)
@@ -22,10 +38,11 @@ internal interface OverlayPlatform {
     /** Event-root seam; production reads the same root property used by the baseline path. */
     fun eventRoot(): AccessibilityNodeInfo? = currentRoot()
     /** Package-only seam; production does not inspect any other root property here. */
-    fun readRootPackage(root: AccessibilityNodeInfo): String? = root.packageName?.toString()
+    fun readRootPackage(root: AccessibilityNodeInfo): String? = safePackageToken(root.packageName)
     fun routeMessages(root: AccessibilityNodeInfo): MessagesRouteResult
     fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
     fun performHome(): Boolean
+    fun openDebug(): Boolean = false
 }
 
 /** Diagnostic-only, default-off entry pause. A user tap may best-effort route to Instagram messages. */
@@ -76,7 +93,7 @@ class DoomAccessibilityService : AccessibilityService() {
     private var removalRetry: Runnable? = null
     private val sessionTimer = InstagramSessionTimer { monotonicClock() }
     private val timerForeground = OverlayForegroundWatchdog(
-        INSTAGRAM, "com.chardyb.doom", WATCHDOG_UNCERTAINTY_GRACE_MS
+        INSTAGRAM, BuildConfig.APPLICATION_ID, WATCHDOG_UNCERTAINTY_GRACE_MS
     )
     private var timerView: View? = null
     private var timerUi: InstagramTimerOverlayUi? = null
@@ -103,6 +120,7 @@ class DoomAccessibilityService : AccessibilityService() {
     private var cancelledGateAfterTimerDetach: GateTicket? = null
     private var timerRemovalAttempts = 0
     private var mainActivityReturnObserved = false
+    private var debugDepartureTicket: GateTicket? = null
     // Private, production-default seam used only by instrumentation to keep the real install path.
     private var overlayWindowInstaller: (WindowManager, View, WindowManager.LayoutParams) -> Unit =
         { manager, view, parameters -> manager.addView(view, parameters) }
@@ -110,7 +128,7 @@ class DoomAccessibilityService : AccessibilityService() {
         { manager, view, parameters -> manager.updateViewLayout(view, parameters) }
     private val foregroundWatchdog = OverlayForegroundWatchdog(
         instagramPackage = INSTAGRAM,
-        doomPackage = "com.chardyb.doom",
+        doomPackage = BuildConfig.APPLICATION_ID,
         uncertaintyGraceMs = WATCHDOG_UNCERTAINTY_GRACE_MS,
     )
     private val removalPolicy = OverlayRemovalPolicy(MAX_REMOVAL_ATTEMPTS)
@@ -125,11 +143,19 @@ class DoomAccessibilityService : AccessibilityService() {
             null
         }
         override fun eventRoot(): AccessibilityNodeInfo? = rootInActiveWindow
-        override fun readRootPackage(root: AccessibilityNodeInfo): String? = root.packageName?.toString()
+        override fun readRootPackage(root: AccessibilityNodeInfo): String? = safePackageToken(
+            root.packageName, applicationContext.packageName, timerImePackages,
+        )
         override fun routeMessages(root: AccessibilityNodeInfo): MessagesRouteResult =
             InstagramMessagesRouter.route(root)
         override fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
         override fun performHome(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
+        override fun openDebug(): Boolean = try {
+            startActivity(MainActivity.debugIntent(this@DoomAccessibilityService))
+            true
+        } catch (_: RuntimeException) {
+            false
+        }
     }
 
     override fun onServiceConnected() {
@@ -148,7 +174,7 @@ class DoomAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         try {
-            val packageName = event?.packageName?.toString()
+            val packageName = safePackageToken(event?.packageName, applicationContext.packageName)
             val traceCapturing = RemovalTraceStore.process.isCapturing()
             val eventKind = if (traceCapturing) traceEventKind(event) else RemovalTraceEvent.NA
             val owner = if (traceCapturing) traceOwner(packageName) else RemovalTraceOwner.NA
@@ -177,6 +203,7 @@ class DoomAccessibilityService : AccessibilityService() {
                     if (overlay == null) {
                         entryGate.leaveInstagram()
                         ticket = null
+                        debugDepartureTicket = null
                         mainActivityReturnObserved = false
                         publishGateState()
                     } else requestOverlayRemoval(
@@ -307,12 +334,20 @@ class DoomAccessibilityService : AccessibilityService() {
                 traceRecord(RemovalTraceMark.EVENT_SUPPRESSED_COOLDOWN, eventKind, owner)
                 return
             }
+            // Report-only collection remains available with fresh report consent and a live
+            // connection. Gate consent is optional; it is required only for the overlay/timer.
             if (!Observation.consent || !Observation.connected) {
                 endTimerSession()
                 requestSafetyCleanup(OverlayRemovalAction.BYPASS, RemovalTraceMark.EVENT_DENIED,
                     eventKind, owner)
                 return
             }
+
+            // A successful Debug departure keeps the current report but must not recollect or
+            // restart a timer until the verified Doom return clears this process-local latch.
+            if (debugDepartureTicket != null && debugDepartureTicket == ticket &&
+                entryGate.state == EntryGateState.BYPASSED
+            ) return
 
             // An installed or closing gate already owns this episode. Instagram event roots
             // can be transient; leave package-only foreground validation to the bounded
@@ -337,6 +372,7 @@ class DoomAccessibilityService : AccessibilityService() {
             val activeTicket = if (Observation.gateConsent) {
                 ticket ?: entryGate.beginInstagramSessionIfEligible()?.also {
                     ticket = it
+                    debugDepartureTicket = null
                     terminalGateSucceeded = false
                     traceBeginEpisode()
                     publishGateState()
@@ -365,7 +401,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 )
                 return
             }
-            val rootPackage = root.packageName?.toString()
+            val rootPackage = safePackageToken(root.packageName)
             if (rootPackage != INSTAGRAM) {
                 root.recycle()
                 Observation.record(null)
@@ -381,7 +417,22 @@ class DoomAccessibilityService : AccessibilityService() {
                 !timerDismissedThisVisit && !timerSafetyVeto) timerAwaitingFreshObservation = false
             if (timerSpecificAllowed()) observeTimerInstagram()
 
-            collect(root)
+            val captureContext = captureContext(event)
+            if (captureContext == null) {
+                root.recycle()
+                Observation.record(null)
+                if (activeTicket != null) requestSafetyCleanup(OverlayRemovalAction.BYPASS, RemovalTraceMark.EVENT_FAILURE)
+                return
+            }
+            if (!collect(root, captureContext)) {
+                if (activeTicket != null) requestSafetyCleanup(
+                    OverlayRemovalAction.BYPASS, RemovalTraceMark.EVENT_FAILURE,
+                    eventKind, owner, RemovalTraceRoot.READ_FAILURE,
+                ) else {
+                    Observation.entryGateState = EntryGateState.OUTSIDE
+                }
+                return
+            }
             if (activeTicket == null) {
                 if (overlay != null) cancelAndBypass()
                 else Observation.entryGateState = EntryGateState.OUTSIDE
@@ -412,63 +463,98 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     @Suppress("DEPRECATION") // Release transient nodes on older supported Android versions too.
-    private fun collect(root: AccessibilityNodeInfo) {
-        val rootPackage = root.packageName?.toString()
-        if (rootPackage == applicationContext.packageName) {
-            root.recycle()
-            return
-        }
-        if (rootPackage != INSTAGRAM) {
+    private fun collect(root: AccessibilityNodeInfo, context: StructuralCaptureContext): Boolean {
+        if (root.packageName?.let { StructuralSanitizer.isExactAscii(it, AndroidStructuralMetadataReader.INSTAGRAM_PACKAGE) } != true) {
             root.recycle()
             Observation.record(null)
-            return
+            return false
         }
-
-        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
-        queue.add(root to 0)
+        data class QueueEntry(val node: AccessibilityNodeInfo, val position: StructuralNodePosition)
+        val queue = ArrayDeque<QueueEntry>()
+        queue.add(QueueEntry(root, StructuralNodePosition()))
         try {
-            val builder = SanitizedStructuralReport.Builder()
-            var nodes = 0
-            while (queue.isNotEmpty() && nodes < SanitizedStructuralReport.MAX_NODES) {
-                val (node, depth) = queue.removeFirst()
+            val builder = SanitizedStructuralReport.Builder(context)
+            val reader = AndroidStructuralMetadataReader(nowMs = monotonicClock)
+            var visited = 0
+            var nextIndex = 1
+            while (queue.isNotEmpty() && visited < SanitizedStructuralReport.MAX_NODES) {
+                val entry = queue.removeFirst()
+                val node = entry.node
                 try {
-                    nodes++
-                    if (node.packageName?.toString() != INSTAGRAM) {
-                        builder.markTruncated()
+                    visited++
+                    if (node.packageName?.let { StructuralSanitizer.isExactAscii(it, AndroidStructuralMetadataReader.INSTAGRAM_PACKAGE) } != true) {
+                        builder.markTruncated("foreign")
                         continue
                     }
-                    val children = node.childCount
-                    builder.add(
-                        depth,
-                        node.viewIdResourceName,
-                        node.className,
-                        children,
-                        node.isClickable,
-                        node.isScrollable,
-                        node.isEditable,
-                        node.isSelected,
-                        node.isChecked
-                    )
-                    if (depth < SanitizedStructuralReport.MAX_DEPTH) {
-                        val limit = minOf(
-                            children,
-                            SanitizedStructuralReport.MAX_NODES - nodes - queue.size
-                        )
-                        if (limit < children) builder.markTruncated()
-                        repeat(limit.coerceAtLeast(0)) { index ->
-                            val child = node.getChild(index)
-                            if (child == null) builder.markTruncated()
-                            else queue.add(child to depth + 1)
+                    val metadata = reader.read(node, entry.position.copy(bfsOrdinal = visited - 1), context)
+                    val elapsedOffset = metadata.elapsedOffsetMs
+                    if (elapsedOffset is MetadataValue.Unavailable) when (elapsedOffset.reason) {
+                        MetadataUnavailableReason.CLOCK_ROLLBACK -> {
+                            // A backward elapsedRealtime sample invalidates this capture; never
+                            // publish a partial report assembled across an invalid clock.
+                            Observation.record(null)
+                            return false
+                        }
+                        MetadataUnavailableReason.TIMEOUT -> {
+                            // A timed-out node is not a trustworthy structural observation. Stop
+                            // before adding it so the report never emits a misleading final row.
+                            builder.markTruncated("time")
+                            break
+                        }
+                        MetadataUnavailableReason.READ_ERROR -> builder.markTruncated("time")
+                        else -> Unit
+                    }
+                    builder.add(metadata)
+                    val depth = entry.position.depth
+                    if (depth >= SanitizedStructuralReport.MAX_DEPTH) {
+                        if (metadata.rawChildCount > 0) builder.markTruncated("depth")
+                        continue
+                    }
+                    val available = SanitizedStructuralReport.MAX_NODES - visited - queue.size
+                    val childLimit = minOf(metadata.rawChildCount, available.coerceAtLeast(0))
+                    if (childLimit < metadata.rawChildCount) builder.markTruncated("nodes")
+                    repeat(childLimit) { slot ->
+                        val child = try { node.getChild(slot) } catch (_: RuntimeException) { null }
+                        if (child == null) {
+                            builder.markTruncated("missing_child")
+                        } else {
+                            queue.add(QueueEntry(
+                                child,
+                                StructuralNodePosition(
+                                    index = nextIndex++,
+                                    parentIndex = MetadataValue.Present(entry.position.index),
+                                    depth = depth + 1,
+                                    bfsOrdinal = 0,
+                                    siblingSlot = MetadataValue.Present(slot),
+                                ),
+                            ))
                         }
                     }
                 } finally {
                     node.recycle()
                 }
             }
-            if (queue.isNotEmpty()) builder.markTruncated()
+            if (queue.isNotEmpty()) builder.markTruncated("nodes")
             Observation.record(builder.build())
+            return true
         } finally {
-            while (queue.isNotEmpty()) queue.removeFirst().first.recycle()
+            while (queue.isNotEmpty()) queue.removeFirst().node.recycle()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun captureContext(event: AccessibilityEvent?): StructuralCaptureContext? {
+        if (event == null) return null
+        return try {
+            val metrics = android.util.DisplayMetrics()
+            val display = (getSystemService(WINDOW_SERVICE) as? WindowManager)?.defaultDisplay ?: return null
+            display.getRealMetrics(metrics)
+            AndroidStructuralMetadataReader.contextFromEvent(
+                event, width = metrics.widthPixels, height = metrics.heightPixels,
+                densityDpi = metrics.densityDpi, startedElapsedMs = monotonicClock(),
+            )
+        } catch (_: RuntimeException) {
+            null
         }
     }
 
@@ -851,6 +937,9 @@ class DoomAccessibilityService : AccessibilityService() {
                 },
                 onLeaveInstagram = {
                     requestOverlayRemoval(OverlayRemovalAction.HOME, token, RemovalTraceMark.USER_HOME)
+                },
+                onDebugReport = {
+                    requestDebugReport(token)
                 }
             )
             val box = ui.root
@@ -867,8 +956,6 @@ class DoomAccessibilityService : AccessibilityService() {
             if (activeTicket != ticket || activeTicket.generation != entryGate.generation ||
                 entryGate.state != EntryGateState.GATING || !timerConsentAllowed() ||
                 sampleTimerAuthority() != OverlayForegroundDecision.KEEP ||
-                activeTicket != ticket || activeTicket.generation != entryGate.generation ||
-                entryGate.state != EntryGateState.GATING || !timerConsentAllowed() ||
                 timerView != null || timerClosing || overlay != null) {
                 ui.dispose()
                 if (activeTicket == ticket && activeTicket.generation == entryGate.generation) {
@@ -956,6 +1043,17 @@ class DoomAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Debug navigation is an external action and therefore follows the same detach transaction. */
+    private fun requestDebugReport(token: OverlayCallbackToken) {
+        if (overlay == null || overlayToken !== token || ticket != token.ticket ||
+            token.ticket.generation != entryGate.generation ||
+            !callbackGuard.acceptsVisible(token) || entryGate.state != EntryGateState.GATING ||
+            !Observation.reminderSettings.enabled || !Observation.consent ||
+            !Observation.gateConsent || !Observation.connected
+        ) return
+        requestOverlayRemoval(OverlayRemovalAction.OPEN_DEBUG, token, RemovalTraceMark.USER_DEBUG)
+    }
+
     private fun requestOverlayRemoval(
         action: OverlayRemovalAction,
         token: OverlayCallbackToken? = null,
@@ -989,6 +1087,7 @@ class DoomAccessibilityService : AccessibilityService() {
         now: Long? = null,
     ) {
         endTimerSession()
+        debugDepartureTicket = null
         callbackGuard.invalidateVisible()
         completion?.let(handler::removeCallbacks)
         watchdog?.let(handler::removeCallbacks)
@@ -1091,6 +1190,52 @@ class DoomAccessibilityService : AccessibilityService() {
                 publishGateState()
                 Observation.clear()
             }
+            OverlayRemovalAction.OPEN_DEBUG -> {
+                val departureTicket = detachedToken?.ticket
+                if (departureTicket == null || !ownsDetachedEpisode ||
+                    !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
+                    !Observation.reminderSettings.enabled || !Observation.consent ||
+                    !Observation.gateConsent || !Observation.connected
+                ) {
+                    departureTicket?.let(::cancelCurrentGatingTicket)
+                    publishGateState()
+                    Observation.clear()
+                    detachedToken?.let(callbackGuard::consumeDetached)
+                    return
+                }
+                val root = try { overlayPlatform.currentRoot() } catch (_: RuntimeException) { null }
+                if (root == null) {
+                    cancelCurrentGatingTicket(departureTicket)
+                    publishGateState()
+                    Observation.clear()
+                    callbackGuard.consumeDetached(detachedToken)
+                    return
+                }
+                try {
+                    val packageName = try { overlayPlatform.readRootPackage(root) } catch (_: RuntimeException) { null }
+                    val verifiedForeground = packageName == INSTAGRAM ||
+                        (packageName == applicationContext.packageName && mainActivityReturnObserved)
+                    if (!verifiedForeground || !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
+                        !Observation.reminderSettings.enabled || !Observation.consent ||
+                        !Observation.gateConsent || !Observation.connected ||
+                        !entryGate.bypass(departureTicket)
+                    ) {
+                        cancelCurrentGatingTicket(departureTicket)
+                        publishGateState()
+                        Observation.clear()
+                        return
+                    }
+                    endTimerSession()
+                    terminalGateSucceeded = false
+                    debugDepartureTicket = departureTicket
+                    Observation.hideReport()
+                    publishGateState()
+                    try { overlayPlatform.openDebug() } catch (_: RuntimeException) { /* detached, preserved */ }
+                } finally {
+                    try { overlayPlatform.recycleRoot(root) } catch (_: RuntimeException) { }
+                    callbackGuard.consumeDetached(detachedToken)
+                }
+            }
             OverlayRemovalAction.NAVIGATE_MESSAGES -> {
                 val routeTicket = detachedToken?.ticket
                 if (routeTicket == null || !ownsDetachedEpisode ||
@@ -1111,7 +1256,7 @@ class DoomAccessibilityService : AccessibilityService() {
                     return
                 }
                 try {
-                    val instagramForeground = root.packageName?.toString() == INSTAGRAM
+                    val instagramForeground = safePackageToken(root.packageName) == INSTAGRAM
                     if (!instagramForeground ||
                         !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
                         !entryGate.beginMessagesRoute(routeTicket)
@@ -1160,6 +1305,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 endTimerSession()
                 entryGate.leaveInstagram()
                 ticket = null
+                debugDepartureTicket = null
                 mainActivityReturnObserved = false
                 publishGateState()
             }
@@ -1188,7 +1334,7 @@ class DoomAccessibilityService : AccessibilityService() {
                     return
                 }
                 try {
-                    val validRoot = root.packageName?.toString() == INSTAGRAM
+                    val validRoot = safePackageToken(root.packageName) == INSTAGRAM
                     if (!validRoot || !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
                         !entryGate.complete(monotonicClock(), completeTicket)
                     ) {
@@ -1402,12 +1548,13 @@ class DoomAccessibilityService : AccessibilityService() {
         OverlayRemovalAction.NAVIGATE_MESSAGES -> RemovalTraceAction.NAVIGATE_MESSAGES
         OverlayRemovalAction.BYPASS -> RemovalTraceAction.BYPASS
         OverlayRemovalAction.PRESERVE_REPORT -> RemovalTraceAction.PRESERVE_REPORT
+        OverlayRemovalAction.OPEN_DEBUG -> RemovalTraceAction.OPEN_DEBUG
         OverlayRemovalAction.RESET_OUTSIDE -> RemovalTraceAction.RESET_OUTSIDE
     }
 
     private fun isMainActivityReturn(event: AccessibilityEvent?): Boolean =
         event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            event.className?.toString() == MainActivity::class.java.name
+            StructuralSanitizer.isExactAscii(event.className, MainActivity::class.java.name)
 
     override fun onInterrupt() {
         endTimerSession()
