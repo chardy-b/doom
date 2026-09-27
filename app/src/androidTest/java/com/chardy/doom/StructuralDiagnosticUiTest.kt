@@ -49,106 +49,6 @@ class StructuralDiagnosticUiTest {
         assertEquals(listOf("com.chardy.doom.MainActivity"), exportedActivities)
     }
 
-    @Test fun debugIntentIsExplicitInternalNavigationWithoutPayload() {
-        val intent = MainActivity.debugIntent(rule.activity)
-        assertEquals(MainActivity.ACTION_OPEN_DEBUG, intent.action)
-        assertEquals(rule.activity.packageName, intent.component?.packageName)
-        assertEquals(MainActivity::class.java.name, intent.component?.className)
-        assertNull(intent.data)
-        assertTrue(intent.categories.isNullOrEmpty())
-        assertNull(intent.extras)
-        assertEquals(
-            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
-            intent.flags and (Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-        )
-    }
-
-    @Test fun coldDebugIntentConsumesOnceAndTargetsReportControls() {
-        // Keep the nested cold Activity in its own task so closing it cannot close the
-        // ActivityScenarioRule-owned Activity.
-        val coldIntent = MainActivity.debugIntent(rule.activity).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT
-        }
-        val scenario = ActivityScenario.launch<MainActivity>(coldIntent)
-        try {
-            scenario.onActivity { activity ->
-                assertTrue(activity.currentDebugRequestSequence() > 0L)
-            }
-            instrumentation.waitForIdleSync()
-            assertTrue(device.wait(Until.hasObject(By.text("REVEAL LOCAL REPORT")), 5_000))
-            assertTrue(device.wait(Until.hasObject(By.text("COPY REVIEWED REPORT")), 5_000))
-            scenario.onActivity { activity ->
-                val sequence = activity.currentDebugRequestSequence()
-                assertFalse(activity.consumeDebugRequest(sequence))
-            }
-        } finally {
-            scenario.close()
-        }
-        // The rule's warm Activity remains the test surface; the fixed action's UI route is
-        // verified separately below without using a private report or an Activity authority.
-        deliverNewIntent(MainActivity.debugIntent(rule.activity))
-        assertDebugControlsDisplayed()
-    }
-
-    @Test fun warmRepeatedDebugIntentTargetsControlsAndMalformedReplacementDoesNotReplay() {
-        seed()
-        val launchIdentity = rule.runOnIdle { Intent(rule.activity.intent) }
-        rule.runOnIdle {
-            val before = rule.activity.currentDebugRequestSequence()
-            deliverNewIntent(MainActivity.debugIntent(rule.activity))
-            deliverNewIntent(MainActivity.debugIntent(rule.activity))
-            assertEquals(before + 2L, rule.activity.currentDebugRequestSequence())
-            deliverNewIntent(MainActivity.debugIntent(rule.activity).putExtra("unexpected", 1))
-            assertEquals(before + 2L, rule.activity.currentDebugRequestSequence())
-        }
-        assertDebugControlsDisplayed()
-        rule.runOnIdle {
-            assertTrue(launchIdentity.filterEquals(rule.activity.intent))
-            assertTrue(Observation.report != null)
-            // The malformed replacement must not leave a second request queued.
-            val sequence = rule.activity.currentDebugRequestSequence()
-            assertFalse(rule.activity.consumeDebugRequest(sequence))
-        }
-    }
-
-    @Test fun leavingDebugThenStartingWarmDebugRequestReanchorsControls() {
-        seed()
-        rule.onNodeWithText("Home").performClick()
-        rule.onNodeWithText("Debug").performClick()
-        deliverNewIntent(MainActivity.debugIntent(rule.activity))
-        assertDebugControlsDisplayed()
-    }
-
-    @Test fun previewCancelAndConsumedDebugRequestSurviveRotationWithoutPersistingReport() {
-        rule.onNodeWithText("Home").performClick()
-        rule.onNodeWithText("Preview breathing reminder").performScrollTo().performClick()
-        rule.runOnIdle { rule.activity.onBackPressedDispatcher.onBackPressed() }
-        rule.onNodeWithText("Preview breathing reminder").performScrollTo().assertIsDisplayed()
-        seed()
-        val rotationScenario = ActivityScenario.launch<MainActivity>(MainActivity.debugIntent(rule.activity).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT
-        })
-        try {
-            waitForDebugControls()
-            device.findObject(By.text("REVEAL LOCAL REPORT")).click()
-            instrumentation.waitForIdleSync()
-            rotationScenario.onActivity { assertTrue(Observation.revealed) }
-            var before: SanitizedStructuralReport? = null
-            rotationScenario.onActivity { before = Observation.report }
-            rotationScenario.recreate()
-            waitForDebugControls()
-            assertTrue(device.wait(Until.hasObject(By.text("DOOM-OWNED QUICK DEMO")), 5_000))
-            rotationScenario.onActivity {
-                assertSame(before, Observation.report)
-                assertTrue(Observation.revealed)
-            }
-        } finally {
-            rotationScenario.close()
-        }
-    }
-
     @Before fun reset() = rule.runOnIdle {
         Observation.setSessionTimerEnabled(rule.activity, true)
         RemovalTraceStore.process.clear()
@@ -157,19 +57,7 @@ class StructuralDiagnosticUiTest {
         clipboard.setPrimaryClip(ClipData.newPlainText("test", "sentinel"))
     }
 
-    private fun deliverNewIntent(intent: Intent) {
-        instrumentation.callActivityOnNewIntent(rule.activity, intent)
-    }
-    private fun waitForDebugControls() {
-        assertTrue(device.wait(Until.hasObject(By.text("REVEAL LOCAL REPORT")), 5_000))
-        assertTrue(device.wait(Until.hasObject(By.text("COPY REVIEWED REPORT")), 5_000))
-    }
-    private fun assertDebugControlsDisplayed() {
-        waitForDebugControls()
-        rule.onNodeWithText("REVEAL LOCAL REPORT").assertIsDisplayed()
-        rule.onNodeWithText("COPY REVIEWED REPORT").assertIsDisplayed()
-    }
-    @Before fun openDebug() {
+    @Before fun captureDebug() {
         rule.onNodeWithText("Debug").performClick()
     }
     @After fun cleanup() = rule.runOnIdle {
@@ -353,7 +241,6 @@ class StructuralDiagnosticUiTest {
                 override fun routeMessages(root: AccessibilityNodeInfo) = MessagesRouteResult.FAILED
                 override fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
                 override fun performHome() = false
-                override fun openDebug() = false
             }
             DoomAccessibilityService::class.java.getDeclaredField("overlayPlatform")
                 .apply { isAccessible = true }.set(service, platform)

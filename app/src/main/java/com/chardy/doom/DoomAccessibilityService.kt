@@ -42,7 +42,6 @@ internal interface OverlayPlatform {
     fun routeMessages(root: AccessibilityNodeInfo): MessagesRouteResult
     fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
     fun performHome(): Boolean
-    fun openDebug(): Boolean = false
 }
 
 /** Diagnostic-only, default-off entry pause. A user tap may best-effort route to Instagram messages. */
@@ -120,7 +119,13 @@ class DoomAccessibilityService : AccessibilityService() {
     private var cancelledGateAfterTimerDetach: GateTicket? = null
     private var timerRemovalAttempts = 0
     private var mainActivityReturnObserved = false
-    private var debugDepartureTicket: GateTicket? = null
+    private var captureEventProvenance: StructuralCaptureEvent? = null
+    // Production-no-op instrumentation hooks. They expose lifecycle ordering, never node data.
+    private var collectorReadHook: () -> Unit = {}
+    private var collectorRecycleHook: () -> Unit = {}
+    private var copyHook: (SanitizedStructuralReport) -> OverlayCopyResult = { candidate ->
+        Observation.replaceAndCopyFreshReport(this, candidate)
+    }
     // Private, production-default seam used only by instrumentation to keep the real install path.
     private var overlayWindowInstaller: (WindowManager, View, WindowManager.LayoutParams) -> Unit =
         { manager, view, parameters -> manager.addView(view, parameters) }
@@ -150,12 +155,6 @@ class DoomAccessibilityService : AccessibilityService() {
             InstagramMessagesRouter.route(root)
         override fun recycleRoot(root: AccessibilityNodeInfo) = root.recycle()
         override fun performHome(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
-        override fun openDebug(): Boolean = try {
-            startActivity(MainActivity.debugIntent(this@DoomAccessibilityService))
-            true
-        } catch (_: RuntimeException) {
-            false
-        }
     }
 
     override fun onServiceConnected() {
@@ -203,7 +202,6 @@ class DoomAccessibilityService : AccessibilityService() {
                     if (overlay == null) {
                         entryGate.leaveInstagram()
                         ticket = null
-                        debugDepartureTicket = null
                         mainActivityReturnObserved = false
                         publishGateState()
                     } else requestOverlayRemoval(
@@ -343,12 +341,6 @@ class DoomAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // A successful Debug departure keeps the current report but must not recollect or
-            // restart a timer until the verified Doom return clears this process-local latch.
-            if (debugDepartureTicket != null && debugDepartureTicket == ticket &&
-                entryGate.state == EntryGateState.BYPASSED
-            ) return
-
             // An installed or closing gate already owns this episode. Instagram event roots
             // can be transient; leave package-only foreground validation to the bounded
             // watchdog instead of recollecting or vetoing the pending terminal action.
@@ -372,7 +364,6 @@ class DoomAccessibilityService : AccessibilityService() {
             val activeTicket = if (Observation.gateConsent) {
                 ticket ?: entryGate.beginInstagramSessionIfEligible()?.also {
                     ticket = it
-                    debugDepartureTicket = null
                     terminalGateSucceeded = false
                     traceBeginEpisode()
                     publishGateState()
@@ -424,6 +415,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 if (activeTicket != null) requestSafetyCleanup(OverlayRemovalAction.BYPASS, RemovalTraceMark.EVENT_FAILURE)
                 return
             }
+            captureEventProvenance = captureContext.event
             if (!collect(root, captureContext)) {
                 if (activeTicket != null) requestSafetyCleanup(
                     OverlayRemovalAction.BYPASS, RemovalTraceMark.EVENT_FAILURE,
@@ -464,10 +456,19 @@ class DoomAccessibilityService : AccessibilityService() {
 
     @Suppress("DEPRECATION") // Release transient nodes on older supported Android versions too.
     private fun collect(root: AccessibilityNodeInfo, context: StructuralCaptureContext): Boolean {
+        val candidate = collectCandidate(root, context)
+        Observation.record(candidate)
+        return candidate != null
+    }
+
+    @Suppress("DEPRECATION")
+    private fun collectCandidate(
+        root: AccessibilityNodeInfo,
+        context: StructuralCaptureContext,
+    ): SanitizedStructuralReport? {
         if (root.packageName?.let { StructuralSanitizer.isExactAscii(it, AndroidStructuralMetadataReader.INSTAGRAM_PACKAGE) } != true) {
-            root.recycle()
-            Observation.record(null)
-            return false
+            try { root.recycle() } finally { collectorRecycleHook() }
+            return null
         }
         data class QueueEntry(val node: AccessibilityNodeInfo, val position: StructuralNodePosition)
         val queue = ArrayDeque<QueueEntry>()
@@ -486,14 +487,14 @@ class DoomAccessibilityService : AccessibilityService() {
                         builder.markTruncated("foreign")
                         continue
                     }
+                    collectorReadHook()
                     val metadata = reader.read(node, entry.position.copy(bfsOrdinal = visited - 1), context)
                     val elapsedOffset = metadata.elapsedOffsetMs
                     if (elapsedOffset is MetadataValue.Unavailable) when (elapsedOffset.reason) {
                         MetadataUnavailableReason.CLOCK_ROLLBACK -> {
                             // A backward elapsedRealtime sample invalidates this capture; never
                             // publish a partial report assembled across an invalid clock.
-                            Observation.record(null)
-                            return false
+                            return null
                         }
                         MetadataUnavailableReason.TIMEOUT -> {
                             // A timed-out node is not a trustworthy structural observation. Stop
@@ -531,15 +532,34 @@ class DoomAccessibilityService : AccessibilityService() {
                         }
                     }
                 } finally {
-                    node.recycle()
+                    try { node.recycle() } finally { collectorRecycleHook() }
                 }
             }
             if (queue.isNotEmpty()) builder.markTruncated("nodes")
-            Observation.record(builder.build())
-            return true
+            return builder.build()
         } finally {
-            while (queue.isNotEmpty()) queue.removeFirst().node.recycle()
+            while (queue.isNotEmpty()) {
+                try { queue.removeFirst().node.recycle() } finally { collectorRecycleHook() }
+            }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun tapCaptureContext(): StructuralCaptureContext? {
+        val event = captureEventProvenance ?: return null
+        return try {
+            val metrics = android.util.DisplayMetrics()
+            val display = (getSystemService(WINDOW_SERVICE) as? WindowManager)?.defaultDisplay ?: return null
+            display.getRealMetrics(metrics)
+            StructuralCaptureContext(
+                apiLevel = android.os.Build.VERSION.SDK_INT,
+                screenWidth = metrics.widthPixels,
+                screenHeight = metrics.heightPixels,
+                densityDpi = metrics.densityDpi,
+                startedElapsedMs = monotonicClock(),
+                event = event,
+            )
+        } catch (_: RuntimeException) { null }
     }
 
     @Suppress("DEPRECATION")
@@ -1051,7 +1071,7 @@ class DoomAccessibilityService : AccessibilityService() {
             !Observation.reminderSettings.enabled || !Observation.consent ||
             !Observation.gateConsent || !Observation.connected
         ) return
-        requestOverlayRemoval(OverlayRemovalAction.OPEN_DEBUG, token, RemovalTraceMark.USER_DEBUG)
+        requestOverlayRemoval(OverlayRemovalAction.CAPTURE_DEBUG, token, RemovalTraceMark.USER_DEBUG)
     }
 
     private fun requestOverlayRemoval(
@@ -1087,7 +1107,7 @@ class DoomAccessibilityService : AccessibilityService() {
         now: Long? = null,
     ) {
         endTimerSession()
-        debugDepartureTicket = null
+        captureEventProvenance = null
         callbackGuard.invalidateVisible()
         completion?.let(handler::removeCallbacks)
         watchdog?.let(handler::removeCallbacks)
@@ -1190,49 +1210,76 @@ class DoomAccessibilityService : AccessibilityService() {
                 publishGateState()
                 Observation.clear()
             }
-            OverlayRemovalAction.OPEN_DEBUG -> {
-                val departureTicket = detachedToken?.ticket
-                if (departureTicket == null || !ownsDetachedEpisode ||
+            OverlayRemovalAction.CAPTURE_DEBUG -> {
+                val captureTicket = detachedToken?.ticket
+                if (captureTicket == null || !ownsDetachedEpisode ||
                     !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
                     !Observation.reminderSettings.enabled || !Observation.consent ||
                     !Observation.gateConsent || !Observation.connected
                 ) {
-                    departureTicket?.let(::cancelCurrentGatingTicket)
+                    captureTicket?.let(::cancelCurrentGatingTicket)
                     publishGateState()
                     Observation.clear()
                     detachedToken?.let(callbackGuard::consumeDetached)
                     return
                 }
-                val root = try { overlayPlatform.currentRoot() } catch (_: RuntimeException) { null }
-                if (root == null) {
-                    cancelCurrentGatingTicket(departureTicket)
+                val context = tapCaptureContext()
+                val traversalRoot = try { overlayPlatform.currentRoot() } catch (_: RuntimeException) { null }
+                if (context == null || traversalRoot == null) {
+                    traversalRoot?.let { try { it.recycle() } catch (_: RuntimeException) { } }
+                    cancelCurrentGatingTicket(captureTicket)
+                    publishGateState()
+                    Observation.clear()
+                    callbackGuard.consumeDetached(detachedToken)
+                    return
+                }
+                val candidate = try { collectCandidate(traversalRoot, context) } catch (_: RuntimeException) { null }
+                if (candidate == null) {
+                    cancelCurrentGatingTicket(captureTicket)
+                    publishGateState()
+                    Observation.clear()
+                    callbackGuard.consumeDetached(detachedToken)
+                    return
+                }
+                val watchdogRoot = try { overlayPlatform.currentRoot() } catch (_: RuntimeException) { null }
+                if (watchdogRoot == null) {
+                    cancelCurrentGatingTicket(captureTicket)
                     publishGateState()
                     Observation.clear()
                     callbackGuard.consumeDetached(detachedToken)
                     return
                 }
                 try {
-                    val packageName = try { overlayPlatform.readRootPackage(root) } catch (_: RuntimeException) { null }
-                    val verifiedForeground = packageName == INSTAGRAM ||
-                        (packageName == applicationContext.packageName && mainActivityReturnObserved)
-                    if (!verifiedForeground || !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
+                    val packageName = try { overlayPlatform.readRootPackage(watchdogRoot) } catch (_: RuntimeException) { null }
+                    if (packageName != INSTAGRAM ||
+                        !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING) ||
                         !Observation.reminderSettings.enabled || !Observation.consent ||
-                        !Observation.gateConsent || !Observation.connected ||
-                        !entryGate.bypass(departureTicket)
+                        !Observation.gateConsent || !Observation.connected
                     ) {
-                        cancelCurrentGatingTicket(departureTicket)
+                        cancelCurrentGatingTicket(captureTicket)
                         publishGateState()
                         Observation.clear()
                         return
                     }
                     endTimerSession()
+                    if (!entryGate.bypass(captureTicket)) {
+                        cancelCurrentGatingTicket(captureTicket)
+                        publishGateState()
+                        Observation.clear()
+                        return
+                    }
                     terminalGateSucceeded = false
-                    debugDepartureTicket = departureTicket
-                    Observation.hideReport()
                     publishGateState()
-                    try { overlayPlatform.openDebug() } catch (_: RuntimeException) { /* detached, preserved */ }
+                    if (!hasDetachedTerminalAuthority(detachedToken, EntryGateState.BYPASSED) ||
+                        !Observation.reminderSettings.enabled || !Observation.consent ||
+                        !Observation.gateConsent || !Observation.connected
+                    ) {
+                        Observation.clear()
+                        return
+                    }
+                    if (copyHook(candidate) != OverlayCopyResult.COPIED) Observation.clear()
                 } finally {
-                    try { overlayPlatform.recycleRoot(root) } catch (_: RuntimeException) { }
+                    try { overlayPlatform.recycleRoot(watchdogRoot) } catch (_: RuntimeException) { }
                     callbackGuard.consumeDetached(detachedToken)
                 }
             }
@@ -1305,7 +1352,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 endTimerSession()
                 entryGate.leaveInstagram()
                 ticket = null
-                debugDepartureTicket = null
+                captureEventProvenance = null
                 mainActivityReturnObserved = false
                 publishGateState()
             }
@@ -1548,7 +1595,7 @@ class DoomAccessibilityService : AccessibilityService() {
         OverlayRemovalAction.NAVIGATE_MESSAGES -> RemovalTraceAction.NAVIGATE_MESSAGES
         OverlayRemovalAction.BYPASS -> RemovalTraceAction.BYPASS
         OverlayRemovalAction.PRESERVE_REPORT -> RemovalTraceAction.PRESERVE_REPORT
-        OverlayRemovalAction.OPEN_DEBUG -> RemovalTraceAction.OPEN_DEBUG
+        OverlayRemovalAction.CAPTURE_DEBUG -> RemovalTraceAction.CAPTURE_DEBUG
         OverlayRemovalAction.RESET_OUTSIDE -> RemovalTraceAction.RESET_OUTSIDE
     }
 

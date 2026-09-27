@@ -141,6 +141,28 @@ object Observation {
         else OverlayCopyResult.UNAVAILABLE
     }
 
+    /** Atomic capture-button sink: stale report state is never retained on a failed write. */
+    internal fun replaceAndCopyFreshReport(
+        context: Context,
+        candidate: SanitizedStructuralReport,
+    ): OverlayCopyResult {
+        clear()
+        return if (writeSensitiveClipboard(
+                context,
+                "Doom sanitized structural report",
+                candidate.text,
+            )) {
+            report = candidate
+            copied = true
+            // Capture-to-clipboard is not a local reveal action.
+            revealed = false
+            OverlayCopyResult.COPIED
+        } else {
+            clear()
+            OverlayCopyResult.UNAVAILABLE
+        }
+    }
+
     private fun writeClipboard(
         context: Context,
         current: SanitizedStructuralReport,

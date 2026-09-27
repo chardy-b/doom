@@ -223,9 +223,7 @@ class EntryGateOverlayUiTest {
             // Deliver the already-approved internal action to this owned Activity. Starting
             // another instance here leaves ActivityScenario teardown in PAUSED/RESUMED races;
             // cold system launch is covered by the canonical navigation test.
-            activeScenario.onActivity { activity ->
-                instrumentation.callActivityOnNewIntent(activity, MainActivity.debugIntent(activity))
-            }
+            device.findObject(By.text("Debug")).click()
             assertTrue(swipeUntilVisible("DOOM-OWNED QUICK DEMO"))
             assertTrue(swipeUntilVisible("REVEAL LOCAL REPORT"))
             val footer = "Build ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE})"

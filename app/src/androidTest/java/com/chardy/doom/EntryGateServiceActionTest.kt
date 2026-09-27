@@ -15,6 +15,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -78,9 +79,11 @@ class EntryGateServiceActionTest {
         @Volatile var routeThrows = false
         @Volatile var homeCalls = 0
         @Volatile var homeResult = true
-        @Volatile var debugCalls = 0
-        @Volatile var debugResult = true
-        @Volatile var debugThrows = false
+        @Volatile var copiedCandidate: SanitizedStructuralReport? = null
+        var copyHook: (SanitizedStructuralReport) -> OverlayCopyResult = { candidate ->
+            copiedCandidate = candidate
+            OverlayCopyResult.COPIED
+        }
         val platformCalls = Collections.synchronizedList(mutableListOf<String>())
         lateinit var revokeInsideRoot: () -> Unit
         var rootReadHook: () -> Unit = {}
@@ -168,12 +171,6 @@ class EntryGateServiceActionTest {
             return homeResult
         }
 
-        override fun openDebug(): Boolean {
-            platformCalls += "openDebug"
-            debugCalls++
-            if (debugThrows) throw IllegalStateException("debug launch unavailable")
-            return debugResult
-        }
 
         lateinit var stateReader: () -> EntryGateState
     }
@@ -248,112 +245,72 @@ class EntryGateServiceActionTest {
         assertTrue(gate(fixture.service).cooldownActive())
     }
 
-    @Test fun debugWaitsForDetachPreservesEpisodeAndNeverArmsCooldown() {
+    @Test fun captureDebugDetachesCollectsFreshThenBypassesAndCopiesExactlyOnce() {
         val fixture = fixture(attached = true, detachOnRemove = false)
-        request(fixture.service, OverlayRemovalAction.OPEN_DEBUG, fixture.token)
-        waitFor { fixture.platform.removeAttempts > 0 }
-        assertEquals(0, fixture.platform.debugCalls)
+        val copyCalls = java.util.concurrent.atomic.AtomicInteger()
+        rule.scenario.onActivity {
+            field(fixture.service, "captureEventProvenance").set(
+                fixture.service,
+                StructuralCaptureContext.synthetic().event,
+            )
+            field(fixture.service, "copyHook").set(
+                fixture.service,
+                { candidate: SanitizedStructuralReport ->
+                    // Fake assignment happens before the awaited counter observes completion.
+                    val result = fixture.platform.copyHook(candidate)
+                    copyCalls.incrementAndGet()
+                    result
+                },
+            )
+        }
+        request(fixture.service, OverlayRemovalAction.CAPTURE_DEBUG, fixture.token)
+        assertEquals(0, copyCalls.get())
 
         rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
-        waitFor { fixture.platform.debugCalls == 1 }
+        waitFor { copyCalls.get() == 1 }
+
+        assertTrue(fixture.platform.copiedCandidate != null)
+        assertEquals(2, fixture.platform.currentRootCalls)
+        // The collector owns its root; only the separate attribution root uses this seam.
+        assertEquals(1, fixture.platform.recycledRoots)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
         assertFalse(gate(fixture.service).cooldownActive())
-        assertEquals(1, fixture.platform.currentRootCalls)
-        assertEquals(1, fixture.platform.recycledRoots)
-        assertTrue(fixture.platform.platformCalls.indexOf("removeImmediate") <
-            fixture.platform.platformCalls.indexOf("currentRoot"))
-        assertTrue(fixture.platform.platformCalls.indexOf("currentRoot") <
-            fixture.platform.platformCalls.indexOf("openDebug"))
+        assertEquals(0, fixture.platform.routeCalls)
+        assertEquals(0, fixture.platform.homeCalls)
     }
 
-    @Test fun actualDebugButtonCallbackDetachesHidesPreservesAndLaunchesOnce() {
+    @Test fun unavailableDebugCopyLeavesNoReportStateAndNeverRetries() {
         val fixture = fixture()
-        val report = SanitizedStructuralReport.Builder().apply {
-            add(StructuralNodeMetadata(
-                position = StructuralNodePosition(),
-                resourceId = "com.instagram.android:id/debug_callback_report",
-                className = "View",
-            ))
-        }.build()!!
+        val copyCalls = java.util.concurrent.atomic.AtomicInteger()
         rule.scenario.onActivity {
-            Observation.record(report)
-            invoke(fixture.service, "observeTimerInstagram")
-            assertTrue((field(fixture.service, "sessionTimer").get(fixture.service) as InstagramSessionTimer).running)
-            assertTrue(fixture.ui.debugReport.performClick())
-        }
-        waitFor { fixture.platform.debugCalls == 1 }
-        assertSame(report, Observation.report)
-        assertFalse(Observation.revealed)
-        assertFalse(Observation.copied)
-        assertFalse((field(fixture.service, "sessionTimer").get(fixture.service) as InstagramSessionTimer).running)
-        assertFalse(gate(fixture.service).cooldownActive())
-        rule.scenario.onActivity { assertFalse(fixture.ui.debugReport.performClick()) }
-        assertEquals(1, fixture.platform.debugCalls)
-    }
-
-    @Test fun actualDebugButtonRejectsMissingForeignAndThrowingRoots() {
-        listOf(
-            RootBehavior.MISSING,
-            RootBehavior.NULL_PACKAGE,
-            RootBehavior.FOREIGN,
-            RootBehavior.THROW,
-            RootBehavior.PACKAGE_THROW,
-        ).forEach { behavior ->
-            val fixture = fixture(rootBehavior = behavior)
-            rule.scenario.onActivity { assertTrue(fixture.ui.debugReport.performClick()) }
-            instrumentation.waitForIdleSync()
-            assertEquals("root=$behavior", 0, fixture.platform.debugCalls)
-            assertFalse(gate(fixture.service).cooldownActive())
-            assertFalse(Observation.revealed)
-        }
-    }
-
-    @Test fun actualDebugButtonRejectsStaleOrMissingAuthorityBeforeRemoval() {
-        val cases = listOf("overlay", "ticket", "token", "connection")
-        cases.forEach { missing ->
-            val fixture = fixture(attached = true)
-            rule.scenario.onActivity {
-                when (missing) {
-                    "overlay" -> field(fixture.service, "overlay").set(fixture.service, null)
-                    "ticket" -> field(fixture.service, "ticket").set(fixture.service, null)
-                    "token" -> {
-                        val guard = field(fixture.service, "callbackGuard").get(fixture.service) as OverlayCallbackGuard
-                        field(fixture.service, "overlayToken").set(fixture.service, guard.open(fixture.ticket))
-                    }
-                    "connection" -> Observation.connected = false
-                }
-                assertTrue(fixture.ui.debugReport.performClick())
-            }
-            instrumentation.waitForIdleSync()
-            assertEquals("authority=$missing", 0, fixture.platform.debugCalls)
-            assertTrue(fixture.platform.attached)
-        }
-    }
-
-    @Test fun falseOrThrowingDebugLaunchPreservesTheDetachedEpisodeWithoutRetry() {
-        listOf(false, true).forEach { throws ->
-            val fixture = fixture()
-            val report = SanitizedStructuralReport.Builder().apply {
+            val prior = SanitizedStructuralReport.Builder().apply {
                 add(StructuralNodeMetadata(
                     position = StructuralNodePosition(),
-                    resourceId = "com.instagram.android:id/debug_launch_result",
+                    resourceId = "com.instagram.android:id/prior",
                     className = "View",
                 ))
             }.build()!!
-            rule.scenario.onActivity {
-                Observation.record(report)
-                fixture.platform.debugResult = !throws
-                fixture.platform.debugThrows = throws
-                assertTrue(fixture.ui.debugReport.performClick())
-            }
-            waitFor { fixture.platform.debugCalls == 1 }
-            assertSame(report, Observation.report)
-            assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
-            assertFalse(gate(fixture.service).cooldownActive())
-            assertEquals(1, fixture.platform.debugCalls)
-            rule.scenario.onActivity { sendEvent(fixture.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android") }
-            assertEquals(1, fixture.platform.debugCalls)
+            Observation.record(prior)
+            field(fixture.service, "captureEventProvenance").set(
+                fixture.service,
+                StructuralCaptureContext.synthetic().event,
+            )
+            field(fixture.service, "copyHook").set(
+                fixture.service,
+                { _: SanitizedStructuralReport ->
+                    copyCalls.incrementAndGet()
+                    OverlayCopyResult.UNAVAILABLE
+                },
+            )
         }
+        request(fixture.service, OverlayRemovalAction.CAPTURE_DEBUG, fixture.token)
+        waitFor { copyCalls.get() == 1 }
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertNull(Observation.report)
+        assertFalse(Observation.revealed)
+        assertFalse(Observation.copied)
+        assertFalse(gate(fixture.service).cooldownActive())
+        assertEquals(1, copyCalls.get())
     }
 
     @Test fun disablingRemindersRemovesLiveOverlayWithoutCooldownCredit() {
@@ -2419,7 +2376,7 @@ class EntryGateServiceActionTest {
             OverlayRemovalAction.NAVIGATE_MESSAGES -> RemovalTraceMark.USER_MESSAGES
             OverlayRemovalAction.COMPLETE -> RemovalTraceMark.TIMER_COMPLETE
             OverlayRemovalAction.PRESERVE_REPORT -> RemovalTraceMark.APP_RETURN
-            OverlayRemovalAction.OPEN_DEBUG -> RemovalTraceMark.USER_DEBUG
+            OverlayRemovalAction.CAPTURE_DEBUG -> RemovalTraceMark.USER_DEBUG
             OverlayRemovalAction.BYPASS -> RemovalTraceMark.SAFETY_OVERRIDE
             OverlayRemovalAction.RESET_OUTSIDE -> RemovalTraceMark.EVENT_PACKAGE_RESET
         }

@@ -56,7 +56,7 @@ internal object EntryGateOverlayViewFactory{
   val progress=SegmentedBreathProgressView(context);body.addView(progress,LinearLayout.LayoutParams(-1,dp(if(compactLandscape)8 else 10)))
   val skip=button(context,"Skip to Messages",BreathingVisuals.INK,BreathingVisuals.GOLD,dp(52)).apply{setOnClickListener{onSkipToMessages()}}
   val leave=button(context,"Leave Instagram",BreathingVisuals.PAPER,BreathingVisuals.PANEL,dp(48)).apply{setOnClickListener{onLeaveInstagram()}}
-  val debug=button(context,"Debug report",BreathingVisuals.GOLD,BreathingVisuals.INK,dp(48)).apply{
+  val debug=button(context,"Capture debug",BreathingVisuals.GOLD,BreathingVisuals.INK,dp(48)).apply{
    setOnClickListener{onDebugReport()}
    background=android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
   }

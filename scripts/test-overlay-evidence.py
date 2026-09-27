@@ -76,10 +76,10 @@ class OverlayEvidenceManifestTest(unittest.TestCase):
         self.assertIn('assertEquals("Breathe in", actual.phaseLabel.text)', source)
         self.assertIn('assertEquals("Breathe out", actual.phaseLabel.text)', source)
 
-    def test_debug_capture_uses_the_fixed_action_destination(self):
+    def test_debug_capture_uses_only_the_ordinary_manual_debug_ui(self):
         source = (ROOT / "app/src/androidTest/java/com/chardy/doom/EntryGateOverlayUiTest.kt").read_text()
-        self.assertIn("instrumentation.callActivityOnNewIntent(activity, MainActivity.debugIntent(activity))", source)
-        self.assertNotIn("startActivity(MainActivity.debugIntent(activity))", source)
+        self.assertIn('device.findObject(By.text("Debug")).click()', source)
+        self.assertNotIn("debugIntent", source)
         self.assertIn("launchOwnedScenario", source)
         self.assertIn("ownedScenario = scenario", source)
         self.assertNotIn("rule.scenario.onActivity { it.recreate() }", source)
