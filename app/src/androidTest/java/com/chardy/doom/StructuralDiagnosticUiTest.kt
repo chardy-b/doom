@@ -206,7 +206,7 @@ class StructuralDiagnosticUiTest {
         shown("Shadow prediction: UNKNOWN")
         shown("Diagnostic only — may show an optional entry pause; never protects or controls Instagram.")
         rule.onNodeWithText(
-            "Returning directly to Doom preserves the latest hidden report for local review.",
+            "The reminder's Capture Debug action creates a fresh tap-time report only after physical detachment and copies it without launching Doom or navigating elsewhere.",
             substring = true
         ).performScrollTo().assertIsDisplayed()
         shown("Copy leaves Doom process memory and enters the system clipboard. Review the revealed report before copying; upload privately, then clear the clipboard. Clearing or stopping Doom cannot recall copies outside the app.")
