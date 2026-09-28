@@ -126,11 +126,21 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         record = OBSERVATION.split('internal fun record(', 1)[1].split('fun revealReport()', 1)[0]
         self.assertRegex(record, r'if \(!consent \|\| !connected\) return\s+clear\(\)\s+report = sample')
 
-    def test_reconnection_clears_then_loads_consent_before_enabling_recording(self):
+    def test_clean_install_connection_stays_enabled_but_inert_without_consent(self):
         body = SERVICE.split("override fun onServiceConnected()", 1)[1].split("override fun onAccessibilityEvent", 1)[0]
-        self.assertRegex(body, r'Observation.connected = false\s+Observation.clear\(\)\s+Observation.load\(this\)\s+'
-                              r'if \(!Observation.consent\) \{\s*disableSelf\(\)\s*return\s*\}\s*'
-                              r'Observation.connected = true')
+        for statement in (
+            "Observation.connected = false",
+            "Observation.clear()",
+            "Observation.load(this)",
+            "Observation.connected = true",
+        ):
+            self.assertIn(statement, body)
+        self.assertLess(body.index("Observation.connected = false"), body.index("Observation.clear()"))
+        self.assertLess(body.index("Observation.clear()"), body.index("Observation.load(this)"))
+        self.assertLess(body.index("Observation.load(this)"), body.index("Observation.connected = true"))
+        self.assertNotIn("disableSelf()", body)
+        event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
+        self.assertIn("if (!Observation.consent || !Observation.connected)", event)
 
     def test_fresh_consent_and_no_superseded_implementation(self):
         self.assertIn('"sanitized_structural_report_v2"', OBSERVATION)

@@ -479,6 +479,30 @@ class StructuralDiagnosticUiTest {
         assertActionsDisabled()
     }
 
+    @Test fun cleanInstallServiceConnectionRemainsEnabledButInertWithoutConsent() {
+        val service = track(DoomAccessibilityService())
+        rule.runOnIdle {
+            val prefs = rule.activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
+            prefs.edit().clear().commit()
+            Observation.load(rule.activity)
+            assertFalse(Observation.consent)
+            ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+                .apply { isAccessible = true }.invoke(service, rule.activity.applicationContext)
+
+            DoomAccessibilityService::class.java.getDeclaredMethod("onServiceConnected")
+                .apply { isAccessible = true }.invoke(service)
+
+            assertTrue(Observation.connected)
+            sendEvent(service, "com.instagram.android")
+            assertTrue(Observation.connected)
+            assertFalse(Observation.consent)
+            assertNull(Observation.report)
+            assertNull(DoomAccessibilityService::class.java.getDeclaredField("overlay")
+                .apply { isAccessible = true }.get(service))
+            assertEquals(EntryGateState.OUTSIDE, Observation.entryGateState)
+        }
+    }
+
     @Test fun revokeAndStopClearCurrentRevealAndCopyState() {
         seed()
         revealAndCopy()

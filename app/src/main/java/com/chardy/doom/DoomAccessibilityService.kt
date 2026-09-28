@@ -164,10 +164,8 @@ class DoomAccessibilityService : AccessibilityService() {
         Observation.connected = false
         Observation.clear()
         Observation.load(this)
-        if (!Observation.consent) {
-            disableSelf()
-            return
-        }
+        // Android owns whether the service is enabled. A fresh install has no report consent yet;
+        // remain connected but inert until Doom receives that explicit in-app consent.
         Observation.connected = true
     }
 
