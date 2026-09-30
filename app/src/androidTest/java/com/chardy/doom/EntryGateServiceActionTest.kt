@@ -15,6 +15,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -26,10 +27,12 @@ import java.util.Collections
 class EntryGateServiceActionTest {
     @get:Rule val rule = ActivityScenarioRule(MainActivity::class.java)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+    private val manualServices = mutableListOf<DoomAccessibilityService>()
+    private val manualFixtures = mutableListOf<Fixture>()
 
     @Test fun timerPreferenceDismissalAndSafetyVetoAreIndependentOfGateAuthority() {
         rule.scenario.onActivity { activity ->
-            val service = DoomAccessibilityService()
+            val service = track(DoomAccessibilityService())
             Observation.accept(activity, true)
             Observation.setGateConsent(activity, true)
             Observation.connected = true
@@ -48,6 +51,8 @@ class EntryGateServiceActionTest {
         INSTAGRAM,
         NULL_PACKAGE,
         FOREIGN,
+        SYSTEM_UI,
+        RECOGNIZED_IME,
         DOOM,
         MISSING,
         THROW,
@@ -74,6 +79,11 @@ class EntryGateServiceActionTest {
         @Volatile var routeThrows = false
         @Volatile var homeCalls = 0
         @Volatile var homeResult = true
+        @Volatile var copiedCandidate: SanitizedStructuralReport? = null
+        var copyHook: (SanitizedStructuralReport) -> OverlayCopyResult = { candidate ->
+            copiedCandidate = candidate
+            OverlayCopyResult.COPIED
+        }
         val platformCalls = Collections.synchronizedList(mutableListOf<String>())
         lateinit var revokeInsideRoot: () -> Unit
         var rootReadHook: () -> Unit = {}
@@ -117,6 +127,8 @@ class EntryGateServiceActionTest {
             return AccessibilityNodeInfo.obtain().apply {
                 packageName = when (rootBehavior) {
                     RootBehavior.NULL_PACKAGE -> null
+                    RootBehavior.SYSTEM_UI -> "com.android.systemui"
+                    RootBehavior.RECOGNIZED_IME -> "com.example.keyboard"
                     RootBehavior.FOREIGN -> "com.example.foreign"
                     RootBehavior.DOOM -> "com.chardyb.doom"
                     else -> "com.instagram.android"
@@ -126,7 +138,16 @@ class EntryGateServiceActionTest {
 
         override fun readRootPackage(root: AccessibilityNodeInfo): String? {
             if (rootBehavior == RootBehavior.PACKAGE_THROW) throw IllegalStateException("package unavailable")
-            return root.packageName?.toString().also { afterPackageRead() }
+            val packageName = when {
+                StructuralSanitizer.isExactAscii(root.packageName, "com.instagram.android") -> "com.instagram.android"
+                StructuralSanitizer.isExactAscii(root.packageName, "com.chardyb.doom") -> "com.chardyb.doom"
+                StructuralSanitizer.isExactAscii(root.packageName, "com.android.systemui") -> SAFE_SYSTEM_UI_PACKAGE
+                StructuralSanitizer.isExactAscii(root.packageName, "com.example.keyboard") -> SAFE_RECOGNIZED_IME_PACKAGE
+                root.packageName == null -> null
+                else -> "__foreign__"
+            }
+            afterPackageRead()
+            return packageName
         }
 
         override fun recycleRoot(root: AccessibilityNodeInfo) {
@@ -150,6 +171,7 @@ class EntryGateServiceActionTest {
             return homeResult
         }
 
+
         lateinit var stateReader: () -> EntryGateState
     }
 
@@ -159,6 +181,7 @@ class EntryGateServiceActionTest {
         val ticket: GateTicket,
         val token: OverlayCallbackToken,
         val view: View,
+        val ui: EntryGateOverlayUi,
         val activity: MainActivity,
     )
 
@@ -186,6 +209,11 @@ class EntryGateServiceActionTest {
 
     @After fun cleanUp() {
         rule.scenario.onActivity {
+            manualFixtures.forEach { fixture ->
+                runCatching { fixture.ui.dispose() }
+                runCatching { fixture.service.onDestroy() }
+            }
+            manualServices.forEach { service -> runCatching { service.onDestroy() } }
             Observation.setGateConsent(it, false)
             Observation.accept(it, false)
             Observation.setSessionTimerEnabled(it, true)
@@ -197,6 +225,8 @@ class EntryGateServiceActionTest {
         DoomAccessibilityService::class.java.getDeclaredField("instance")
             .apply { isAccessible = true }
             .set(null, null)
+        manualFixtures.clear()
+        manualServices.clear()
         instrumentation.waitForIdleSync()
     }
 
@@ -213,6 +243,74 @@ class EntryGateServiceActionTest {
         assertEquals(listOf(EntryGateState.BYPASSED), fixture.platform.stateAtRoute)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
         assertTrue(gate(fixture.service).cooldownActive())
+    }
+
+    @Test fun captureDebugDetachesCollectsFreshThenBypassesAndCopiesExactlyOnce() {
+        val fixture = fixture(attached = true, detachOnRemove = false)
+        val copyCalls = java.util.concurrent.atomic.AtomicInteger()
+        rule.scenario.onActivity {
+            field(fixture.service, "captureEventProvenance").set(
+                fixture.service,
+                StructuralCaptureContext.synthetic().event,
+            )
+            field(fixture.service, "copyHook").set(
+                fixture.service,
+                { candidate: SanitizedStructuralReport ->
+                    // Fake assignment happens before the awaited counter observes completion.
+                    val result = fixture.platform.copyHook(candidate)
+                    copyCalls.incrementAndGet()
+                    result
+                },
+            )
+        }
+        request(fixture.service, OverlayRemovalAction.CAPTURE_DEBUG, fixture.token)
+        assertEquals(0, copyCalls.get())
+
+        rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
+        waitFor { copyCalls.get() == 1 }
+
+        assertTrue(fixture.platform.copiedCandidate != null)
+        assertEquals(2, fixture.platform.currentRootCalls)
+        // The collector owns its root; only the separate attribution root uses this seam.
+        assertEquals(1, fixture.platform.recycledRoots)
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertFalse(gate(fixture.service).cooldownActive())
+        assertEquals(0, fixture.platform.routeCalls)
+        assertEquals(0, fixture.platform.homeCalls)
+    }
+
+    @Test fun unavailableDebugCopyLeavesNoReportStateAndNeverRetries() {
+        val fixture = fixture()
+        val copyCalls = java.util.concurrent.atomic.AtomicInteger()
+        rule.scenario.onActivity {
+            val prior = SanitizedStructuralReport.Builder().apply {
+                add(StructuralNodeMetadata(
+                    position = StructuralNodePosition(),
+                    resourceId = "com.instagram.android:id/prior",
+                    className = "View",
+                ))
+            }.build()!!
+            Observation.record(prior)
+            field(fixture.service, "captureEventProvenance").set(
+                fixture.service,
+                StructuralCaptureContext.synthetic().event,
+            )
+            field(fixture.service, "copyHook").set(
+                fixture.service,
+                { _: SanitizedStructuralReport ->
+                    copyCalls.incrementAndGet()
+                    OverlayCopyResult.UNAVAILABLE
+                },
+            )
+        }
+        request(fixture.service, OverlayRemovalAction.CAPTURE_DEBUG, fixture.token)
+        waitFor { copyCalls.get() == 1 }
+        assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
+        assertNull(Observation.report)
+        assertFalse(Observation.revealed)
+        assertFalse(Observation.copied)
+        assertFalse(gate(fixture.service).cooldownActive())
+        assertEquals(1, copyCalls.get())
     }
 
     @Test fun disablingRemindersRemovesLiveOverlayWithoutCooldownCredit() {
@@ -1258,7 +1356,7 @@ class EntryGateServiceActionTest {
             Observation.accept(activity, true)
             Observation.setGateConsent(activity, true)
             Observation.connected = true
-            service = DoomAccessibilityService()
+            service = track(DoomAccessibilityService())
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, activity.applicationContext)
             platform = FakePlatform(false, true, RootBehavior.INSTAGRAM, MessagesRouteResult.CLICKED,
@@ -1464,7 +1562,7 @@ class EntryGateServiceActionTest {
             Observation.accept(activity, true)
             Observation.setGateConsent(activity, true)
             Observation.connected = true
-            service = DoomAccessibilityService()
+            service = track(DoomAccessibilityService())
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, activity.applicationContext)
             platform = FakePlatform(false, true, RootBehavior.INSTAGRAM, MessagesRouteResult.CLICKED,
@@ -1885,6 +1983,30 @@ class EntryGateServiceActionTest {
         }
     }
 
+    @Test fun timerDismissalSurvivesSystemUiAndRecognizedImeButOrdinaryForeignClearsIt() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                startBubble(fresh)
+                val epoch = field(fresh.service, "timerEpoch").getLong(fresh.service)
+                invoke(fresh.service, "dismissTimer", epoch)
+                assertTrue(field(fresh.service, "timerDismissedThisVisit").getBoolean(fresh.service))
+
+                fresh.platform.rootBehavior = RootBehavior.SYSTEM_UI
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.android.systemui")
+                assertTrue(field(fresh.service, "timerDismissedThisVisit").getBoolean(fresh.service))
+
+                fresh.platform.rootBehavior = RootBehavior.RECOGNIZED_IME
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.keyboard")
+                assertTrue(field(fresh.service, "timerDismissedThisVisit").getBoolean(fresh.service))
+
+                fresh.platform.rootBehavior = RootBehavior.FOREIGN
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                assertFalse(field(fresh.service, "timerDismissedThisVisit").getBoolean(fresh.service))
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
     @Test fun timerCooldownReentryRequiresVerifiedRootAndNewClock() {
         rule.scenario.onActivity { activity ->
             val fresh = freshService(activity, 1_000L)
@@ -2224,7 +2346,12 @@ class EntryGateServiceActionTest {
             val guard = field(service, "callbackGuard").get(service) as OverlayCallbackGuard
             val token = guard.open(ticket)
             field(service, "overlayToken").set(service, token)
-            result = Fixture(service, platform, ticket, token, view, activity)
+            val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {
+                invoke(service, "requestDebugReport", token)
+            })
+            field(service, "overlayUi").set(service, ui)
+            result = Fixture(service, platform, ticket, token, view, ui, activity)
+            manualFixtures += result
         }
         instrumentation.waitForIdleSync()
         return result
@@ -2249,6 +2376,7 @@ class EntryGateServiceActionTest {
             OverlayRemovalAction.NAVIGATE_MESSAGES -> RemovalTraceMark.USER_MESSAGES
             OverlayRemovalAction.COMPLETE -> RemovalTraceMark.TIMER_COMPLETE
             OverlayRemovalAction.PRESERVE_REPORT -> RemovalTraceMark.APP_RETURN
+            OverlayRemovalAction.CAPTURE_DEBUG -> RemovalTraceMark.USER_DEBUG
             OverlayRemovalAction.BYPASS -> RemovalTraceMark.SAFETY_OVERRIDE
             OverlayRemovalAction.RESET_OUTSIDE -> RemovalTraceMark.EVENT_PACKAGE_RESET
         }
@@ -2286,6 +2414,11 @@ class EntryGateServiceActionTest {
 
     private fun gate(service: DoomAccessibilityService): InstagramEntryGate =
         field(service, "entryGate").get(service) as InstagramEntryGate
+
+    private fun track(service: DoomAccessibilityService): DoomAccessibilityService {
+        manualServices += service
+        return service
+    }
 
     private fun field(target: Any, name: String): Field =
         target.javaClass.getDeclaredField(name).apply { isAccessible = true }

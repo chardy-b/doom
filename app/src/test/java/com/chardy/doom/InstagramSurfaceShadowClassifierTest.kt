@@ -10,9 +10,21 @@ class InstagramSurfaceShadowClassifierTest {
         editableIds: Set<String> = emptySet()
     ): SanitizedStructuralReport {
         val b = SanitizedStructuralReport.Builder()
-        rows.forEach { (id, selected, scrollable) ->
-            b.add(0, "com.instagram.android:id/$id", "android.view.View", 0, false,
-                scrollable, id in editableIds, selected, false)
+        rows.forEachIndexed { index, (id, selected, scrollable) ->
+            val selectedBit = if (selected) 1L shl StructuralBooleanField.SELECTED.ordinal else 0L
+            val scrollableBit = if (scrollable) 1L shl StructuralBooleanField.SCROLLABLE.ordinal else 0L
+            val editableBit = if (id in editableIds) 1L shl StructuralBooleanField.EDITABLE.ordinal else 0L
+            b.add(StructuralNodeMetadata(
+                position = StructuralNodePosition(index = index, bfsOrdinal = index),
+                resourceId = "com.instagram.android:id/$id",
+                className = "View",
+                flags = StructuralBooleanMasks(
+                    known = (1L shl StructuralBooleanField.SELECTED.ordinal) or
+                        (1L shl StructuralBooleanField.SCROLLABLE.ordinal) or
+                        (1L shl StructuralBooleanField.EDITABLE.ordinal),
+                    value = selectedBit or scrollableBit or editableBit,
+                ),
+            ))
         }
         if (truncated) b.markTruncated()
         return b.build()!!

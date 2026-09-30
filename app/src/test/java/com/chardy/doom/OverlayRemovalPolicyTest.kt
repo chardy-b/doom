@@ -62,6 +62,31 @@ class OverlayRemovalPolicyTest {
         assertNull(policy.confirmedDetached())
     }
 
+    @Test fun debugIsBelowSafetyAndDoesNotBecomeTerminalCredit() {
+        fun winner(first: OverlayRemovalAction, second: OverlayRemovalAction) =
+            OverlayRemovalPolicy().also { it.request(first); it.request(second) }.confirmedDetached()
+        assertEquals(OverlayRemovalAction.CAPTURE_DEBUG, winner(OverlayRemovalAction.PRESERVE_REPORT, OverlayRemovalAction.CAPTURE_DEBUG))
+        assertEquals(OverlayRemovalAction.BYPASS, winner(OverlayRemovalAction.CAPTURE_DEBUG, OverlayRemovalAction.BYPASS))
+        assertEquals(OverlayRemovalAction.HOME, winner(OverlayRemovalAction.CAPTURE_DEBUG, OverlayRemovalAction.HOME))
+
+        val vetoed = OverlayRemovalPolicy()
+        vetoed.request(OverlayRemovalAction.CAPTURE_DEBUG)
+        vetoed.requestSafetyCleanup(OverlayRemovalAction.BYPASS)
+        vetoed.request(OverlayRemovalAction.CAPTURE_DEBUG)
+        assertEquals(OverlayRemovalAction.CAPTURE_DEBUG, vetoed.vetoedExternalAction())
+        assertEquals(OverlayRemovalAction.BYPASS, vetoed.confirmedDetached())
+    }
+
+    @Test fun debugRequestWinsOverTimerCompletionAndMessagesRoute() {
+        fun winner(other: OverlayRemovalAction) = OverlayRemovalPolicy().also {
+            it.request(other)
+            it.request(OverlayRemovalAction.CAPTURE_DEBUG)
+        }.confirmedDetached()
+
+        assertEquals(OverlayRemovalAction.CAPTURE_DEBUG, winner(OverlayRemovalAction.COMPLETE))
+        assertEquals(OverlayRemovalAction.CAPTURE_DEBUG, winner(OverlayRemovalAction.NAVIGATE_MESSAGES))
+    }
+
     @Test fun normalMessageOrderingMatchesSafetyTable() {
         fun winner(first: OverlayRemovalAction, second: OverlayRemovalAction) =
             OverlayRemovalPolicy().also { it.request(first); it.request(second) }.confirmedDetached()
