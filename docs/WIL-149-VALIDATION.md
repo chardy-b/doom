@@ -18,9 +18,9 @@ This working tree started exactly at `014fa1006944e28b8225c81404c3da3495596377`.
 
 Android opens Instagram normally. On the first bounded Instagram sample in a foreground session:
 
-- any verified Instagram foreground event shows a five-second accessibility overlay, regardless of sanitized classifier result;
+- a verified Instagram foreground event shows the accessibility overlay only when its fresh bounded candidate does not confirm messaging;
 - only successful five-second completion or a currently authorized, physically detached exact Messages route returning `CLICKED` or `ALREADY_SELECTED` starts the 60,000-monotonic-millisecond cooldown in process memory; display admission starts only visible timing. At 59,999 ms after terminal success re-entry remains suppressed; at 60,000 ms the next otherwise-eligible gate may start;
-- Inbox, thread, composer, or any messaging evidence receives the same temporary five-second diagnostic pause; it does not bypass the gate.
+- Confirmed inbox, thread, or composer evidence bypasses admission, and fresh confirmed messaging evidence removes a visible reminder through the existing detach-confirmed safety path; unknown and truncated non-messaging evidence retains the diagnostic fail-open behavior.
 - Unknown, mixed, truncated, missing-root, foreign-window, runtime-error, revocation, interruption, or disconnect state is still sanitized/fail-safe, but a verified Instagram foreground event can pause entry for up to five seconds.
 - classification and gate timing remain separate;
 - the five seconds begin only after `WindowManager.addView` succeeds;
@@ -36,7 +36,7 @@ The first confirmed phone defect was an overlay disappearing about one second af
 
 ## Changed files
 
-- `app/src/main/java/com/chardy/doom/InstagramEntryGate.kt` — pure generation-ticket policy, classifier-independent Instagram trigger, monotonic visible-time deadline, stale-callback rejection, bounded duration, and process-local 60-second terminal-success cooldown.
+- `app/src/main/java/com/chardy/doom/InstagramEntryGate.kt` — pure generation-ticket policy with pre-admission messaging bypass, monotonic visible-time deadline, stale-callback rejection, bounded duration, and process-local terminal-success cooldown.
 - `app/src/main/java/com/chardy/doom/OverlayForegroundWatchdog.kt` — pure monotonic policy distinguishing confirmed foreign roots from bounded unattributed-root uncertainty.
 - `app/src/test/java/com/chardy/doom/InstagramEntryGateTest.kt` — focused tests for default-off behavior, visible timing, DM/unknown diagnostic pauses, repeated samples, revocation, stale tickets, invalid time/duration, skip, exact cooldown boundaries, session resets, and rejected/stale terminal attempts.
 - `app/src/test/java/com/chardy/doom/OverlayForegroundWatchdogTest.kt` — deterministic transient-null, monotonic-boundary, foreign-root, and verified-Doom-return policy tests shared by watchdog and event decisions.

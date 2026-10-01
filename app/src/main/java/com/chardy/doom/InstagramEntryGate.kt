@@ -87,9 +87,19 @@ class InstagramEntryGate(
     fun cooldownActive(): Boolean = cooldown.isSuppressed()
     internal fun durationSnapshotMs(): Long = activeDurationMs
 
-    /** Returns true only while an Instagram-triggered overlay should be or remain visible. */
-    fun observeInstagram(nowMs: Long, ticket: GateTicket): Boolean {
+    /** Returns true only while a non-messaging Instagram overlay should be or remain visible. */
+    fun observeInstagram(
+        nowMs: Long,
+        ticket: GateTicket,
+        surface: InstagramSurface = InstagramSurface.UNKNOWN,
+    ): Boolean {
         if (!enabled() || nowMs < 0L || !valid(ticket)) return false
+        if (surface == InstagramSurface.MESSAGING && state == EntryGateState.AWAITING) {
+            visibleStartedAtMs = null
+            pendingMessagesAttempt = null
+            state = EntryGateState.BYPASSED
+            return false
+        }
         state = when (state) {
             EntryGateState.AWAITING, EntryGateState.GATING -> EntryGateState.GATING
             else -> state
