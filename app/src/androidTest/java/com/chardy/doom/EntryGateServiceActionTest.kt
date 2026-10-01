@@ -49,6 +49,7 @@ class EntryGateServiceActionTest {
 
     private enum class RootBehavior {
         INSTAGRAM,
+        MESSAGING,
         NULL_PACKAGE,
         FOREIGN,
         SYSTEM_UI,
@@ -132,6 +133,9 @@ class EntryGateServiceActionTest {
                     RootBehavior.FOREIGN -> "com.example.foreign"
                     RootBehavior.DOOM -> "com.chardyb.doom"
                     else -> "com.instagram.android"
+                }
+                if (rootBehavior == RootBehavior.MESSAGING) {
+                    viewIdResourceName = "com.instagram.android:id/message_list"
                 }
             }
         }
@@ -588,6 +592,54 @@ class EntryGateServiceActionTest {
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(3, fresh.installs)
                 assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                assertFalse(gate(fresh.service).cooldownActive())
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun preAdmissionMessagingNeverInstallsOrArmsOrReleasesActions() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                fresh.platform.rootBehavior = RootBehavior.MESSAGING
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+
+                assertEquals(0, fresh.installs)
+                assertFalse(fresh.platform.attached)
+                assertEquals(EntryGateState.BYPASSED, gate(fresh.service).state)
+                assertFalse(gate(fresh.service).cooldownActive())
+                assertEquals(0, fresh.platform.homeCalls)
+                assertEquals(0, fresh.platform.routeCalls)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun visibleGateMessagingWaitsForPhysicalDetachAndClosingEventsDoNotRecollect() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertTrue(fresh.platform.attached)
+                var reads = 0
+                field(fresh.service, "collectorReadHook").set(fresh.service, { reads++ })
+                fresh.platform.detachOnRemove = false
+                fresh.platform.rootBehavior = RootBehavior.MESSAGING
+
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android")
+                assertTrue(fresh.platform.attached)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                assertTrue(reads > 0)
+                val readsAtClosing = reads
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android")
+                assertEquals(readsAtClosing, reads)
+                assertFalse(gate(fresh.service).cooldownActive())
+                assertEquals(0, fresh.platform.homeCalls)
+                assertEquals(0, fresh.platform.routeCalls)
+
+                fresh.platform.attached = false
+                val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
+                invoke(fresh.service, "attemptOverlayRemoval", token)
+                assertEquals(EntryGateState.BYPASSED, gate(fresh.service).state)
                 assertFalse(gate(fresh.service).cooldownActive())
             } finally { destroyFresh(fresh) }
         }

@@ -339,10 +339,40 @@ class DoomAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // An installed or closing gate already owns this episode. Instagram event roots
-            // can be transient; leave package-only foreground validation to the bounded
-            // watchdog instead of recollecting or vetoing the pending terminal action.
-            if (overlay != null) return
+            // A closing gate owns its pending action. A still-visible gate may be removed only
+            // from a fresh, bounded, current-episode candidate that confirms messaging.
+            if (overlay != null) {
+                val visibleView = overlay ?: return
+                val visibleToken = overlayToken ?: return
+                val visibleTicket = ticket ?: return
+                if (!callbackGuard.acceptsVisible(visibleToken) ||
+                    visibleTicket != visibleToken.ticket ||
+                    visibleTicket.generation != entryGate.generation ||
+                    entryGate.state != EntryGateState.GATING
+                ) return
+                val context = captureContext(event) ?: return
+                val visibleRoot = try { overlayPlatform.eventRoot() } catch (_: RuntimeException) { null }
+                    ?: return
+                val candidate = try { collectCandidate(visibleRoot, context) } catch (_: RuntimeException) { null }
+                    ?: return
+                if (!Observation.consent || !Observation.gateConsent || !Observation.connected ||
+                    overlay !== visibleView || overlayToken !== visibleToken || ticket != visibleTicket ||
+                    !callbackGuard.acceptsVisible(visibleToken) ||
+                    visibleTicket.generation != entryGate.generation ||
+                    entryGate.state != EntryGateState.GATING
+                ) return
+                Observation.record(candidate)
+                if (InstagramSurfaceShadowClassifier.classify(candidate) == InstagramSurface.MESSAGING) {
+                    requestSafetyCleanup(
+                        OverlayRemovalAction.BYPASS,
+                        RemovalTraceMark.SAFETY_OVERRIDE,
+                        eventKind,
+                        owner,
+                        RemovalTraceRoot.IG,
+                    )
+                }
+                return
+            }
             if (timerClosing && timerTerminalReset) return
 
             // Only a verified event after a successful terminal cooldown may retire
@@ -414,7 +444,8 @@ class DoomAccessibilityService : AccessibilityService() {
                 return
             }
             captureEventProvenance = captureContext.event
-            if (!collect(root, captureContext)) {
+            val candidate = collect(root, captureContext)
+            if (candidate == null) {
                 if (activeTicket != null) requestSafetyCleanup(
                     OverlayRemovalAction.BYPASS, RemovalTraceMark.EVENT_FAILURE,
                     eventKind, owner, RemovalTraceRoot.READ_FAILURE,
@@ -432,13 +463,15 @@ class DoomAccessibilityService : AccessibilityService() {
                 entryGate.state != EntryGateState.GATING
             ) return
 
-            val shouldShow = entryGate.observeInstagram(monotonicClock(), activeTicket)
+            val shouldShow = entryGate.observeInstagram(
+                monotonicClock(), activeTicket, InstagramSurfaceShadowClassifier.classify(candidate)
+            )
             publishGateState()
             if (shouldShow) {
                 if (timerView != null || timerClosing) suspendTimerForGate(activeTicket)
                 else if (overlay == null) installOverlay(activeTicket)
                 else overlayToken?.let { renderOverlay(activeTicket, it) }
-            } else {
+            } else if (entryGate.state != EntryGateState.BYPASSED) {
                 requestOverlayRemoval(
                     OverlayRemovalAction.BYPASS,
                     cause = RemovalTraceMark.ADMISSION_REJECTED,
@@ -453,10 +486,13 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     @Suppress("DEPRECATION") // Release transient nodes on older supported Android versions too.
-    private fun collect(root: AccessibilityNodeInfo, context: StructuralCaptureContext): Boolean {
+    private fun collect(
+        root: AccessibilityNodeInfo,
+        context: StructuralCaptureContext,
+    ): SanitizedStructuralReport? {
         val candidate = collectCandidate(root, context)
         Observation.record(candidate)
-        return candidate != null
+        return candidate
     }
 
     @Suppress("DEPRECATION")

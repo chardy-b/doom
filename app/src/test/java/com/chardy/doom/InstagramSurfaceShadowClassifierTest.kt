@@ -69,6 +69,17 @@ class InstagramSurfaceShadowClassifierTest {
         assertEquals(InstagramSurface.MESSAGING, InstagramSurfaceShadowClassifier.classify(report(Triple("feed_tab", true, false), Triple("row_feed_media", false, false), Triple("thread_fragment_container", false, false), truncated = true)))
     }
 
+    @Test fun reportedTruncatedThreadSignatureKeepsMessagingPrecedence() {
+        assertEquals(InstagramSurface.MESSAGING, InstagramSurfaceShadowClassifier.classify(
+            report(
+                Triple("thread_fragment_container", false, false),
+                Triple("message_list", false, true),
+                Triple("message_composer_bar", false, false),
+                truncated = true,
+            )
+        ))
+    }
+
     @Test fun unselectedOrUncorroboratedAndAmbiguousReportsAreUnknown() {
         assertEquals(InstagramSurface.UNKNOWN, InstagramSurfaceShadowClassifier.classify(report(Triple("feed_tab", false, false), Triple("row_feed_media", false, false))))
         assertEquals(InstagramSurface.UNKNOWN, InstagramSurfaceShadowClassifier.classify(report(Triple("clips_tab", true, false))))

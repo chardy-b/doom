@@ -15,11 +15,16 @@ ACTIVITY = (REPO / "app/src/main/java/com/chardy/doom/MainActivity.kt").read_tex
 
 
 class StructuralLifecycleSourceTest(unittest.TestCase):
-    def test_instagram_events_preserve_installed_or_closing_gate_before_new_session_work(self):
+    def test_instagram_events_classify_visible_gate_but_preserve_closing_gate(self):
         event = SERVICE.split("// Suppression is checked", 1)[1].split('@Suppress', 1)[0]
-        keep = event.index("if (overlay != null) return")
+        keep = event.index("if (overlay != null) {")
         self.assertLess(event.index("entryGate.cooldownActive()"), keep)
         self.assertLess(event.index("!Observation.consent || !Observation.connected"), keep)
+        visible = event[keep:event.index("if (timerClosing && timerTerminalReset) return")]
+        self.assertIn("callbackGuard.acceptsVisible(visibleToken)", visible)
+        self.assertIn("collectCandidate(visibleRoot, context)", visible)
+        self.assertIn("InstagramSurface.MESSAGING", visible)
+        self.assertIn("OverlayRemovalAction.BYPASS", visible)
         for operation in ("beginInstagramSessionIfEligible()", "overlayPlatform.eventRoot()", "collect(root, captureContext)"):
             self.assertLess(keep, event.index(operation))
 
@@ -32,7 +37,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
     def test_report_only_collection_requires_report_consent_and_connection_not_gate_consent(self):
         event = SERVICE.split("// Suppression is checked", 1)[1].split('@Suppress', 1)[0]
         denial = event.split("// Report-only collection", 1)[1].split(
-            "// A successful Debug departure", 1
+            "// A closing gate owns", 1
         )[0]
         self.assertIn("if (!Observation.consent || !Observation.connected)", denial)
         self.assertNotIn("!Observation.gateConsent", denial)

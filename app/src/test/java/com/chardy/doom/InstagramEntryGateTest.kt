@@ -32,13 +32,13 @@ class InstagramEntryGateTest {
         assertFalse(gate.complete(20_000L, ticket))
     }
 
-    @Test fun messagingFirstStartsDiagnosticGate() {
+    @Test fun reportedTruncatedThreadSignatureBypassesBeforeAdmission() {
         val gate = InstagramEntryGate(enabled = { true })
         val ticket = gate.beginInstagramSession()
 
-        assertTrue(gate.observeInstagram(0L, ticket))
-        assertEquals(EntryGateState.GATING, gate.state)
-        assertTrue(gate.observeInstagram(1L, ticket))
+        assertFalse(gate.observeInstagram(0L, ticket, InstagramSurface.MESSAGING))
+        assertEquals(EntryGateState.BYPASSED, gate.state)
+        assertFalse(gate.cooldownActive())
     }
 
     @Test fun repeatedInstagramSamplesKeepDiagnosticGateVisible() {
@@ -52,6 +52,31 @@ class InstagramEntryGateTest {
         assertTrue(gate.bypass(ticket))
         assertEquals(EntryGateState.BYPASSED, gate.state)
         assertFalse(gate.complete(5_000L, ticket))
+    }
+
+    @Test fun messagingSampleCannotCommitBypassAfterOverlayAdmission() {
+        val gate = InstagramEntryGate(enabled = { true })
+        val ticket = gate.beginInstagramSession()
+        assertTrue(gate.observeInstagram(0L, ticket))
+        assertTrue(gate.overlayShown(0L, ticket))
+
+        assertTrue(gate.observeInstagram(1L, ticket, InstagramSurface.MESSAGING))
+        assertEquals(EntryGateState.GATING, gate.state)
+        assertFalse(gate.cooldownActive())
+    }
+
+    @Test fun staleOrRevokedMessagingSampleCannotBypassNewerEpisode() {
+        var enabled = true
+        val gate = InstagramEntryGate(enabled = { enabled })
+        val stale = gate.beginInstagramSession()
+        val current = gate.beginInstagramSession()
+
+        assertFalse(gate.observeInstagram(0L, stale, InstagramSurface.MESSAGING))
+        assertEquals(EntryGateState.AWAITING, gate.state)
+        enabled = false
+        assertFalse(gate.observeInstagram(1L, current, InstagramSurface.MESSAGING))
+        assertEquals(EntryGateState.AWAITING, gate.state)
+        assertFalse(gate.cooldownActive())
     }
 
     @Test fun repeatedInstagramSamplesKeepSameVisibleDeadline() {
