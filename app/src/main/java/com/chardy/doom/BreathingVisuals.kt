@@ -3,10 +3,17 @@ package com.chardy.doom
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
+import kotlin.math.ceil
 
 internal enum class BreathPhase { IN, OUT }
 internal data class BreathingFrame(
     val phase: BreathPhase,
+    val label: String,
+    val bloom: Float,
+    val segments: List<Float>,
+)
+
+internal data class BreathingPresentation(
     val label: String,
     val bloom: Float,
     val segments: List<Float>,
@@ -45,27 +52,56 @@ internal object BreathingVisuals {
     }
 
     fun frame(elapsedMs: Long, durationMs: Long): BreathingFrame {
-        val duration = durationMs.coerceAtLeast(BREATH_MS)
+        val duration = duration(durationMs)
         val elapsed = elapsedMs.coerceIn(0L, duration)
         val cycleElapsed = if (elapsed == duration) BREATH_MS else elapsed % BREATH_MS
         val phase = if (cycleElapsed < 4_000L) BreathPhase.IN else BreathPhase.OUT
         val local = if (phase == BreathPhase.IN) cycleElapsed / 4_000f else (cycleElapsed - 4_000L) / 6_000f
         val eased = smootherstep(local)
         val bloom = if (phase == BreathPhase.IN) eased else 1f - eased
-        val count = (duration / BREATH_MS).toInt()
+        val count = ceil(duration.toDouble() / BREATH_MS).toInt()
         val segments = List(count) { index ->
-            ((elapsed - index * BREATH_MS).toFloat() / BREATH_MS).coerceIn(0f, 1f)
+            segmentFraction(elapsed, duration, index)
         }
         return BreathingFrame(phase, if (phase == BreathPhase.IN) "Breathe in" else "Breathe out", bloom, segments)
     }
 
+    fun duration(durationMs: Long): Long = durationMs.coerceAtLeast(BREATH_MS)
+
+    fun segmentFraction(elapsedMs: Long, durationMs: Long, index: Int): Float {
+        val duration = duration(durationMs)
+        val start = index * BREATH_MS
+        val segmentDuration = min(BREATH_MS, duration - start).coerceAtLeast(1L)
+        return ((elapsedMs - start).toFloat() / segmentDuration).coerceIn(0f, 1f)
+    }
+
+    fun presentation(frame: BreathingFrame, reducedMotion: Boolean) = BreathingPresentation(
+        frame.label,
+        if (reducedMotion) staticProgress() else frame.bloom,
+        frame.segments,
+    )
+
     /** Generates a fixed 32-by-32 pixel lattice inside the largest circular canvas envelope. */
     fun geometry(progress: Float, width: Float, height: Float): List<BloomCell> {
-        if (!width.isFinite() || !height.isFinite() || width <= 0f || height <= 0f) return emptyList()
+        val cells = ArrayList<BloomCell>(GRID_CELLS * GRID_CELLS)
+        visitGeometry(progress, width, height) { left, top, right, bottom, alpha, role, color, gridX, gridY ->
+            cells += BloomCell(left, top, right, bottom, alpha, role, color, gridX, gridY)
+        }
+        return cells
+    }
+
+    /** Visits primitives directly so display-cadence renderers allocate no per-cell objects. */
+    inline fun visitGeometry(
+        progress: Float,
+        width: Float,
+        height: Float,
+        visit: (Float, Float, Float, Float, Float, BloomColorRole, Int, Int, Int) -> Unit,
+    ) {
+        if (!width.isFinite() || !height.isFinite() || width <= 0f || height <= 0f) return
         val bloom = if (progress.isFinite()) progress.coerceIn(0f, 1f) else staticProgress()
         val canvasDiameter = min(width, height)
         val pitch = canvasDiameter / GRID_CELLS
-        if (pitch <= 0f || !pitch.isFinite()) return emptyList()
+        if (pitch <= 0f || !pitch.isFinite()) return
         val extentDiameter = canvasDiameter * (0.20f + 0.675f * bloom)
         val centerX = width / 2f
         val centerY = height / 2f
@@ -74,8 +110,6 @@ internal object BreathingVisuals {
         val topEdge = centerY - extentDiameter / 2f
         val bottomEdge = centerY + extentDiameter / 2f
         val radius = max(extentDiameter / 2f, pitch / 2f)
-        val cells = ArrayList<BloomCell>(GRID_CELLS * GRID_CELLS)
-
         for (gridY in 0 until GRID_CELLS) for (gridX in 0 until GRID_CELLS) {
             val logicalX = gridX - GRID_CELLS / 2
             val logicalY = gridY - GRID_CELLS / 2
@@ -112,12 +146,9 @@ internal object BreathingVisuals {
                 max(0.25f, max(delayed, seed) * edge).coerceIn(0f, 1f)
             }
             val role = if (center) BloomColorRole.PAPER else colorRole(radial)
-            cells += BloomCell(
-                clippedLeft, clippedTop, clippedRight, clippedBottom, alpha, role,
-                colorAt(radial), gridX, gridY,
-            )
+            visit(clippedLeft, clippedTop, clippedRight, clippedBottom, alpha, role,
+                colorAt(radial), gridX, gridY)
         }
-        return cells
     }
 
     /** Compatibility shape helper for the pure legacy layer tests; renderers use geometry(). */

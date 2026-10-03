@@ -8,10 +8,11 @@ internal data class EntryGateOverlayModel(
 ) {
     companion object {
         fun from(remainingMs: Long, durationMs: Long, reduceMotion: Boolean): EntryGateOverlayModel {
-            val bounded=remainingMs.coerceIn(0L,durationMs)
-            val elapsed = durationMs - bounded
+            val duration = BreathingVisuals.duration(durationMs)
+            val bounded=remainingMs.coerceIn(0L,duration)
+            val elapsed = duration - bounded
             return EntryGateOverlayModel(
-                BreathingVisuals.frame(elapsed, durationMs), reduceMotion, elapsed, durationMs,
+                BreathingVisuals.frame(elapsed, duration), reduceMotion, elapsed, duration,
             )
         }
     }
@@ -20,7 +21,9 @@ internal data class EntryGateOverlayModel(
 internal object BreathingAnimationTimeline {
     fun elapsedAt(anchorElapsedMs: Long, anchorNanos: Long, frameNanos: Long, durationMs: Long): Long {
         val deltaMs = ((frameNanos - anchorNanos).coerceAtLeast(0L) / 1_000_000L)
-        return (anchorElapsedMs + deltaMs).coerceIn(0L, durationMs)
+        val duration = BreathingVisuals.duration(durationMs)
+        val anchor = anchorElapsedMs.coerceIn(0L, duration)
+        return if (deltaMs >= duration - anchor) duration else anchor + deltaMs
     }
 }
 

@@ -28,6 +28,15 @@ class BreathingVisualsTest {
         assertEquals(listOf(1f, .5f), BreathingVisuals.frame(15_000,20_000).segments)
         assertEquals(listOf(1f,1f,1f), BreathingVisuals.frame(30_000,30_000).segments)
     }
+    @Test fun invalidSubBreathAndPartialDurationsShareBoundedTimelineSemantics() {
+        listOf(-1L, 0L, 1L, 9_999L).forEach { requested ->
+            val frame = BreathingVisuals.frame(Long.MAX_VALUE, requested)
+            assertEquals(listOf(1f), frame.segments)
+            assertEquals(BREATH_MS, BreathingVisuals.duration(requested))
+        }
+        assertEquals(listOf(1f, 1f), BreathingVisuals.frame(15_000, 15_000).segments)
+        repeat(20) { assertEquals(listOf(1f, 1f), BreathingVisuals.frame(15_000L + it, 15_000).segments) }
+    }
     @Test fun paletteContrastAndLayersMeetContract() {
         assertTrue(BreathingVisuals.contrastRatio(BreathingVisuals.PAPER,BreathingVisuals.INK)>=4.5)
         assertTrue(BreathingVisuals.cells(.5f).map { it.layer }.toSet().size >= 4)
