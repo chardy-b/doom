@@ -1,8 +1,8 @@
 package com.chardy.doom
 
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 internal enum class BreathPhase { IN, OUT }
 internal data class BreathingFrame(
@@ -59,26 +59,21 @@ internal object BreathingVisuals {
         return BreathingFrame(phase, if (phase == BreathPhase.IN) "Breathe in" else "Breathe out", bloom, segments)
     }
 
-    /**
-     * Generates a fixed 32-by-32 lattice. Width is intentionally independent from height:
-     * portrait and landscape use the same horizontal 20%..87.5% envelope, while the vertical
-     * diamond is compressed to the available canvas when necessary.
-     */
+    /** Generates a fixed 32-by-32 pixel lattice inside the largest circular canvas envelope. */
     fun geometry(progress: Float, width: Float, height: Float): List<BloomCell> {
         if (!width.isFinite() || !height.isFinite() || width <= 0f || height <= 0f) return emptyList()
         val bloom = if (progress.isFinite()) progress.coerceIn(0f, 1f) else staticProgress()
-        val pitch = width / GRID_CELLS
+        val canvasDiameter = min(width, height)
+        val pitch = canvasDiameter / GRID_CELLS
         if (pitch <= 0f || !pitch.isFinite()) return emptyList()
-        val extentWidth = width * (0.20f + 0.675f * bloom)
-        val extentHeight = min(extentWidth, height * 0.875f)
+        val extentDiameter = canvasDiameter * (0.20f + 0.675f * bloom)
         val centerX = width / 2f
         val centerY = height / 2f
-        val leftEdge = centerX - extentWidth / 2f
-        val rightEdge = centerX + extentWidth / 2f
-        val topEdge = centerY - extentHeight / 2f
-        val bottomEdge = centerY + extentHeight / 2f
-        val halfWidth = max(extentWidth / 2f, pitch / 2f)
-        val halfHeight = max(extentHeight / 2f, pitch / 2f)
+        val leftEdge = centerX - extentDiameter / 2f
+        val rightEdge = centerX + extentDiameter / 2f
+        val topEdge = centerY - extentDiameter / 2f
+        val bottomEdge = centerY + extentDiameter / 2f
+        val radius = max(extentDiameter / 2f, pitch / 2f)
         val cells = ArrayList<BloomCell>(GRID_CELLS * GRID_CELLS)
 
         for (gridY in 0 until GRID_CELLS) for (gridX in 0 until GRID_CELLS) {
@@ -100,9 +95,10 @@ internal object BreathingVisuals {
             val clippedBottom = if (rawBottom >= bottomEdge) min(rawBottom, bottomEdge) else rawBottom - gapHalf
             if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) continue
 
-            val radial = abs(cellCenterX - centerX) / halfWidth + abs(cellCenterY - centerY) / halfHeight
-            val pattern = (((gridX * 17 + gridY * 31) and 7) / 7f)
-            val delay = if (logicalX == 0 && logicalY == 0) 0f else 0.04f * (0.65f * radial.coerceIn(0f, 1f) + 0.35f * pattern)
+            val deltaX = cellCenterX - centerX
+            val deltaY = cellCenterY - centerY
+            val radial = sqrt(deltaX * deltaX + deltaY * deltaY) / radius
+            val delay = if (logicalX == 0 && logicalY == 0) 0f else 0.04f * radial.coerceIn(0f, 1f)
             val delayed = if (delay == 0f) bloom else ((bloom - delay) / (1f - delay)).coerceIn(0f, 1f)
             val edge = smootherstep(((1.08f - radial) / 0.16f).coerceIn(0f, 1f))
             val center = logicalX == 0 && logicalY == 0
@@ -110,9 +106,8 @@ internal object BreathingVisuals {
             // it fades continuously as the inhale grows instead of popping a new outer ring.
             val seed = 0.30f * (1f - bloom)
             val alpha = if (center) 1f else {
-                // Every visible pixel has a meaningful floor. The edge mask still decides
-                // whether the pixel belongs to the diamond, so the floor cannot fill a solid
-                // rectangular/diamond silhouette outside the bloom.
+                // Every visible pixel has a meaningful floor. The Euclidean edge mask keeps
+                // that floor inside the circular bloom rather than filling the square lattice.
                 if (edge <= 0f) continue
                 max(0.25f, max(delayed, seed) * edge).coerceIn(0f, 1f)
             }

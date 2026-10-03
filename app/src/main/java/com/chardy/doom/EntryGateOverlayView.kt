@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.os.Build
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.widget.*
@@ -26,12 +27,33 @@ internal class SegmentedBreathProgressView(context:Context):View(context){
 internal class EntryGateOverlayUi(val root:View,val phaseLabel:TextView,val skipToMessages:Button,val leaveInstagram:Button,val debugReport:Button,private val pixel:PixelBreathingView,private val progress:SegmentedBreathProgressView){
  private var disposed=false
  private var lastPhase:String?=null
+ private var anchorElapsedMs=0L
+ private var anchorNanos=0L
+ private var durationMs=BREATH_MS
+ private var reduceMotion=false
+ private val animationFrame=object:Runnable{
+  override fun run(){
+   if(disposed||!root.isAttachedToWindow)return
+   val elapsed=BreathingAnimationTimeline.elapsedAt(anchorElapsedMs,anchorNanos,SystemClock.elapsedRealtimeNanos(),durationMs)
+   draw(BreathingVisuals.frame(elapsed,durationMs),reduceMotion)
+   if(elapsed<durationMs)root.postOnAnimation(this)
+  }
+ }
  fun render(model:EntryGateOverlayModel){
   if(disposed)return
-  if(lastPhase!=model.frame.label){phaseLabel.text=model.frame.label;lastPhase=model.frame.label}
-  pixel.render(model.frame.bloom,model.reduceMotion);progress.render(model.frame.segments)
+  root.removeCallbacks(animationFrame)
+  anchorElapsedMs=model.elapsedMs
+  anchorNanos=SystemClock.elapsedRealtimeNanos()
+  durationMs=model.durationMs
+  reduceMotion=model.reduceMotion
+  draw(model.frame,model.reduceMotion)
+  if(model.elapsedMs<model.durationMs)root.postOnAnimation(animationFrame)
  }
- fun dispose(){if(disposed)return;disposed=true;skipToMessages.setOnClickListener(null);leaveInstagram.setOnClickListener(null);debugReport.setOnClickListener(null);skipToMessages.isEnabled=false;leaveInstagram.isEnabled=false;debugReport.isEnabled=false;pixel.visibility=View.INVISIBLE}
+ private fun draw(frame:BreathingFrame,reduced:Boolean){
+  if(lastPhase!=frame.label){phaseLabel.text=frame.label;lastPhase=frame.label}
+  pixel.render(frame.bloom,reduced);progress.render(frame.segments)
+ }
+ fun dispose(){if(disposed)return;disposed=true;root.removeCallbacks(animationFrame);skipToMessages.setOnClickListener(null);leaveInstagram.setOnClickListener(null);debugReport.setOnClickListener(null);skipToMessages.isEnabled=false;leaveInstagram.isEnabled=false;debugReport.isEnabled=false;pixel.visibility=View.INVISIBLE}
 }
 internal object EntryGateOverlayViewFactory{
  fun create(context:Context,onSkipToMessages:()->Unit,onLeaveInstagram:()->Unit,onDebugReport:()->Unit):EntryGateOverlayUi{

@@ -36,7 +36,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
-import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -161,7 +160,7 @@ fun DoomScreen() {
         while (productPreview) {
             previewElapsed = (SystemClock.elapsedRealtime() - previewStartedAt).coerceAtMost(durationMs)
             if (previewElapsed >= durationMs) productPreview = false
-            delay(50L)
+            withFrameNanos { }
         }
     }
     LaunchedEffect(demoGeneration, demoScreen) {
@@ -171,7 +170,7 @@ fun DoomScreen() {
                 val now = SystemClock.elapsedRealtime()
                 remaining = demoGate.remaining(now)
                 if (demoGate.tick(now, token)) demoScreen = demoGate.screen
-                delay(50L)
+                withFrameNanos { }
             }
         }
     }

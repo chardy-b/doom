@@ -1086,7 +1086,6 @@ class DoomAccessibilityService : AccessibilityService() {
                 return
             }
             if (decision == OverlayForegroundDecision.KEEP && sessionTimer.running) observeTimerInstagram()
-            renderOverlay(activeTicket, token)
             handler.postDelayed(next, WATCHDOG_INTERVAL_MS)
         } catch (_: RuntimeException) {
             requestSafetyCleanup(
