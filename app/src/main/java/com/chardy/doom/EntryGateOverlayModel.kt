@@ -3,12 +3,27 @@ package com.chardy.doom
 internal data class EntryGateOverlayModel(
     val frame: BreathingFrame,
     val reduceMotion: Boolean,
+    val elapsedMs: Long,
+    val durationMs: Long,
 ) {
     companion object {
         fun from(remainingMs: Long, durationMs: Long, reduceMotion: Boolean): EntryGateOverlayModel {
-            val bounded=remainingMs.coerceIn(0L,durationMs)
-            return EntryGateOverlayModel(BreathingVisuals.frame(durationMs-bounded,durationMs),reduceMotion)
+            val duration = BreathingVisuals.duration(durationMs)
+            val bounded=remainingMs.coerceIn(0L,duration)
+            val elapsed = duration - bounded
+            return EntryGateOverlayModel(
+                BreathingVisuals.frame(elapsed, duration), reduceMotion, elapsed, duration,
+            )
         }
+    }
+}
+
+internal object BreathingAnimationTimeline {
+    fun elapsedAt(anchorElapsedMs: Long, anchorNanos: Long, frameNanos: Long, durationMs: Long): Long {
+        val deltaMs = ((frameNanos - anchorNanos).coerceAtLeast(0L) / 1_000_000L)
+        val duration = BreathingVisuals.duration(durationMs)
+        val anchor = anchorElapsedMs.coerceIn(0L, duration)
+        return if (deltaMs >= duration - anchor) duration else anchor + deltaMs
     }
 }
 

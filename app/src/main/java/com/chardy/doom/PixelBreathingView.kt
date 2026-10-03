@@ -8,6 +8,7 @@ import android.view.View
 internal class PixelBreathingView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var progress = .5f
+    internal val renderedProgress get() = progress
 
     fun render(value: Float, reduceMotion: Boolean) {
         progress = if (reduceMotion) BreathingVisuals.staticProgress() else value
@@ -16,10 +17,10 @@ internal class PixelBreathingView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        BreathingVisuals.geometry(progress, width.toFloat(), height.toFloat()).forEach { cell ->
-            paint.color = cell.color
-            paint.alpha = (cell.alpha * 255f).toInt().coerceIn(0, 255)
-            canvas.drawRect(cell.left, cell.top, cell.right, cell.bottom, paint)
+        BreathingVisuals.visitGeometry(progress, width.toFloat(), height.toFloat()) { left, top, right, bottom, alpha, _, color, _, _ ->
+            paint.color = color
+            paint.alpha = (alpha * 255f).toInt().coerceIn(0, 255)
+            canvas.drawRect(left, top, right, bottom, paint)
         }
         paint.alpha = 255
     }
