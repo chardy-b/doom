@@ -92,7 +92,7 @@ class EntryGateOverlayAnimationTest {
             scheduler.now += 5_000_000_000L
             scheduler.take().run()
             val complete = ui.snapshot()
-            assertEquals(listOf("Breathe in", "Breathe out", "Breathe in"), listOf(inhale.label, exhale.label, complete.label))
+            assertEquals(listOf("Breathe in", "Breathe out", "Breathe out"), listOf(inhale.label, exhale.label, complete.label))
             assertEquals(listOf(0f), inhale.segments)
             assertEquals(listOf(.5f), exhale.segments)
             assertEquals(listOf(1f), complete.segments)
@@ -102,7 +102,7 @@ class EntryGateOverlayAnimationTest {
             val composeStates = listOf(0L, 5_000L, 10_000L).map {
                 BreathingVisuals.presentation(BreathingVisuals.frame(it, 10_000), true)
             }
-            assertEquals(listOf("Breathe in", "Breathe out", "Breathe in"), composeStates.map { it.label })
+            assertEquals(listOf("Breathe in", "Breathe out", "Breathe out"), composeStates.map { it.label })
             assertEquals(listOf(listOf(0f), listOf(.5f), listOf(1f)), composeStates.map { it.segments })
             assertEquals(1, composeStates.map { it.bloom }.distinct().size)
             ui.dispose()

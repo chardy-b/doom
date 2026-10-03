@@ -26,7 +26,11 @@ class BreathingVisualsTest {
     @Test fun segmentMappingAndCompletionAreExact() {
         assertEquals(listOf(0f), BreathingVisuals.frame(0,10_000).segments)
         assertEquals(listOf(1f, .5f), BreathingVisuals.frame(15_000,20_000).segments)
-        assertEquals(listOf(1f,1f,1f), BreathingVisuals.frame(30_000,30_000).segments)
+        val complete = BreathingVisuals.frame(30_000,30_000)
+        assertEquals(BreathPhase.OUT, complete.phase)
+        assertEquals("Breathe out", complete.label)
+        assertEquals(0f, complete.bloom, 0f)
+        assertEquals(listOf(1f,1f,1f), complete.segments)
     }
     @Test fun invalidSubBreathAndPartialDurationsShareBoundedTimelineSemantics() {
         listOf(-1L, 0L, 1L, 9_999L).forEach { requested ->
