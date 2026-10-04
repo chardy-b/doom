@@ -52,4 +52,25 @@ class OverlayCallbackGuardTest {
         guard.invalidateVisible()
         assertFalse(guard.acceptsDetached(fresh))
     }
+    @Test fun closingKeepsRemovalAuthorityAcrossSlowRetries() {
+        val guard = OverlayCallbackGuard(); val token = guard.open(GateTicket(1))
+        guard.beginClosing(token)
+        repeat(100) { guard.invalidateVisible(); assertTrue(guard.acceptsRemoval(token)); assertFalse(guard.acceptsVisible(token)) }
+    }
+    @Test fun fallbackKeepsSameEpoch() {
+        val guard = OverlayCallbackGuard(); val token = guard.open(GateTicket(1)); guard.beginClosing(token)
+        val port = object : OverlayWindowRemovalPort {
+            override fun attachment() = OverlayAttachment.ATTACHED
+            override fun removeImmediate() = Unit
+            override fun reAddForRemoval() { assertTrue(guard.acceptsRemoval(token)); assertFalse(guard.acceptsVisible(token)) }
+        }
+        OverlayWindowRemover.attempt(port, true)
+        assertTrue(guard.acceptsRemoval(token))
+    }
+    @Test fun staleDetachOrButtonCannotAffectReplacementEpisode() {
+        val guard = OverlayCallbackGuard(); val old = guard.open(GateTicket(1)); guard.beginClosing(old)
+        val fresh = guard.open(GateTicket(2))
+        guard.detached(old); guard.consumeDetached(old)
+        assertFalse(guard.beginClosing(old)); assertTrue(guard.acceptsVisible(fresh))
+    }
 }

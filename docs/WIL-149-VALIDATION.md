@@ -1,3 +1,11 @@
+## WIL-235 candidate — unexecuted validation
+
+The approved [WIL-235 plan](plans/2026-10-04-wil-235-overlay-wedge-fix-plan.md) supersedes the historical single-window/disable-on-exhaustion behavior below. The production reminder is one transparent non-touchable visual plus three button windows, all under one token and an all-window detach barrier. No new permissions, foreground service, selectors, report persistence or signing changes are included. WIL-222 admission/visible-messaging policy and routing remain in place.
+
+New pure tests cover saturating fast/slow policy, ordered same-port recovery, unknown attachment, single-task scheduling, retirement/disable coordination, token authority, safe geometry and frozen exhaustion traces. Service tests use per-view attachments and real install/button wiring for partial adds, delayed final-button detach, recovery faults, stale callbacks, event storms, stop and lifecycle transfer. Synthetic UI composition uses separate roots; oversized landscape states explicitly show fail-open instead of scrolling an input surface. Existing screenshot names and canonical evidence/signing gates remain unchanged.
+
+No JVM tests, Gradle, Android builds, instrumentation, emulator, CI dispatch or phone matrix was executed for this candidate. The user limited local verification to lightweight syntax sanity. Exact-head Actions results and independent review remain pending. Phone evidence must establish actual pass-through, system escape, insets/IME, TalkBack traversal and WIL-222 behavior; no fake attachment result proves those properties. The platform cause of the reported wedge remains unresolved. Cleanup and diagnostics remain process-local, so the issue's persistence wording still requires owner reconciliation before closure.
+
 
 ## Current WIL-196 CI boundary (2026-09-17)
 
@@ -79,7 +87,7 @@ The implementation is uncommitted by policy, so no final candidate SHA is claime
 
 ## Review repairs
 
-- Removal is not treated as successful after a `WindowManager` exception. The service uses `removeViewImmediate`, verifies `View.isAttachedToWindow`, retains the view and manager while attached, retries every 50 ms up to 20 attempts, and disables the service without releasing Home/completion/bypass actions if detachment cannot be confirmed.
+- Removal is not treated as successful after a `WindowManager` exception. The service uses `removeViewImmediate`, verifies `View.isAttachedToWindow`, retains the view and manager while attached, uses a bounded inert same-view recovery cycle, retries every 50 ms for the fast budget of 20 failed passes, then retains ownership with 1,000 ms removal retries and an irreversible action veto. Explicit voluntary disable waits for gate, timer and retiring-owner detachment.
 - The watchdog no longer equates one unattributed active-root sample with a foreign foreground. Null or root-inspection uncertainty receives less than 150 monotonic milliseconds from the shared last-confirmed-safe moment; a non-null foreign package and a foreign root confirmed during a visible non-Instagram event request immediate safety cleanup, while an IG root keeps the gate.
 - Foreign-window and safety cleanup override pending Home or completion. `GLOBAL_ACTION_HOME`, gate completion, and bypass state changes occur only after confirmed physical detachment.
 - Capture debug does not launch or navigate. It revalidates the detached episode, collects a fresh candidate, verifies a separate current Instagram root, bypasses without cooldown, then commits only after one successful sensitive clipboard write.

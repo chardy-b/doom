@@ -497,7 +497,7 @@ class StructuralDiagnosticUiTest {
             assertTrue(Observation.connected)
             assertFalse(Observation.consent)
             assertNull(Observation.report)
-            assertNull(DoomAccessibilityService::class.java.getDeclaredField("overlay")
+            assertNull(DoomAccessibilityService::class.java.getDeclaredField("gateWindows")
                 .apply { isAccessible = true }.get(service))
             assertEquals(EntryGateState.OUTSIDE, Observation.entryGateState)
         }

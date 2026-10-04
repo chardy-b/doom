@@ -2,6 +2,7 @@ package com.chardy.doom
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -195,5 +196,23 @@ class OverlayRemovalTraceTest {
             policyReleased = false,
         )
         assertFalse(exhausted.snapshot(21L)!!.records.any { it.mark == RemovalTraceMark.ACTION_VETOED })
+    }
+    @Test fun firstExhaustionFreezesIncompleteTraceAndLateDetachCannotOverwriteIt() {
+        val store = RemovalTraceStore({ 100L })
+        store.arm(100L); store.beginEligibleEpisode(100L)
+        assertTrue(store.finish(now = 100L, terminalMark = RemovalTraceMark.REMOVAL_EXHAUSTED,
+            detached = false, policyReleased = false, vetoedAction = RemovalTraceAction.NAVIGATE_MESSAGES))
+        val frozen = store.snapshot(100L)
+        repeat(100) {
+            store.record(100L, RemovalTraceMark.REMOVAL_RETRY)
+            assertFalse(store.finish(now = 100L, terminalMark = RemovalTraceMark.REMOVAL_EXHAUSTED,
+                detached = false, policyReleased = false))
+        }
+        assertFalse(store.finish(now = 100L, terminalMark = RemovalTraceMark.DETACHED,
+            detached = true, policyReleased = true))
+        assertEquals(frozen, store.snapshot(100L))
+        assertFalse(frozen!!.records.any { it.mark == RemovalTraceMark.ACTION_RELEASED })
+        store.clear()
+        assertNull(store.snapshot(100L))
     }
 }

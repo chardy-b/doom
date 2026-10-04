@@ -3,7 +3,7 @@ package com.chardy.doom
 internal enum class OverlayRemovalAction {
     HOME, COMPLETE, NAVIGATE_MESSAGES, BYPASS, PRESERVE_REPORT, CAPTURE_DEBUG, RESET_OUTSIDE
 }
-internal enum class OverlayRemovalDecision { RETRY, DISABLE_SERVICE }
+internal enum class OverlayRemovalDecision { RETRY_FAST, RETRY_SLOW }
 
 /** Pure retry/action policy: no post-removal action is released before confirmed detachment. */
 internal class OverlayRemovalPolicy(private val maxAttempts: Int = 20) {
@@ -40,16 +40,16 @@ internal class OverlayRemovalPolicy(private val maxAttempts: Int = 20) {
     }
 
     fun failedAttempt(): OverlayRemovalDecision {
-        attempts++
+        if (attempts < maxAttempts) attempts++
         return if (attempts < maxAttempts) {
-            OverlayRemovalDecision.RETRY
+            OverlayRemovalDecision.RETRY_FAST
         } else {
             externalActionVetoed = true
             pending = when (pending) {
                 OverlayRemovalAction.RESET_OUTSIDE -> OverlayRemovalAction.RESET_OUTSIDE
                 else -> OverlayRemovalAction.BYPASS
             }
-            OverlayRemovalDecision.DISABLE_SERVICE
+            OverlayRemovalDecision.RETRY_SLOW
         }
     }
 

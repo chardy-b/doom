@@ -10,6 +10,10 @@ import tempfile
 
 REPO = Path(__file__).resolve().parents[1]
 MAIN = [
+    "OverlayWindowRemover.kt",
+    "OverlayRemovalRetryLoop.kt",
+    "GateOverlayWindowLayout.kt",
+
     "DemoGate.kt",
     "InstagramEntryGate.kt",
     "InstagramSurfaceShadowClassifier.kt",
@@ -25,6 +29,10 @@ MAIN = [
     "RemovalTraceStore.kt",
 ]
 TESTS = [
+    "OverlayWindowRemoverTest.kt",
+    "OverlayRemovalRetryLoopTest.kt",
+    "GateOverlayWindowLayoutTest.kt",
+
     "GatePolicyTest.kt",
     "InstagramEntryGateTest.kt",
     "InstagramSurfaceShadowClassifierTest.kt",
@@ -39,6 +47,10 @@ TESTS = [
     "OverlayRemovalTraceTest.kt",
 ]
 TEST_CLASSES = [
+    "com.chardy.doom.OverlayWindowRemoverTest",
+    "com.chardy.doom.OverlayRemovalRetryLoopTest",
+    "com.chardy.doom.GateOverlayWindowLayoutTest",
+
     "com.chardy.doom.GatePolicyTest",
     "com.chardy.doom.InstagramEntryGateTest",
     "com.chardy.doom.InstagramSurfaceShadowClassifierTest",

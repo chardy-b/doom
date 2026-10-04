@@ -2,7 +2,7 @@ package com.chardy.doom
 
 internal data class OverlayCallbackToken(val ticket: GateTicket, val epoch: Long)
 
-/** Main-thread-owned authority for one physical overlay instance. */
+/** Main-thread-owned authority for one physical window-set episode. */
 internal class OverlayCallbackGuard {
     private var nextEpoch = 0L
     private var current: OverlayCallbackToken? = null
