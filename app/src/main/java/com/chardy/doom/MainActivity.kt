@@ -36,7 +36,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
-import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -161,7 +160,7 @@ fun DoomScreen() {
         while (productPreview) {
             previewElapsed = (SystemClock.elapsedRealtime() - previewStartedAt).coerceAtMost(durationMs)
             if (previewElapsed >= durationMs) productPreview = false
-            delay(50L)
+            withFrameNanos { }
         }
     }
     LaunchedEffect(demoGeneration, demoScreen) {
@@ -171,7 +170,7 @@ fun DoomScreen() {
                 val now = SystemClock.elapsedRealtime()
                 remaining = demoGate.remaining(now)
                 if (demoGate.tick(now, token)) demoScreen = demoGate.screen
-                delay(50L)
+                withFrameNanos { }
             }
         }
     }
@@ -539,14 +538,15 @@ private fun Debug(
 
 @Composable
 private fun BreathingPreview(frame: BreathingFrame, reduced: Boolean) {
+    val presentation = BreathingVisuals.presentation(frame, reduced)
     Column(
         Modifier.fillMaxSize().padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(frame.label, color = Paper, fontSize = 34.sp)
-        PixelBloom(if (reduced) BreathingVisuals.staticProgress() else frame.bloom, Modifier.weight(1f))
-        SegmentedProgress(frame.segments)
+        Text(presentation.label, color = Paper, fontSize = 34.sp)
+        PixelBloom(presentation.bloom, Modifier.weight(1f))
+        SegmentedProgress(presentation.segments)
     }
 }
 
@@ -564,12 +564,12 @@ private fun SegmentedProgress(segments: List<Float>) {
 @Composable
 private fun PixelBloom(progress: Float, modifier: Modifier = Modifier.height(180.dp)) {
     Canvas(modifier.fillMaxWidth().semantics { contentDescription = "A quiet pixel bloom" }) {
-        BreathingVisuals.geometry(progress, size.width, size.height).forEach { cell ->
+        BreathingVisuals.visitGeometry(progress, size.width, size.height) { left, top, right, bottom, alpha, _, color, _, _ ->
             drawRect(
-                Color(cell.color),
-                Offset(cell.left, cell.top),
-                Size(cell.right - cell.left, cell.bottom - cell.top),
-                alpha = cell.alpha,
+                Color(color),
+                Offset(left, top),
+                Size(right - left, bottom - top),
+                alpha = alpha,
             )
         }
     }

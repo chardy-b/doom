@@ -34,6 +34,17 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("if ((gateWindows != null || sessionTimer.running) &&", preflight)
         self.assertNotIn("gateWindows != null || ticket != null", preflight)
 
+    def test_breathing_frames_are_decoupled_from_the_safety_watchdog(self):
+        watchdog = SERVICE.split("private fun runWatchdogTick", 1)[1].split(
+            "private fun requestDebugReport", 1
+        )[0]
+        self.assertNotIn("renderOverlay", watchdog)
+        self.assertIn("view.postOnAnimation(callback)", OVERLAY_VIEW)
+        self.assertIn("view.removeCallbacks(callback)", OVERLAY_VIEW)
+        self.assertIn("SystemClock.elapsedRealtimeNanos()", OVERLAY_VIEW)
+        self.assertIn("withFrameNanos { }", ACTIVITY)
+        self.assertNotIn("delay(50L)", ACTIVITY)
+
     def test_report_only_collection_requires_report_consent_and_connection_not_gate_consent(self):
         event = SERVICE.split("// Suppression is checked", 1)[1].split('@Suppress', 1)[0]
         denial = event.split("// Report-only collection", 1)[1].split(
@@ -540,9 +551,10 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertNotIn("removeAllViews", OVERLAY_VIEW)
         self.assertNotIn("track.post", OVERLAY_VIEW)
         self.assertNotIn("1000", OVERLAY_VIEW)
-        self.assertIn("segments=values.toList();invalidate()", OVERLAY_VIEW)
-        self.assertIn("segments.size-1", OVERLAY_VIEW)
-        self.assertIn("segmentWidth*fraction.coerceIn(0f,1f)", OVERLAY_VIEW)
+        self.assertNotIn("segments=values.toList()", OVERLAY_VIEW)
+        self.assertIn("elapsedMs=elapsedMs", OVERLAY_VIEW)
+        self.assertIn("segmentWidth=(width-gap*(count-1))/count", OVERLAY_VIEW)
+        self.assertIn("segmentWidth*fraction", OVERLAY_VIEW)
 
     def test_custom_settings_dialogs_have_real_cancel_and_valid_save(self):
         ui = (REPO / "app/src/main/java/com/chardy/doom/MainActivity.kt").read_text()
@@ -556,7 +568,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
 
     def test_phase_label_changes_only_with_the_breathing_phase(self):
         self.assertIn("private var lastPhase:String?=null", OVERLAY_VIEW)
-        self.assertIn("if(lastPhase!=model.frame.label)", OVERLAY_VIEW)
+        self.assertIn("if(lastPhase!=presentation.label)", OVERLAY_VIEW)
+        self.assertIn("phaseLabel.text=presentation.label", OVERLAY_VIEW)
 
     def test_native_overlay_restores_root_and_heading_accessibility(self):
         self.assertIn("Color.TRANSPARENT", OVERLAY_VIEW)

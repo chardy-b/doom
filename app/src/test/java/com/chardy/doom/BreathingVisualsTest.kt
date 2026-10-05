@@ -26,25 +26,42 @@ class BreathingVisualsTest {
     @Test fun segmentMappingAndCompletionAreExact() {
         assertEquals(listOf(0f), BreathingVisuals.frame(0,10_000).segments)
         assertEquals(listOf(1f, .5f), BreathingVisuals.frame(15_000,20_000).segments)
-        assertEquals(listOf(1f,1f,1f), BreathingVisuals.frame(30_000,30_000).segments)
+        val complete = BreathingVisuals.frame(30_000,30_000)
+        assertEquals(BreathPhase.OUT, complete.phase)
+        assertEquals("Breathe out", complete.label)
+        assertEquals(0f, complete.bloom, 0f)
+        assertEquals(listOf(1f,1f,1f), complete.segments)
+    }
+    @Test fun invalidSubBreathAndPartialDurationsShareBoundedTimelineSemantics() {
+        listOf(-1L, 0L, 1L, 9_999L).forEach { requested ->
+            val frame = BreathingVisuals.frame(Long.MAX_VALUE, requested)
+            assertEquals(listOf(1f), frame.segments)
+            assertEquals(BREATH_MS, BreathingVisuals.duration(requested))
+        }
+        assertEquals(listOf(1f, 1f), BreathingVisuals.frame(15_000, 15_000).segments)
+        repeat(20) { assertEquals(listOf(1f, 1f), BreathingVisuals.frame(15_000L + it, 15_000).segments) }
     }
     @Test fun paletteContrastAndLayersMeetContract() {
         assertTrue(BreathingVisuals.contrastRatio(BreathingVisuals.PAPER,BreathingVisuals.INK)>=4.5)
         assertTrue(BreathingVisuals.cells(.5f).map { it.layer }.toSet().size >= 4)
     }
-    @Test fun denseGeometryHasThirtyTwoPitchesAndContinuousTargetExtents() {
+    @Test fun denseGeometryHasThirtyTwoPitchesAndContinuousCircularTargetExtents() {
         val width = 320f
         val low = BreathingVisuals.geometry(0f, width, 240f)
         val high = BreathingVisuals.geometry(1f, width, 240f)
-        fun extent(cells: List<BloomCell>) = cells.maxOf { it.right } - cells.minOf { it.left }
-        assertEquals(width * .20f, extent(low), .001f)
-        assertEquals(width * .875f, extent(high), .001f)
+        fun extents(cells: List<BloomCell>) =
+            (cells.maxOf { it.right } - cells.minOf { it.left }) to
+                (cells.maxOf { it.bottom } - cells.minOf { it.top })
+        assertEquals(240f * .20f, extents(low).first, .001f)
+        assertEquals(extents(low).first, extents(low).second, .001f)
+        assertEquals(240f * .875f, extents(high).first, .001f)
+        assertEquals(extents(high).first, extents(high).second, .001f)
         assertTrue(high.map { it.gridX }.toSet().size >= 28)
         assertTrue(high.map { it.gridY }.toSet().size >= 20)
-        assertTrue(BreathingVisuals.geometry(.35f, width, 240f).any { it.left % (width / 32f) != 0f })
+        assertTrue(BreathingVisuals.geometry(.35f, width, 240f).any { it.left % (240f / 32f) != 0f })
     }
 
-    @Test fun tallPortraitFitsTheBloomAndLandscapeIntentionallyCompressesVertically() {
+    @Test fun portraitAndLandscapeBothKeepTheBloomCircular() {
         fun extents(cells: List<BloomCell>): Pair<Float, Float> =
             (cells.maxOf { it.right } - cells.minOf { it.left }) to
                 (cells.maxOf { it.bottom } - cells.minOf { it.top })
@@ -54,17 +71,33 @@ class BreathingVisualsTest {
 
         assertEquals(280f, tallPortrait.first, .001f)
         assertEquals(280f, tallPortrait.second, .001f)
-        assertEquals(560f, landscape.first, .001f)
         assertEquals(280f, landscape.second, .001f)
-        assertTrue(landscape.first > landscape.second * 1.5f)
+        assertEquals(280f, landscape.first, .001f)
+    }
+
+    @Test fun circularGeometryIsSymmetricAcrossBothAxes() {
+        listOf(0f, .2f, .5f, .9f, 1f).forEach { progress ->
+            val cells = BreathingVisuals.geometry(progress, 480f, 300f)
+            val byLogical = cells.associateBy { (it.gridX - 16) to (it.gridY - 16) }
+            byLogical.forEach { (point, cell) ->
+                val (x, y) = point
+                listOf(-x to y, x to -y, y to x).forEach { reflected ->
+                    val mirror = requireNotNull(byLogical[reflected]) {
+                        "missing mirror for $point -> $reflected"
+                    }
+                    assertEquals(cell.alpha, mirror.alpha, .000001f)
+                    assertEquals(cell.role, mirror.role)
+                }
+            }
+        }
     }
 
     @Test fun visibleAlphaFloorPreservesTheMinimumAndMaximumExtents() {
         fun extent(progress: Float): Float = BreathingVisuals.geometry(progress, 320f, 240f)
             .filter { it.alpha >= 0.25f }
             .let { it.maxOf { cell -> cell.right } - it.minOf { cell -> cell.left } }
-        assertEquals(64f, extent(0f), .001f)
-        assertEquals(280f, extent(1f), .001f)
+        assertEquals(48f, extent(0f), .001f)
+        assertEquals(210f, extent(1f), .001f)
         assertTrue(BreathingVisuals.geometry(0f, 320f, 240f).any { it.alpha >= 0.25f && it.role == BloomColorRole.GOLD })
     }
 
