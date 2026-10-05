@@ -807,7 +807,7 @@ class DoomAccessibilityService : AccessibilityService() {
                     override fun run() {
                         if (timerWatchdog !== this || !timerWindowAuthorized(epoch)) return
                         val view = timerView ?: return
-                        if (!overlayPlatform.isAttached(view)) { endTimerSession(); return }
+                        if (!overlayPlatform.physical.isRegistered(view)) { endTimerSession(); return }
                         handler.postDelayed(this, WATCHDOG_INTERVAL_MS)
                     }
                 }.also { handler.postDelayed(it, WATCHDOG_INTERVAL_MS) }
@@ -837,7 +837,7 @@ class DoomAccessibilityService : AccessibilityService() {
             val manager = timerManager ?: return
             val view = timerView ?: return
             val params = timerParams ?: return
-            if (!overlayPlatform.isAttached(view)) { endTimerSession(); return }
+            if (!overlayPlatform.physical.isRegistered(view)) { endTimerSession(); return }
             val bounds = timerBounds(manager, insets, view.measuredWidth.coerceAtLeast(56.dp()), view.measuredHeight.coerceAtLeast(56.dp()))
             if (session != timerSessionEpoch || !timerWindowCurrent(epoch)) return
             timerX = bounds.snapX(timerEdge).toFloat(); timerY = bounds.clampY(timerY)
@@ -902,7 +902,7 @@ class DoomAccessibilityService : AccessibilityService() {
     private fun renderTimer(epoch: Long, force: Boolean = false) {
         if (!timerWindowAuthorized(epoch)) return
         val view = timerView ?: return
-        if (!overlayPlatform.isAttached(view)) { endTimerSession(); return }
+        if (!overlayPlatform.physical.isRegistered(view)) { endTimerSession(); return }
         val reduce = try { !ValueAnimator.areAnimatorsEnabled() } catch (_: RuntimeException) { true }
         sessionTimer.model(reduce, force)?.let { timerUi?.render(it) }
         if (!sessionTimer.running) { endTimerSession(); return }
@@ -1116,7 +1116,7 @@ class DoomAccessibilityService : AccessibilityService() {
                     record.addAttempted = true
                     overlayWindowInstaller(manager, root, parameters)
                     if (OverlayWindowRemover.attachment(record) != OverlayAttachment.ATTACHED)
-                        throw IllegalStateException("Gate add did not attach")
+                        throw IllegalStateException("Gate add did not register")
                     if (!gateInstallAuthorized(episode, activeTicket)) throw IllegalStateException("Stale gate install")
                 }
             } finally { episode.installing = false }
