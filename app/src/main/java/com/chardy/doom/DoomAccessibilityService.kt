@@ -31,9 +31,8 @@ private fun safePackageToken(
     else -> SAFE_FOREIGN_PACKAGE
 }
 
-internal interface OverlayPlatform {
-    fun isAttached(view: View): Boolean
-    fun removeImmediate(manager: WindowManager, view: View)
+internal interface OverlayPlatform : OverlayPhysicalPlatform {
+    val physical: OverlayPhysicalPlatform get() = this
     fun currentRoot(): AccessibilityNodeInfo?
     /** Event-root seam; production reads the same root property used by the baseline path. */
     fun eventRoot(): AccessibilityNodeInfo? = currentRoot()
@@ -52,6 +51,7 @@ class DoomAccessibilityService : AccessibilityService() {
         private const val WATCHDOG_UNCERTAINTY_GRACE_MS = 150L
         private const val REMOVAL_RETRY_INTERVAL_MS = 50L
         private const val MAX_REMOVAL_ATTEMPTS = 20
+        private const val REMOVAL_SLOW_RETRY_INTERVAL_MS = 1_000L
         private var instance: DoomAccessibilityService? = null
 
         fun cancelEntryGate() {
@@ -64,13 +64,10 @@ class DoomAccessibilityService : AccessibilityService() {
         }
 
         fun disableObservation() {
-            instance?.endTimerSession()
-            instance?.cancelAndBypass()
+            instance?.requestDisable()
             Observation.connected = false
             Observation.clear()
             RemovalTraceStore.process.clear()
-            instance?.stopTimerCallbacks()
-            instance?.disableSelf()
         }
     }
 
@@ -84,12 +81,16 @@ class DoomAccessibilityService : AccessibilityService() {
         cooldownDurationProvider = { Observation.reminderSettings.suppressionMinutes * 60_000L },
     )
     private var ticket: GateTicket? = null
-    private var overlay: View? = null
+    private var gateWindows: GateOverlayWindows? = null
+    private var bound = false
+    private var disableWhenDetached = false
+    private var behaviorStopped = false
+    private var disableService: () -> Unit = { disableSelf() }
     private var overlayUi: EntryGateOverlayUi? = null
     private var windowManager: WindowManager? = null
     private var watchdog: Runnable? = null
     private var completion: Runnable? = null
-    private var removalRetry: Runnable? = null
+    private val removalLoop = OverlayRemovalRetryLoop(HandlerOverlayRemovalScheduler(handler))
     private val sessionTimer = InstagramSessionTimer { monotonicClock() }
     private val timerForeground = OverlayForegroundWatchdog(
         INSTAGRAM, BuildConfig.APPLICATION_ID, WATCHDOG_UNCERTAINTY_GRACE_MS
@@ -101,7 +102,10 @@ class DoomAccessibilityService : AccessibilityService() {
     private var sessionBoundaryCheck: Runnable? = null
     private var timerLastSafeAtMs = -1L
     private var timerTick: Runnable? = null
-    private var timerRetry: Runnable? = null
+    private val timerRemovalLoop = OverlayRemovalRetryLoop(HandlerOverlayRemovalScheduler(handler))
+    private var timerWindow: OwnedOverlayWindow? = null
+    private var timerRemoving = false
+    private var timerLayoutListener: View.OnLayoutChangeListener? = null
     private var timerWatchdog: Runnable? = null
     private var timerSessionEpoch = 0L
     /** Irreversible process-lifetime removal-exhaustion veto; never reflects user preference. */
@@ -140,6 +144,7 @@ class DoomAccessibilityService : AccessibilityService() {
     private val callbackGuard = OverlayCallbackGuard()
     private var overlayToken: OverlayCallbackToken? = null
     private var overlayPlatform: OverlayPlatform = object : OverlayPlatform {
+        override val physical = AndroidOverlayPhysicalPlatform
         override fun isAttached(view: View) = view.isAttachedToWindow
         override fun removeImmediate(manager: WindowManager, view: View) = manager.removeViewImmediate(view)
         override fun currentRoot(): AccessibilityNodeInfo? = try {
@@ -159,6 +164,9 @@ class DoomAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        bound = true
+        if (!disableWhenDetached) behaviorStopped = false
+        RetiringOverlayCleanup.reconcile()
         instance = this
         resetOutside(cause = RemovalTraceMark.SERVICE_CONNECTED_RESET)
         Observation.connected = false
@@ -171,11 +179,12 @@ class DoomAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         try {
+            if (behaviorStopped || !RetiringOverlayCleanup.barrier.canAdmit()) return
             val packageName = safePackageToken(event?.packageName, applicationContext.packageName)
             val traceCapturing = RemovalTraceStore.process.isCapturing()
             val eventKind = if (traceCapturing) traceEventKind(event) else RemovalTraceEvent.NA
             val owner = if (traceCapturing) traceOwner(packageName) else RemovalTraceOwner.NA
-            if ((overlay != null || sessionTimer.running) &&
+            if ((gateWindows != null || sessionTimer.running) &&
                 (!Observation.reminderSettings.enabled || !Observation.consent ||
                     !Observation.gateConsent || !Observation.connected)
             ) {
@@ -197,14 +206,14 @@ class DoomAccessibilityService : AccessibilityService() {
                     endTimerSession()
                     mainActivityReturnObserved = true
                     // This also resets a completed/granted session when no overlay remains.
-                    if (overlay == null) {
+                    if (gateWindows == null) {
                         entryGate.leaveInstagram()
                         ticket = null
                         mainActivityReturnObserved = false
                         publishGateState()
                     } else requestOverlayRemoval(
                         OverlayRemovalAction.PRESERVE_REPORT,
-                        overlayToken,
+                        null,
                         RemovalTraceMark.APP_RETURN
                     )
                 }
@@ -212,7 +221,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 return
             }
             if (packageName != INSTAGRAM) {
-                val visibleView = overlay
+                val visibleView = gateWindows
                 val visibleToken = overlayToken
                 val visibleTicket = ticket
                 if (visibleView == null) {
@@ -247,7 +256,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 if (!callbackGuard.acceptsVisible(visibleToken) ||
                     visibleTicket != ticket ||
                     visibleTicket.generation != entryGate.generation ||
-                    overlay !== visibleView ||
+                    gateWindows !== visibleView ||
                     entryGate.state != EntryGateState.GATING
                 ) {
                     resetOutside(
@@ -265,7 +274,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 // newer visible gate.
                 if (!Observation.consent || !Observation.gateConsent || !Observation.connected ||
                     !callbackGuard.acceptsVisible(visibleToken) ||
-                    overlay !== visibleView || overlayToken != visibleToken ||
+                    gateWindows !== visibleView || overlayToken != visibleToken ||
                     ticket != visibleTicket || visibleTicket.generation != entryGate.generation ||
                     entryGate.state != EntryGateState.GATING
                 ) return
@@ -341,8 +350,8 @@ class DoomAccessibilityService : AccessibilityService() {
 
             // A closing gate owns its pending action. A still-visible gate may be removed only
             // from a fresh, bounded, current-episode candidate that confirms messaging.
-            if (overlay != null) {
-                val visibleView = overlay ?: return
+            if (gateWindows != null) {
+                val visibleView = gateWindows ?: return
                 val visibleToken = overlayToken ?: return
                 val visibleTicket = ticket ?: return
                 if (!callbackGuard.acceptsVisible(visibleToken) ||
@@ -356,7 +365,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 val candidate = try { collectCandidate(visibleRoot, context) } catch (_: RuntimeException) { null }
                     ?: return
                 if (!Observation.consent || !Observation.gateConsent || !Observation.connected ||
-                    overlay !== visibleView || overlayToken !== visibleToken || ticket != visibleTicket ||
+                    gateWindows !== visibleView || overlayToken !== visibleToken || ticket != visibleTicket ||
                     !callbackGuard.acceptsVisible(visibleToken) ||
                     visibleTicket.generation != entryGate.generation ||
                     entryGate.state != EntryGateState.GATING
@@ -455,7 +464,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 return
             }
             if (activeTicket == null) {
-                if (overlay != null) cancelAndBypass()
+                if (gateWindows != null) cancelAndBypass()
                 else Observation.entryGateState = EntryGateState.OUTSIDE
                 return
             }
@@ -469,7 +478,7 @@ class DoomAccessibilityService : AccessibilityService() {
             publishGateState()
             if (shouldShow) {
                 if (timerView != null || timerClosing) suspendTimerForGate(activeTicket)
-                else if (overlay == null) installOverlay(activeTicket)
+                else if (gateWindows == null) installOverlay(activeTicket)
                 else overlayToken?.let { renderOverlay(activeTicket, it) }
             } else if (entryGate.state != EntryGateState.BYPASSED) {
                 requestOverlayRemoval(
@@ -614,7 +623,8 @@ class DoomAccessibilityService : AccessibilityService() {
 
     /** Shared gate authority: deliberately independent of timer preference/dismissal/veto. */
     private fun timerConsentAllowed(): Boolean =
-        Observation.consent && Observation.gateConsent && Observation.connected
+        Observation.consent && Observation.gateConsent && Observation.connected &&
+            !behaviorStopped && !disableWhenDetached && RetiringOverlayCleanup.barrier.canAdmit()
 
     private fun timerSpecificAllowed(): Boolean = timerConsentAllowed() &&
         Observation.sessionTimerEnabled && !timerDismissedThisVisit && !timerSafetyVeto
@@ -707,7 +717,7 @@ class DoomAccessibilityService : AccessibilityService() {
         sampleTimerAuthority() != OverlayForegroundDecision.FAIL_OPEN
 
     private fun timerWindowCurrent(epoch: Long): Boolean = epoch == timerEpoch &&
-        sessionTimer.running && !timerClosing && timerView != null && overlay == null &&
+        sessionTimer.running && !timerClosing && timerView != null && gateWindows == null &&
         timerSpecificAllowed()
 
     private fun timerWindowAuthorized(epoch: Long): Boolean {
@@ -730,7 +740,7 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     private fun attachTimerIfAllowed() {
-        if (!sessionTimer.running || timerView != null || timerClosing || overlay != null ||
+        if (!sessionTimer.running || timerView != null || timerClosing || gateWindows != null ||
             !timerSpecificAllowed()) return
         if (!freshTimerAuthority()) return
         val epoch = ++timerEpoch
@@ -774,7 +784,7 @@ class DoomAccessibilityService : AccessibilityService() {
             // Exact fresh attribution immediately before addView, never uncertainty.
             if (!freshTimerAuthority() || epoch != timerEpoch ||
                 session != timerSessionEpoch || !sessionTimer.running || !timerSpecificAllowed() ||
-                overlay != null || timerClosing) {
+                gateWindows != null || timerClosing) {
                 created.dispose(); return
             }
             // Own the window before the platform call: addView may attach and then throw.
@@ -783,13 +793,14 @@ class DoomAccessibilityService : AccessibilityService() {
                 updateTimerLayoutForInsets(epoch, insets)
                 insets
             }
+            timerWindow = ownedWindow(created.root, manager, GateWindowRole.DEBUG, params).also { it.addAttempted = true }
             overlayWindowInstaller(manager, created.root, params)
             if (epoch != timerEpoch || session != timerSessionEpoch) return
             if (!timerWindowCurrent(epoch)) { endTimerSession(); return }
             renderTimer(epoch, true)
-            created.root.addOnLayoutChangeListener { _, _, _, _, _, oldLeft, oldTop, oldRight, oldBottom ->
+            timerLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, oldLeft, oldTop, oldRight, oldBottom ->
                 if (created.root.width != oldRight-oldLeft || created.root.height != oldBottom-oldTop) settleTimer(epoch, false)
-            }
+            }.also { created.root.addOnLayoutChangeListener(it) }
             if (timerWindowCurrent(epoch)) {
                 cancelSessionBoundaryCheck()
                 timerWatchdog = object : Runnable {
@@ -801,8 +812,9 @@ class DoomAccessibilityService : AccessibilityService() {
                     }
                 }.also { handler.postDelayed(it, WATCHDOG_INTERVAL_MS) }
             }
-        } catch (_: RuntimeException) {
+        } catch (failure: RuntimeException) {
             created?.dispose()
+            if (failure is WindowManager.BadTokenException) timerWindow?.mayReAdd = false
             if (epoch == timerEpoch) endTimerSession()
         }
     }
@@ -810,6 +822,7 @@ class DoomAccessibilityService : AccessibilityService() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         updateTimerLayout(timerEpoch)
+        gateWindows?.let { updateGateLayout(it) }
     }
 
     private fun updateTimerLayout(epoch: Long) {
@@ -918,7 +931,6 @@ class DoomAccessibilityService : AccessibilityService() {
     private fun stopTimerCallbacks() {
         timerTick?.let(handler::removeCallbacks); timerTick = null
         timerWatchdog?.let(handler::removeCallbacks); timerWatchdog = null
-        timerRetry?.let(handler::removeCallbacks); timerRetry = null
     }
 
     private fun beginTimerRemoval(reset: Boolean) {
@@ -927,42 +939,54 @@ class DoomAccessibilityService : AccessibilityService() {
         stopTimerCallbacks()
         if (timerView == null) { finishTimerDetach(timerEpoch); return }
         timerClosing = true
+        timerWindow?.params = timerParams?.let { saved -> WindowManager.LayoutParams().apply { copyFrom(saved) } }
+        timerLayoutListener?.let { timerView?.removeOnLayoutChangeListener(it) }; timerLayoutListener = null
         timerUi?.dispose()
         timerRemovalAttempts = 0
         attemptTimerRemoval(timerEpoch)
     }
 
     private fun attemptTimerRemoval(epoch: Long) {
-        if (epoch != timerEpoch || !timerClosing) return
-        timerRetry?.let(handler::removeCallbacks); timerRetry = null
-        val view = timerView ?: return finishTimerDetach(epoch)
-        if (!overlayPlatform.isAttached(view)) return finishTimerDetach(epoch)
-        try { timerManager?.let { overlayPlatform.removeImmediate(it, view) } } catch (_: RuntimeException) {}
-        if (!overlayPlatform.isAttached(view)) return finishTimerDetach(epoch)
-        timerRemovalAttempts++
-        if (timerRemovalAttempts >= MAX_REMOVAL_ATTEMPTS) {
+        if (epoch != timerEpoch || !timerClosing || timerRemovalLoop.isPending || timerRemoving) return
+        val record = timerWindow ?: timerView?.let { view ->
+            OwnedOverlayWindow(view, timerManager, GateWindowRole.DEBUG, timerParams,
+                overlayPlatform.physical, overlayWindowInstaller, overlayWindowUpdater).also {
+                it.addAttempted = true
+                it.mayReAdd = false
+                timerWindow = it
+            }
+        } ?: return finishTimerDetach(epoch)
+        timerRemoving = true
+        val result = try {
+            record.closeInteraction()
+            OverlayWindowRemover.attempt(record, bound && record.mayReAdd)
+        } finally { timerRemoving = false }
+        if (epoch != timerEpoch || timerWindow !== record) return
+        if (result == OverlayRemovalResult.DETACHED) return finishTimerDetach(epoch)
+        if (timerRemovalAttempts < MAX_REMOVAL_ATTEMPTS) timerRemovalAttempts++
+        val slow = timerRemovalAttempts >= MAX_REMOVAL_ATTEMPTS
+        if (slow && !timerSafetyVeto) {
             timerSafetyVeto = true
             endTimerSession()
-            stopTimerCallbacks()
-            Observation.connected = false
             publishGateState()
-            disableSelf()
-            return
         }
-        timerRetry = Runnable { attemptTimerRemoval(epoch) }.also {
-            handler.postDelayed(it, REMOVAL_RETRY_INTERVAL_MS)
-        }
+        timerRemovalLoop.schedule(if (slow) REMOVAL_SLOW_RETRY_INTERVAL_MS else REMOVAL_RETRY_INTERVAL_MS,
+            { epoch == timerEpoch && timerWindow === record }) { attemptTimerRemoval(epoch) }
     }
 
     private fun finishTimerDetach(epoch: Long) {
         if (epoch != timerEpoch) return
         val old = timerView
-        if (old != null && overlayPlatform.isAttached(old)) return
+        if (old != null && timerWindow == null) return
+        if (timerWindow?.let { OverlayWindowRemover.attachment(it) != OverlayAttachment.DETACHED } == true) return
+        timerRemovalLoop.cancel()
+        timerWindow?.release(); timerWindow = null
         stopTimerCallbacks()
         old?.setOnApplyWindowInsetsListener(null)
         timerUi?.dispose(); timerUi = null; timerView = null; timerManager = null; timerParams = null
         timerEpoch++
         timerClosing = false
+        maybeDisableAfterDetach()
         val pendingGate = gateAfterTimerDetach
         gateAfterTimerDetach = null
         if (timerTerminalReset || timerSafetyVeto) {
@@ -973,11 +997,79 @@ class DoomAccessibilityService : AccessibilityService() {
             sessionTimer.endSession()
             return
         }
-        if (pendingGate != null) installOverlay(pendingGate)
+        if (pendingGate != null && !behaviorStopped && !disableWhenDetached) installOverlay(pendingGate)
+    }
+
+    private fun ownedWindow(view: View, manager: WindowManager, role: GateWindowRole,
+                            params: WindowManager.LayoutParams) = OwnedOverlayWindow(
+        view, manager, role, params, overlayPlatform.physical, overlayWindowInstaller, overlayWindowUpdater)
+
+    private fun gateInstallAuthorized(episode: GateOverlayWindows, activeTicket: GateTicket): Boolean =
+        gateWindows === episode && overlayToken === episode.token && callbackGuard.acceptsVisible(episode.token) &&
+            ticket == activeTicket && activeTicket.generation == entryGate.generation &&
+            entryGate.state == EntryGateState.GATING && timerConsentAllowed() &&
+            sampleTimerAuthority() == OverlayForegroundDecision.KEEP && timerView == null && !timerClosing &&
+            gateWindows === episode && callbackGuard.acceptsVisible(episode.token) && timerConsentAllowed()
+
+    private fun gateLayout(manager: WindowManager, ui: EntryGateOverlayUi,
+                           insets: android.view.WindowInsets? = ui.visualRoot.rootWindowInsets): List<GateWindowDescriptor>? {
+        val frame = if (android.os.Build.VERSION.SDK_INT >= 30) manager.currentWindowMetrics.bounds
+            else android.graphics.Rect(0, 0, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+        val safe = InstagramTimerOverlayViewFactory.safeInsets(manager, insets)
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val types = android.view.WindowInsets.Type.systemGestures() or android.view.WindowInsets.Type.mandatorySystemGestures()
+            val gestures = manager.currentWindowMetrics.windowInsets.getInsetsIgnoringVisibility(types)
+            val delivered = insets?.getInsetsIgnoringVisibility(types)
+            safe.set(maxOf(safe.left, gestures.left, delivered?.left ?: 0),
+                maxOf(safe.top, gestures.top, delivered?.top ?: 0),
+                maxOf(safe.right, gestures.right, delivered?.right ?: 0),
+                maxOf(safe.bottom, gestures.bottom, delivered?.bottom ?: 0))
+        } else if (android.os.Build.VERSION.SDK_INT >= 29 && insets != null) {
+            val gestures = insets.systemGestureInsets
+            safe.set(maxOf(safe.left, gestures.left), maxOf(safe.top, gestures.top),
+                maxOf(safe.right, gestures.right), maxOf(safe.bottom, gestures.bottom))
+        }
+        val margins = GateSafeInsets(safe.left, safe.top, safe.right, safe.bottom)
+        val density = resources.displayMetrics.density
+        val width = GateOverlayWindowLayout.actionWidth(frame.width(), margins, density)
+        if (width <= 0) return null
+        val heights = ui.windowRoots.drop(1).map { button ->
+            button.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            button.measuredHeight
+        }
+        val layout = GateOverlayWindowLayout.calculate(frame.width(), frame.height(), margins, density, heights) ?: return null
+        val decorationWidth = minOf(240.dp(), frame.width() - safe.left - safe.right - 32.dp()).coerceAtLeast(1)
+        val decorationHeight = minOf(240.dp(), layout[1].bounds.y - safe.top - 32.dp()).coerceAtLeast(1)
+        ui.layoutDecoration(safe.left + (frame.width() - safe.left - safe.right - decorationWidth) / 2,
+            safe.top + 16.dp(), decorationWidth, decorationHeight)
+        return layout
+    }
+
+    private fun updateGateLayout(episode: GateOverlayWindows, insets: android.view.WindowInsets? = null) {
+        if (gateWindows !== episode) return
+        if (!callbackGuard.acceptsVisible(episode.token)) return
+        if (episode.installing) return
+        try {
+            if (overlayToken !== episode.token || ticket != episode.token.ticket || !timerConsentAllowed())
+                throw IllegalStateException("Stale gate layout")
+            val manager = windowManager ?: throw IllegalStateException("Missing gate manager")
+            val layout = gateLayout(manager, episode.ui, insets) ?: throw IllegalStateException("Gate does not fit")
+            episode.records.zip(layout).forEach { (record, descriptor) ->
+                if (gateWindows !== episode || !callbackGuard.acceptsVisible(episode.token)) return
+                if (OverlayWindowRemover.attachment(record) != OverlayAttachment.ATTACHED)
+                    throw IllegalStateException("Gate window no longer attached")
+                val params = GateOverlayWindows.parameters(descriptor)
+                record.params = WindowManager.LayoutParams().apply { copyFrom(params) }
+                overlayWindowUpdater(manager, record.view, params)
+            }
+        } catch (_: RuntimeException) {
+            if (gateWindows === episode) requestSafetyCleanup(OverlayRemovalAction.BYPASS, RemovalTraceMark.INSTALL_FAILURE)
+        }
     }
 
     private fun installOverlay(activeTicket: GateTicket) {
-        if (overlay != null || timerView != null || timerClosing) return
+        if (gateWindows != null || timerView != null || timerClosing || !timerConsentAllowed()) return
         try {
             val token = callbackGuard.open(activeTicket)
             val ui = EntryGateOverlayViewFactory.create(
@@ -996,21 +1088,11 @@ class DoomAccessibilityService : AccessibilityService() {
                     requestDebugReport(token)
                 }
             )
-            val box = ui.root
-
-            val parameters = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                PixelFormat.OPAQUE
-            )
             val manager = getSystemService(WINDOW_SERVICE) as WindowManager
             if (activeTicket != ticket || activeTicket.generation != entryGate.generation ||
                 entryGate.state != EntryGateState.GATING || !timerConsentAllowed() ||
                 sampleTimerAuthority() != OverlayForegroundDecision.KEEP ||
-                timerView != null || timerClosing || overlay != null) {
+                timerView != null || timerClosing || gateWindows != null) {
                 ui.dispose()
                 if (activeTicket == ticket && activeTicket.generation == entryGate.generation) {
                     cancelCurrentGatingTicket(activeTicket)
@@ -1020,10 +1102,32 @@ class DoomAccessibilityService : AccessibilityService() {
                 return
             }
             windowManager = manager
-            overlay = box
+            val episode = GateOverlayWindows(token, ui)
+            gateWindows = episode
             overlayUi = ui
             overlayToken = token
-            overlayWindowInstaller(manager, box, parameters)
+            try {
+                val layout = gateLayout(manager, ui) ?: throw IllegalStateException("Gate does not fit")
+                layout.zip(ui.windowRoots).forEach { (descriptor, root) ->
+                    if (!gateInstallAuthorized(episode, activeTicket)) throw IllegalStateException("Stale gate install")
+                    val parameters = GateOverlayWindows.parameters(descriptor)
+                    val record = ownedWindow(root, manager, descriptor.role, parameters)
+                    episode.records += record
+                    record.addAttempted = true
+                    overlayWindowInstaller(manager, root, parameters)
+                    if (OverlayWindowRemover.attachment(record) != OverlayAttachment.ATTACHED)
+                        throw IllegalStateException("Gate add did not attach")
+                    if (!gateInstallAuthorized(episode, activeTicket)) throw IllegalStateException("Stale gate install")
+                }
+            } finally { episode.installing = false }
+            ui.visualRoot.setOnApplyWindowInsetsListener { _, insets ->
+                updateGateLayout(episode, insets)
+                insets
+            }
+            if (!gateInstallAuthorized(episode, activeTicket)) {
+                requestSafetyCleanup(OverlayRemovalAction.BYPASS, RemovalTraceMark.INSTALL_FAILURE)
+                return
+            }
 
             val shownAt = monotonicClock()
             if (!entryGate.overlayShown(shownAt, activeTicket)) {
@@ -1048,7 +1152,8 @@ class DoomAccessibilityService : AccessibilityService() {
                     runWatchdogTick(activeTicket, token, this)
                 }
             }.also { handler.post(it) }
-        } catch (_: RuntimeException) {
+        } catch (failure: RuntimeException) {
+            if (failure is WindowManager.BadTokenException) gateWindows?.records?.forEach { it.mayReAdd = false }
             callbackGuard.invalidateVisible()
             requestSafetyCleanup(OverlayRemovalAction.BYPASS, RemovalTraceMark.INSTALL_FAILURE)
         }
@@ -1060,7 +1165,7 @@ class DoomAccessibilityService : AccessibilityService() {
         token: OverlayCallbackToken,
         next: Runnable,
     ) {
-        if (overlay == null || !callbackGuard.acceptsVisible(token)) return
+        if (gateWindows == null || !callbackGuard.acceptsVisible(token)) return
         try {
             val sample = readWatchdogRoot()
             val now = monotonicClock()
@@ -1099,7 +1204,7 @@ class DoomAccessibilityService : AccessibilityService() {
 
     /** Debug navigation is an external action and therefore follows the same detach transaction. */
     private fun requestDebugReport(token: OverlayCallbackToken) {
-        if (overlay == null || overlayToken !== token || ticket != token.ticket ||
+        if (gateWindows == null || overlayToken !== token || ticket != token.ticket ||
             token.ticket.generation != entryGate.generation ||
             !callbackGuard.acceptsVisible(token) || entryGate.state != EntryGateState.GATING ||
             !Observation.reminderSettings.enabled || !Observation.consent ||
@@ -1117,15 +1222,15 @@ class DoomAccessibilityService : AccessibilityService() {
         root: RemovalTraceRoot = RemovalTraceRoot.NOT_READ,
     ) {
         val currentToken = overlayToken
-        if (overlay == null) return
-        val accepted = if (token != null) callbackGuard.beginClosing(token)
+        if (gateWindows == null) return
+        val accepted = if (token != null) callbackGuard.acceptsVisible(token) && callbackGuard.beginClosing(token)
         else currentToken != null && callbackGuard.beginClosing(currentToken)
         if (!accepted) return
         completion?.let(handler::removeCallbacks)
         watchdog?.let(handler::removeCallbacks)
         completion = null
         watchdog = null
-        overlayUi?.dispose()
+        overlayUi?.closeInteraction()
         traceRecord(cause, event = event, owner = owner, root = root, action = traceAction(action))
         traceRecord(RemovalTraceMark.CLOSING, action = traceAction(action))
         removalPolicy.request(action)
@@ -1147,82 +1252,65 @@ class DoomAccessibilityService : AccessibilityService() {
         watchdog?.let(handler::removeCallbacks)
         completion = null
         watchdog = null
-        overlayUi?.dispose()
-        if (cause != null && (overlay != null || ticket != null)) {
+        overlayUi?.closeInteraction()
+        if (cause != null && (gateWindows != null || ticket != null)) {
             traceRecord(cause, event = event, owner = owner, root = root, action = traceAction(action), now = now)
         }
-        if (overlay != null) traceRecord(RemovalTraceMark.CLOSING, action = traceAction(action))
+        if (gateWindows != null) traceRecord(RemovalTraceMark.CLOSING, action = traceAction(action))
         removalPolicy.requestSafetyCleanup(action)
         attemptOverlayRemoval(overlayToken)
     }
 
     private fun attemptOverlayRemoval(token: OverlayCallbackToken? = overlayToken) {
-        removalRetry?.let(handler::removeCallbacks)
-        removalRetry = null
-        val view = overlay
-        if (view == null || !overlayPlatform.isAttached(view)) {
-            confirmOverlayRemoved(token, observedBeforeRemove = true)
-            return
-        }
-        if (token != null && !callbackGuard.acceptsRemoval(token)) return
-
+        if (token != overlayToken || token != null && !callbackGuard.acceptsRemoval(token)) return
+        val episode = gateWindows
+        if (episode == null) { confirmOverlayRemoved(token); return }
+        if (episode.installing || episode.removing || removalLoop.isPending) return
+        episode.removing = true
         try {
-            windowManager?.let { overlayPlatform.removeImmediate(it, view) }
-        } catch (_: RuntimeException) {
-            // Attachment state below is the postcondition; an exception alone is not success.
-        }
-        if (!overlayPlatform.isAttached(view)) {
-            confirmOverlayRemoved(token, observedBeforeRemove = false)
-            return
-        }
-
-        when (removalPolicy.failedAttempt()) {
-            OverlayRemovalDecision.RETRY -> {
-                traceRecord(RemovalTraceMark.REMOVAL_RETRY, action = RemovalTraceAction.NONE)
-                removalRetry = Runnable {
-                    if (token == null || callbackGuard.acceptsRemoval(token)) attemptOverlayRemoval(token)
-                }
-                    .also { handler.postDelayed(it, REMOVAL_RETRY_INTERVAL_MS) }
+            episode.removalOrder().forEach { record ->
+                if (gateWindows !== episode || !callbackGuard.acceptsRemoval(episode.token)) return
+                record.closeInteraction()
+                OverlayWindowRemover.attempt(record, bound && record.mayReAdd)
+                if (!record.mayReAdd) episode.records.forEach { it.mayReAdd = false }
             }
-            OverlayRemovalDecision.DISABLE_SERVICE -> {
-                // Retain the attached view and manager references; never release a pending action.
-                // Android service teardown is the final platform-owned removal path.
-                traceFinish(
-                    terminalMark = RemovalTraceMark.REMOVAL_EXHAUSTED,
-                    action = RemovalTraceAction.NONE,
-                    detached = false,
-                    policyReleased = false,
-                    vetoedAction = removalPolicy.vetoedExternalAction()?.let(::traceAction)
-                        ?: RemovalTraceAction.NONE,
-                )
-                removalPolicy.requestSafetyCleanup(OverlayRemovalAction.BYPASS)
-                endTimerSession()
-                disableSelf()
-            }
-        }
+        } finally { episode.removing = false }
+        if (gateWindows !== episode || !callbackGuard.acceptsRemoval(episode.token)) return
+        if (episode.allDetached()) { confirmOverlayRemoved(token, observedBeforeRemove = false); return }
+        val decision = removalPolicy.failedAttempt()
+        if (decision == OverlayRemovalDecision.RETRY_SLOW && !episode.degraded) {
+            episode.degraded = true
+            traceFinish(RemovalTraceMark.REMOVAL_EXHAUSTED, RemovalTraceAction.NONE,
+                detached = false, policyReleased = false,
+                vetoedAction = removalPolicy.vetoedExternalAction()?.let(::traceAction) ?: RemovalTraceAction.NONE)
+            endTimerSession()
+        } else if (!episode.degraded) traceRecord(RemovalTraceMark.REMOVAL_RETRY)
+        removalLoop.schedule(
+            if (decision == OverlayRemovalDecision.RETRY_SLOW) REMOVAL_SLOW_RETRY_INTERVAL_MS else REMOVAL_RETRY_INTERVAL_MS,
+            { gateWindows === episode && callbackGuard.acceptsRemoval(episode.token) }
+        ) { attemptOverlayRemoval(token) }
     }
 
     private fun confirmOverlayRemoved(
         detachedToken: OverlayCallbackToken? = overlayToken,
         observedBeforeRemove: Boolean = true,
     ) {
-        removalRetry?.let(handler::removeCallbacks)
-        removalRetry = null
-        val detachedView = overlay
-        if (detachedView != null && overlayPlatform.isAttached(detachedView)) return
-        if (detachedToken != null && overlayToken != detachedToken) return
-        val ownsDetachedEpisode = detachedView != null && detachedToken != null &&
-            overlayToken == detachedToken && callbackGuard.acceptsRemoval(detachedToken)
+        if (detachedToken != overlayToken || detachedToken != null && !callbackGuard.acceptsRemoval(detachedToken)) return
+        val detachedEpisode = gateWindows
+        if (detachedEpisode != null && (detachedEpisode.installing || !detachedEpisode.allDetached())) return
+        removalLoop.cancel()
+        val ownsDetachedEpisode = detachedEpisode != null && detachedToken != null
         if (detachedToken != null) callbackGuard.detached(detachedToken)
-        overlayUi?.dispose()
+        detachedEpisode?.dispose()
         overlayUi = null
-        overlay = null
+        gateWindows = null
         windowManager = null
         overlayToken = null
+        maybeDisableAfterDetach()
         val vetoedAction = removalPolicy.vetoedExternalAction()?.let(::traceAction)
             ?: RemovalTraceAction.NONE
         val action = removalPolicy.confirmedDetached()
-        val hadOverlay = detachedView != null
+        val hadOverlay = detachedEpisode != null
         // ALREADY_DETACHED only means the final check found no attachment; after a retry it does
         // not distinguish an external detach from our earlier removeImmediate attempt.
         traceFinish(
@@ -1435,12 +1523,19 @@ class DoomAccessibilityService : AccessibilityService() {
                 }
             }
             OverlayRemovalAction.HOME -> {
+                if (detachedToken == null || !ownsDetachedEpisode ||
+                    !hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)) {
+                    detachedToken?.ticket?.let(::cancelCurrentGatingTicket)
+                    detachedToken?.let(callbackGuard::consumeDetached)
+                    return
+                }
                 endTimerSession()
                 val activeTicket = ticket
                 if (activeTicket == null || !entryGate.bypass(activeTicket)) entryGate.cancel()
                 publishGateState()
                 Observation.clear()
                 overlayPlatform.performHome()
+                callbackGuard.consumeDetached(detachedToken)
             }
             null -> Unit
         }
@@ -1469,9 +1564,9 @@ class DoomAccessibilityService : AccessibilityService() {
     private fun hasDetachedTerminalAuthority(
         token: OverlayCallbackToken,
         expectedState: EntryGateState,
-    ): Boolean = callbackGuard.acceptsDetached(token) && overlay == null && overlayToken == null &&
+    ): Boolean = callbackGuard.acceptsDetached(token) && gateWindows == null && overlayToken == null &&
         token.ticket == ticket && token.ticket.generation == entryGate.generation &&
-        Observation.consent && Observation.gateConsent && Observation.connected &&
+        timerConsentAllowed() &&
         entryGate.state == expectedState
 
     /** Abandon only the detached action's own still-current gate after authority is lost. */
@@ -1645,9 +1740,7 @@ class DoomAccessibilityService : AccessibilityService() {
         requestSafetyCleanup(OverlayRemovalAction.BYPASS)
         Observation.connected = false
         Observation.clear()
-        handler.removeCallbacksAndMessages(null)
-        removalRetry = null
-        if (timerView != null || overlay != null) disableSelf()
+        behaviorStopped = true
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -1662,16 +1755,46 @@ class DoomAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
+    private fun requestDisable() {
+        disableWhenDetached = true
+        behaviorStopped = true
+        cancelAndBypass()
+        maybeDisableAfterDetach()
+    }
+
+    private fun maybeDisableAfterDetach() {
+        if (!disableWhenDetached || !bound || gateWindows != null || timerView != null) return
+        if (!RetiringOverlayCleanup.barrier.canDisable(false, false)) {
+            // This current service owns the explicit Stop request. The retired owner never
+            // retains a service continuation; this queue only waits for its physical barrier.
+            removalLoop.schedule(REMOVAL_SLOW_RETRY_INTERVAL_MS,
+                { bound && disableWhenDetached && gateWindows == null && timerView == null }) {
+                maybeDisableAfterDetach()
+            }
+            return
+        }
+        removalLoop.cancel()
+        disableWhenDetached = false
+        disableService()
+    }
+
     private fun disconnect() {
+        bound = false
+        behaviorStopped = true
         endTimerSession()
         timerSafetyVeto = true
         stopTimerCallbacks()
         cancelAndBypass()
+        val records = gateWindows?.removalOrder().orEmpty() + listOfNotNull(timerWindow)
+        // Transfer exactly once. Retirement owns only physical handles, never action continuations.
+        gateWindows?.dispose()
+        timerUi?.dispose()
+        RetiringOverlayCleanup.retire(records, listOf(removalLoop, timerRemovalLoop))
+        gateWindows = null; overlayUi = null; overlayToken = null; windowManager = null
+        timerWindow = null; timerView = null; timerUi = null; timerManager = null; timerParams = null
         ticket = null
         if (instance === this) instance = null
         Observation.connected = false
         Observation.clear()
-        handler.removeCallbacksAndMessages(null)
-        removalRetry = null
     }
 }

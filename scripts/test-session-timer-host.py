@@ -74,9 +74,11 @@ class TimerContract(unittest.TestCase):
 
     def test_terminal_cleanup_precedes_disable_and_owner_release_waits_for_detach(self):
         disable = SERVICE.split("fun disableObservation()", 1)[1].split("}", 1)[0]
-        self.assertLess(disable.index("endTimerSession()"), disable.index("disableSelf()"))
+        self.assertIn("requestDisable()", disable)
+        deferred = SERVICE.split("private fun maybeDisableAfterDetach()", 1)[1].split("private fun disconnect", 1)[0]
+        self.assertLess(deferred.index("canDisable("), deferred.index("disableService()"))
         finish = SERVICE.split("private fun finishTimerDetach", 1)[1].split("private fun installOverlay", 1)[0]
-        self.assertIn("overlayPlatform.isAttached(old)", finish)
+        self.assertIn("OverlayWindowRemover.attachment(it) != OverlayAttachment.DETACHED", finish)
         self.assertIn("timerView = null", finish)
 
     def test_no_private_content_or_new_capability(self):

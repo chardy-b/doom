@@ -9,18 +9,18 @@ class OverlayRemovalPolicyTest {
         val policy = OverlayRemovalPolicy(maxAttempts = 3)
         policy.request(OverlayRemovalAction.HOME)
 
-        assertEquals(OverlayRemovalDecision.RETRY, policy.failedAttempt())
-        assertEquals(OverlayRemovalDecision.RETRY, policy.failedAttempt())
+        assertEquals(OverlayRemovalDecision.RETRY_FAST, policy.failedAttempt())
+        assertEquals(OverlayRemovalDecision.RETRY_FAST, policy.failedAttempt())
         assertEquals(OverlayRemovalAction.HOME, policy.confirmedDetached())
         assertNull(policy.confirmedDetached())
     }
 
-    @Test fun retryBudgetDisablesServiceWithoutReleasingAction() {
+    @Test fun retryBudgetEntersSlowRecoveryWithoutReleasingAction() {
         val policy = OverlayRemovalPolicy(maxAttempts = 2)
         policy.request(OverlayRemovalAction.COMPLETE)
 
-        assertEquals(OverlayRemovalDecision.RETRY, policy.failedAttempt())
-        assertEquals(OverlayRemovalDecision.DISABLE_SERVICE, policy.failedAttempt())
+        assertEquals(OverlayRemovalDecision.RETRY_FAST, policy.failedAttempt())
+        assertEquals(OverlayRemovalDecision.RETRY_SLOW, policy.failedAttempt())
     }
 
     @Test fun explicitActionsOverridePreserveButResetOutsideIsStrongest() {
@@ -57,7 +57,7 @@ class OverlayRemovalPolicyTest {
         val policy = OverlayRemovalPolicy(maxAttempts = 2)
         policy.request(OverlayRemovalAction.NAVIGATE_MESSAGES)
         policy.request(OverlayRemovalAction.COMPLETE)
-        assertEquals(OverlayRemovalDecision.RETRY, policy.failedAttempt())
+        assertEquals(OverlayRemovalDecision.RETRY_FAST, policy.failedAttempt())
         assertEquals(OverlayRemovalAction.NAVIGATE_MESSAGES, policy.confirmedDetached())
         assertNull(policy.confirmedDetached())
     }
@@ -108,10 +108,10 @@ class OverlayRemovalPolicyTest {
         assertEquals(OverlayRemovalAction.BYPASS, policy.confirmedDetached())
     }
 
-    @Test fun exhaustionCannotReleaseExternalAction() {
+    @Test fun slowRecoveryNeverRestoresVetoedAction() {
         val policy = OverlayRemovalPolicy(maxAttempts = 1)
         policy.request(OverlayRemovalAction.HOME)
-        assertEquals(OverlayRemovalDecision.DISABLE_SERVICE, policy.failedAttempt())
+        assertEquals(OverlayRemovalDecision.RETRY_SLOW, policy.failedAttempt())
         assertEquals(OverlayRemovalAction.HOME, policy.vetoedExternalAction())
         assertEquals(OverlayRemovalAction.BYPASS, policy.confirmedDetached())
     }
@@ -130,5 +130,44 @@ class OverlayRemovalPolicyTest {
     @Test(expected = IllegalArgumentException::class)
     fun retryBudgetMustBePositive() {
         OverlayRemovalPolicy(maxAttempts = 0)
+    }
+    @Test fun repeatedFailuresStaySlowAndCounterSaturates() {
+        for (budget in listOf(2, 20)) {
+            val policy = OverlayRemovalPolicy(budget)
+            repeat(budget - 1) { assertEquals(OverlayRemovalDecision.RETRY_FAST, policy.failedAttempt()) }
+            repeat(100) { assertEquals(OverlayRemovalDecision.RETRY_SLOW, policy.failedAttempt()) }
+            val attempts = policy.javaClass.getDeclaredField("attempts").apply { isAccessible = true }
+            assertEquals(budget, attempts.getInt(policy))
+        }
+    }
+    @Test fun requestsCannotReplenishFastBudget() {
+        val policy = OverlayRemovalPolicy(2)
+        policy.failedAttempt()
+        OverlayRemovalAction.entries.forEach { policy.request(it) }
+        assertEquals(OverlayRemovalDecision.RETRY_SLOW, policy.failedAttempt())
+        policy.requestSafetyCleanup(OverlayRemovalAction.BYPASS)
+        assertEquals(OverlayRemovalDecision.RETRY_SLOW, policy.failedAttempt())
+    }
+    @Test fun lateDetachPreservesResetOutside() {
+        val policy = OverlayRemovalPolicy(1)
+        policy.request(OverlayRemovalAction.RESET_OUTSIDE)
+        policy.failedAttempt()
+        assertEquals(OverlayRemovalAction.RESET_OUTSIDE, policy.confirmedDetached())
+    }
+    @Test fun lateDetachAfterExhaustionOnlyBypasses() {
+        OverlayRemovalAction.entries.filter { it != OverlayRemovalAction.RESET_OUTSIDE }.forEach { action ->
+            val policy = OverlayRemovalPolicy(1)
+            policy.request(action); policy.failedAttempt()
+            OverlayRemovalAction.entries.filter { it != OverlayRemovalAction.RESET_OUTSIDE }.forEach { policy.request(it) }
+            assertEquals(OverlayRemovalAction.BYPASS, policy.confirmedDetached())
+        }
+    }
+    @Test fun confirmedDetachResetsForNextEpisode() {
+        val policy = OverlayRemovalPolicy(2)
+        repeat(10) { policy.failedAttempt() }
+        policy.confirmedDetached()
+        policy.request(OverlayRemovalAction.NAVIGATE_MESSAGES)
+        assertEquals(OverlayRemovalDecision.RETRY_FAST, policy.failedAttempt())
+        assertEquals(OverlayRemovalAction.NAVIGATE_MESSAGES, policy.confirmedDetached())
     }
 }

@@ -91,22 +91,29 @@ class EntryGateServiceActionTest {
         var beforeRouteReturns: () -> Unit = {}
         var afterPackageRead: () -> Unit = {}
 
+        var attachmentThrows = false
+        var heldView: View? = null
+        var removeScript: ((View) -> Unit)? = null
         private val attachments = java.util.IdentityHashMap<View, Boolean>()
         private var initialAttachment = attached
         var attached: Boolean
             get() = attachments.values.any { it } || (attachments.isEmpty() && initialAttachment)
             set(value) { initialAttachment = value; attachments.keys.toList().forEach { attachments[it] = value } }
         fun attach(view: View) {
-            check(!attached) { "overlapping windows" }
+            check(attachments[view] != true) { "already added" }
             attachments[view] = true
         }
         fun register(view: View, attached: Boolean) { attachments[view] = attached }
-        override fun isAttached(view: View): Boolean = attachments[view] ?: false
+        override fun isAttached(view: View): Boolean {
+            if (attachmentThrows) throw IllegalStateException("unknown attachment")
+            return attachments[view] ?: false
+        }
 
         override fun removeImmediate(manager: WindowManager, view: View) {
             platformCalls += "removeImmediate"
             removeAttempts++
-            if (detachOnRemove) attachments[view] = false
+            removeScript?.let { it(view); return }
+            if (detachOnRemove && view !== heldView) attachments[view] = false
         }
 
         override fun currentRoot(): AccessibilityNodeInfo? {
@@ -197,6 +204,8 @@ class EntryGateServiceActionTest {
         val now: LongArray,
         var installMode: InstallMode = InstallMode.SUCCEED,
         var installs: Int = 0,
+        var disableCalls: Int = 0,
+        val added: MutableList<Pair<View, WindowManager.LayoutParams>> = mutableListOf(),
     )
 
     private data class Outcome(
@@ -215,6 +224,7 @@ class EntryGateServiceActionTest {
         rule.scenario.onActivity {
             manualFixtures.forEach { fixture ->
                 runCatching { fixture.ui.dispose() }
+                fixture.platform.attached = false
                 runCatching { fixture.service.onDestroy() }
             }
             manualServices.forEach { service -> runCatching { service.onDestroy() } }
@@ -469,6 +479,7 @@ class EntryGateServiceActionTest {
         val oldToken = fixture.token
         request(fixture.service, OverlayRemovalAction.COMPLETE, oldToken)
         lateinit var newView: View
+        lateinit var newEpisode: GateOverlayWindows
         lateinit var newToken: OverlayCallbackToken
         var oldRemovalAttempts = 0
         rule.scenario.onActivity { activity ->
@@ -476,7 +487,16 @@ class EntryGateServiceActionTest {
             newView = View(activity)
             fixture.platform.register(newView, true)
             newToken = guard.open(fixture.ticket)
-            field(fixture.service, "overlay").set(fixture.service, newView)
+            (field(fixture.service, "removalLoop").get(fixture.service) as OverlayRemovalRetryLoop).cancel()
+            fixture.platform.register(fixture.view, false)
+            newEpisode = GateOverlayWindows(newToken, fixture.ui).apply {
+                installing = false
+                records += OwnedOverlayWindow(newView,
+                    activity.getSystemService(Context.WINDOW_SERVICE) as WindowManager, GateWindowRole.VISUAL,
+                    GateOverlayWindows.parameters(GateWindowDescriptor(GateWindowRole.VISUAL, GateWindowRect(0, 0, 100, 100))),
+                    fixture.platform, { _, root, _ -> fixture.platform.attach(root) }, { _, _, _ -> }).also { it.addAttempted = true }
+            }
+            field(fixture.service, "gateWindows").set(fixture.service, newEpisode)
             field(fixture.service, "overlayToken").set(fixture.service, newToken)
             oldRemovalAttempts = fixture.platform.removeAttempts
             assertTrue(oldRemovalAttempts > 0)
@@ -485,7 +505,7 @@ class EntryGateServiceActionTest {
             requestOverlayRemovalWithToken(fixture.service, OverlayRemovalAction.COMPLETE, oldToken)
         }
         instrumentation.waitForIdleSync()
-        assertSame(newView, field(fixture.service, "overlay").get(fixture.service))
+        assertSame(newEpisode, field(fixture.service, "gateWindows").get(fixture.service))
         assertSame(newToken, field(fixture.service, "overlayToken").get(fixture.service))
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(oldRemovalAttempts, fixture.platform.removeAttempts)
@@ -501,7 +521,7 @@ class EntryGateServiceActionTest {
         }
         rule.scenario.onActivity {
             fixture.platform.attached = false
-            invoke(fixture.service, "attemptOverlayRemoval", fixture.token)
+            runRemovalRetry(fixture.service, fixture.token)
         }
         assertEquals(0, fixture.platform.routeCalls)
         assertEquals(EntryGateState.BYPASSED, gate(fixture.service).state)
@@ -528,26 +548,26 @@ class EntryGateServiceActionTest {
         rule.scenario.onActivity { fixture.service.onUnbind(null) }
         rule.scenario.onActivity {
             fixture.platform.attached = false
-            invoke(fixture.service, "attemptOverlayRemoval", fixture.token)
+            runRemovalRetry(fixture.service, fixture.token)
         }
         assertEquals(0, fixture.platform.routeCalls)
         assertFalse(Observation.connected)
         assertFalse(gate(fixture.service).cooldownActive())
     }
 
-    @Test fun homeBeatsPendingSkipAndDoesNotRouteMessages() {
+    @Test fun closingHomeTapCannotReplaceAcceptedSkip() {
         val fixture = fixture(attached = true, detachOnRemove = false)
         request(fixture.service, OverlayRemovalAction.NAVIGATE_MESSAGES, fixture.token)
         request(fixture.service, OverlayRemovalAction.HOME, fixture.token)
         assertEquals(0, fixture.platform.homeCalls)
         assertEquals(0, fixture.platform.routeCalls)
         rule.scenario.onActivity { fixture.platform.detachOnRemove = true }
-        waitFor { fixture.platform.homeCalls == 1 }
-        assertEquals(0, fixture.platform.routeCalls)
-        assertEquals(1, fixture.platform.homeCalls)
+        waitFor { fixture.platform.routeCalls == 1 }
+        assertEquals(1, fixture.platform.routeCalls)
+        assertEquals(0, fixture.platform.homeCalls)
         assertTrue(fixture.platform.platformCalls.indexOf("removeImmediate") <
-            fixture.platform.platformCalls.indexOf("performHome"))
-        assertFalse(gate(fixture.service).cooldownActive())
+            fixture.platform.platformCalls.indexOf("routeMessages"))
+        assertTrue(gate(fixture.service).cooldownActive())
     }
 
     @Test fun directDoomReturnBeatsSkipAndPreservesReportWithoutRoute() {
@@ -638,7 +658,7 @@ class EntryGateServiceActionTest {
 
                 fresh.platform.attached = false
                 val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
-                invoke(fresh.service, "attemptOverlayRemoval", token)
+                runRemovalRetry(fresh.service, token)
                 assertEquals(EntryGateState.BYPASSED, gate(fresh.service).state)
                 assertFalse(gate(fresh.service).cooldownActive())
             } finally { destroyFresh(fresh) }
@@ -912,7 +932,7 @@ class EntryGateServiceActionTest {
             val fresh = freshService(activity, 10_000L)
             try {
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
-                val view = requireNotNull(field(fresh.service, "overlay").get(fresh.service))
+                val view = requireNotNull(field(fresh.service, "gateWindows").get(fresh.service))
                 val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
                 requireNotNull(Observation.report)
                 val completion = field(fresh.service, "completion").get(fresh.service)
@@ -927,7 +947,7 @@ class EntryGateServiceActionTest {
                             sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                         }
                         assertEquals(roots + if (expectReads) 6 else 0, fresh.platform.currentRootCalls)
-                        assertSame(view, field(fresh.service, "overlay").get(fresh.service))
+                        assertSame(view, field(fresh.service, "gateWindows").get(fresh.service))
                         assertEquals(token, field(fresh.service, "overlayToken").get(fresh.service))
                         assertEquals(token.ticket, field(fresh.service, "ticket").get(fresh.service))
                         if (!expectReads || behavior != RootBehavior.INSTAGRAM) {
@@ -949,8 +969,8 @@ class EntryGateServiceActionTest {
                 assertEquals(0, fresh.platform.routeCalls)
                 fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
                 fresh.platform.detachOnRemove = true
-                invoke(fresh.service, "attemptOverlayRemoval", token)
-                assertFalse(fresh.platform.isAttached(view as View))
+                runRemovalRetry(fresh.service, token)
+                assertTrue((view as GateOverlayWindows).allDetached())
                 assertEquals(1, fresh.platform.routeCalls)
                 assertTrue(gate(fresh.service).cooldownActive())
             } finally {
@@ -1520,10 +1540,10 @@ class EntryGateServiceActionTest {
     @Test fun removalExhaustionVetoesPendingHomeAndLateDetach() {
         val fixture = fixture(attached = true, detachOnRemove = false)
         request(fixture.service, OverlayRemovalAction.HOME, fixture.token)
-        waitFor { fixture.platform.removeAttempts >= 20 }
+        waitFor { (field(fixture.service, "gateWindows").get(fixture.service) as? GateOverlayWindows)?.degraded == true }
         assertEquals(0, fixture.platform.homeCalls)
         rule.scenario.onActivity { fixture.platform.attached = false }
-        rule.scenario.onActivity { invoke(fixture.service, "attemptOverlayRemoval", fixture.token) }
+        rule.scenario.onActivity { runRemovalRetry(fixture.service, fixture.token) }
         assertEquals(0, fixture.platform.homeCalls)
         assertFalse(gate(fixture.service).cooldownActive())
     }
@@ -1692,7 +1712,7 @@ class EntryGateServiceActionTest {
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 val timer = field(fresh.service, "sessionTimer").get(fresh.service) as InstagramSessionTimer
                 assertTrue(timer.running)
-                assertTrue(field(fresh.service, "overlay").get(fresh.service) != null)
+                assertTrue(field(fresh.service, "gateWindows").get(fresh.service) != null)
                 val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
                 requestOverlayRemovalWithToken(fresh.service, OverlayRemovalAction.HOME, token)
                 assertFalse(timer.running)
@@ -1763,7 +1783,7 @@ class EntryGateServiceActionTest {
                 assertTrue(fresh.platform.isAttached(view))
                 assertTrue(field(fresh.service, "timerClosing").getBoolean(fresh.service))
                 assertFalse(timer.running)
-                val retry = field(fresh.service, "timerRetry").get(fresh.service) as Runnable
+                val retry = pendingRetry(fresh.service, "timerRemovalLoop")
                 fresh.platform.detachOnRemove = true
                 retry.run()
                 assertEquals(null, field(fresh.service, "timerView").get(fresh.service))
@@ -1811,7 +1831,7 @@ class EntryGateServiceActionTest {
                 fresh.now[0] += 60_000L
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(EntryGateState.GATING, gate(fresh.service).state)
-                val retry = field(fresh.service, "timerRetry").get(fresh.service) as Runnable
+                val retry = pendingRetry(fresh.service, "timerRemovalLoop")
                 fresh.platform.rootBehavior = RootBehavior.MISSING
                 fresh.platform.detachOnRemove = true
                 retry.run()
@@ -2099,13 +2119,13 @@ class EntryGateServiceActionTest {
                 fresh.now[0] += 60_000L
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertEquals(EntryGateState.GATING, gate(fresh.service).state)
-                assertEquals(null, field(fresh.service, "overlay").get(fresh.service))
+                assertEquals(null, field(fresh.service, "gateWindows").get(fresh.service))
                 assertTrue(timer.running)
-                val retry = field(fresh.service, "timerRetry").get(fresh.service) as Runnable
+                val retry = pendingRetry(fresh.service, "timerRemovalLoop")
                 fresh.platform.detachOnRemove = true
                 retry.run()
                 assertEquals(null, field(fresh.service, "timerView").get(fresh.service))
-                assertTrue(field(fresh.service, "overlay").get(fresh.service) != null)
+                assertTrue(field(fresh.service, "gateWindows").get(fresh.service) != null)
                 fresh.now[0] += field(gate(fresh.service), "activeDurationMs").getLong(gate(fresh.service))
                 (field(fresh.service, "completion").get(fresh.service) as Runnable).run()
                 val resumed = field(fresh.service, "timerView").get(fresh.service)
@@ -2144,11 +2164,11 @@ class EntryGateServiceActionTest {
                 assertSame(pendingHandoff, field(fresh.service, "gateAfterTimerDetach").get(fresh.service))
                 assertSame(currentTicket, field(fresh.service, "ticket").get(fresh.service))
 
-                val retry = field(fresh.service, "timerRetry").get(fresh.service) as Runnable
+                val retry = pendingRetry(fresh.service, "timerRemovalLoop")
                 fresh.platform.detachOnRemove = true
                 retry.run()
                 assertEquals(EntryGateState.GATING, gate(fresh.service).state)
-                assertTrue(field(fresh.service, "overlay").get(fresh.service) != null)
+                assertTrue(field(fresh.service, "gateWindows").get(fresh.service) != null)
                 assertEquals(null, field(fresh.service, "timerView").get(fresh.service))
                 assertTrue(fresh.platform.attached)
             } finally {
@@ -2224,7 +2244,7 @@ class EntryGateServiceActionTest {
                 fresh.platform.detachOnRemove = false
                 fresh.platform.rootBehavior = RootBehavior.FOREIGN
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
-                val retry = field(fresh.service, "timerRetry").get(fresh.service) as Runnable
+                val retry = pendingRetry(fresh.service, "timerRemovalLoop")
                 fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 assertFalse(timer.running)
@@ -2288,22 +2308,377 @@ class EntryGateServiceActionTest {
                     fresh.platform.detachOnRemove = false
                     if (terminal == "exhaust") {
                         invoke(fresh.service, "endTimerSession")
-                        repeat(19) { (field(fresh.service, "timerRetry").get(fresh.service) as Runnable).run() }
+                        repeat(19) { pendingRetry(fresh.service, "timerRemovalLoop").run() }
                         assertTrue(field(fresh.service, "timerView").get(fresh.service) != null)
-                        assertFalse(Observation.connected)
+                        assertTrue(Observation.connected)
+                        assertTrue((field(fresh.service, "timerRemovalLoop").get(fresh.service) as OverlayRemovalRetryLoop).isPending)
                     } else when (terminal) {
                         "interrupt" -> fresh.service.onInterrupt()
                         "unbind" -> fresh.service.onUnbind(null)
                         else -> fresh.service.onDestroy()
                     }
                     assertFalse(timer.running)
-                    for (name in listOf("timerTick", "timerWatchdog", "timerRetry"))
+                    for (name in listOf("timerTick", "timerWatchdog"))
                         assertEquals(null, field(fresh.service, name).get(fresh.service))
                     fresh.platform.attached = false
+                    RetiringOverlayCleanup.reconcile()
                     invoke(fresh.service, "finishTimerDetach", field(fresh.service, "timerEpoch").getLong(fresh.service))
                     Observation.connected = true
                     sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                     assertFalse(fresh.platform.attached)
+                } finally { destroyFresh(fresh) }
+            }
+        }
+    }
+
+    @Test fun realInstallCreatesOnePassThroughVisualAndThreeBoundedActionWindows() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                assertEquals(4, episode.records.size)
+                assertEquals(4, fresh.added.size)
+                assertEquals(episode.ui.windowRoots, episode.records.map { it.view })
+                fresh.added.forEachIndexed { index, (_, p) ->
+                    assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, p.type)
+                    assertEquals(android.graphics.PixelFormat.TRANSLUCENT, p.format)
+                    assertTrue(p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0)
+                    assertTrue(p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL != 0)
+                    assertEquals(index == 0, p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
+                    assertTrue(p.width > 0 && p.height > 0)
+                    if (index > 0) assertTrue(p.width < fresh.added[0].second.width)
+                }
+                assertTrue(field(fresh.service, "completion").get(fresh.service) != null)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun layoutUpdateFailureClosesAllWindowsWithoutNewAdmission() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                var updates = 0
+                var fail = false
+                field(fresh.service, "overlayWindowUpdater").set(fresh.service,
+                    { _: WindowManager, _: View, _: WindowManager.LayoutParams ->
+                        updates++
+                        if (fail) throw IllegalStateException("synthetic layout failure")
+                    })
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                invoke(fresh.service, "updateGateLayout", episode, null)
+                assertEquals(4, updates)
+                fail = true
+                invoke(fresh.service, "updateGateLayout", episode, null)
+                assertTrue(episode.allDetached())
+                assertNull(field(fresh.service, "gateWindows").get(fresh.service))
+                assertEquals(1, fresh.installs)
+                assertEquals(0, fresh.platform.routeCalls + fresh.platform.homeCalls)
+                assertFalse(gate(fresh.service).cooldownActive())
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun partialInstallFailureIsStillOwned() {
+        rule.scenario.onActivity { activity ->
+            for (position in 1..4) for (attachThenThrow in listOf(false, true)) {
+                val fresh = freshService(activity, 1_000L)
+                try {
+                    var adds = 0
+                    val attempted = mutableListOf<View>()
+                    field(fresh.service, "overlayWindowInstaller").set(fresh.service,
+                        { _: WindowManager, view: View, _: WindowManager.LayoutParams ->
+                            adds++; attempted += view
+                            val episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                            assertSame(view, episode.records.last().view)
+                            assertTrue(episode.records.last().addAttempted)
+                            assertNull(field(fresh.service, "completion").get(fresh.service))
+                            if (adds != position || attachThenThrow) fresh.platform.attach(view)
+                            if (adds == position) throw IllegalStateException("synthetic add failure")
+                        })
+                    sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                    assertEquals(position, adds)
+                    attempted.forEach { assertFalse(fresh.platform.isAttached(it)) }
+                    assertNull(field(fresh.service, "gateWindows").get(fresh.service))
+                    assertNull(field(fresh.service, "completion").get(fresh.service))
+                    assertFalse(gate(fresh.service).cooldownActive())
+                    assertEquals(0, fresh.platform.homeCalls + fresh.platform.routeCalls + fresh.disableCalls)
+                } finally { destroyFresh(fresh) }
+            }
+        }
+    }
+
+    @Test fun partialAddsRecheckAuthorityBeforeArmingCompletion() {
+        rule.scenario.onActivity { activity ->
+            for (position in 1..4) {
+                val fresh = freshService(activity, 1_000L)
+                try {
+                    var adds = 0
+                    field(fresh.service, "overlayWindowInstaller").set(fresh.service,
+                        { _: WindowManager, view: View, _: WindowManager.LayoutParams ->
+                            fresh.platform.attach(view)
+                            assertNull(field(fresh.service, "completion").get(fresh.service))
+                            if (++adds == position) Observation.connected = false
+                        })
+                    sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                    assertEquals(position, adds)
+                    assertFalse(fresh.platform.attached)
+                    assertFalse(gate(fresh.service).cooldownActive())
+                    assertNull(field(fresh.service, "completion").get(fresh.service))
+                } finally { destroyFresh(fresh) }
+            }
+        }
+    }
+
+    @Test fun eachWiredButtonAndCompletionWaitForTheLastButtonWindow() {
+        rule.scenario.onActivity { activity ->
+            for (action in listOf("messages", "home", "debug", "complete")) {
+                val fresh = freshService(activity, 1_000L)
+                try {
+                    var copies = 0
+                    field(fresh.service, "copyHook").set(fresh.service,
+                        { _: SanitizedStructuralReport -> copies++; OverlayCopyResult.COPIED })
+                    sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                    val episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                    fresh.platform.heldView = episode.ui.leaveInstagram
+                    when (action) {
+                        "messages" -> assertTrue(episode.ui.skipToMessages.performClick())
+                        "home" -> assertTrue(episode.ui.leaveInstagram.performClick())
+                        "debug" -> assertTrue(episode.ui.debugReport.performClick())
+                        else -> {
+                            fresh.now[0] += 10_000L
+                            (field(fresh.service, "completion").get(fresh.service) as Runnable).run()
+                        }
+                    }
+                    assertFalse(fresh.platform.isAttached(episode.ui.visualRoot))
+                    assertTrue(fresh.platform.isAttached(episode.ui.leaveInstagram))
+                    assertSame(episode, field(fresh.service, "gateWindows").get(fresh.service))
+                    assertEquals(0, fresh.platform.routeCalls + fresh.platform.homeCalls + copies)
+                    assertFalse(gate(fresh.service).cooldownActive())
+                    assertNull(field(fresh.service, "timerView").get(fresh.service))
+                    val retry = pendingRetry(fresh.service, "removalLoop")
+                    fresh.platform.heldView = null
+                    retry.run(); retry.run()
+                    assertEquals(if (action == "messages") 1 else 0, fresh.platform.routeCalls)
+                    assertEquals(if (action == "home") 1 else 0, fresh.platform.homeCalls)
+                    assertEquals(if (action == "debug") 1 else 0, copies)
+                    assertEquals(action == "messages" || action == "complete", gate(fresh.service).cooldownActive())
+                } finally { destroyFresh(fresh) }
+            }
+        }
+    }
+
+    @Test fun fallbackUsesSavedIdentityAndInertParamsDespiteUpdateAndAddExceptions() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                lateinit var episode: GateOverlayWindows
+                val calls = mutableListOf<Pair<View, String>>()
+                val counts = java.util.IdentityHashMap<View, Int>()
+                fresh.platform.removeScript = { view ->
+                    calls += view to "remove"
+                    val count = (counts[view] ?: 0) + 1; counts[view] = count
+                    if (count == 1) throw IllegalStateException("first remove")
+                    fresh.platform.register(view, false)
+                }
+                field(fresh.service, "overlayWindowUpdater").set(fresh.service,
+                    { _: WindowManager, _: View, _: WindowManager.LayoutParams -> throw IllegalStateException("update") })
+                field(fresh.service, "overlayWindowInstaller").set(fresh.service,
+                    { _: WindowManager, view: View, p: WindowManager.LayoutParams ->
+                        if (p.alpha != 0f) {
+                            fresh.platform.attach(view)
+                        } else {
+                        calls += view to "add"
+                        assertTrue(episode.records.any { it.view === view })
+                        assertEquals(0f, p.alpha)
+                        assertTrue(p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
+                        assertTrue(p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0)
+                        assertFalse(view.isEnabled)
+                        throw IllegalStateException("already added")
+                        }
+                    })
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                assertTrue(episode.ui.skipToMessages.performClick())
+                episode.records.forEach { record ->
+                    assertEquals(listOf("remove", "add", "remove"), calls.filter { it.first === record.view }.map { it.second })
+                }
+                assertEquals(1, fresh.platform.routeCalls)
+                assertEquals(0, fresh.disableCalls)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun prolongedSlowClosingSurvivesMessagingStormWithoutDisableOrNewAuthority() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                RemovalTraceStore.process.arm(1_000L)
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                fresh.platform.detachOnRemove = false
+                episode.ui.skipToMessages.performClick()
+                repeat(19) { pendingRetry(fresh.service, "removalLoop").run() }
+                assertTrue(episode.degraded)
+                val slow = pendingRetry(fresh.service, "removalLoop")
+                val roots = fresh.platform.currentRootCalls
+                val adds = fresh.added.size
+                val removes = fresh.platform.removeAttempts
+                val snapshot = RemovalTraceStore.process.snapshot(1_000L)
+                fresh.platform.rootBehavior = RootBehavior.MESSAGING
+                repeat(200) { sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android") }
+                assertSame(slow, pendingRetry(fresh.service, "removalLoop"))
+                assertEquals(roots, fresh.platform.currentRootCalls)
+                assertEquals(adds, fresh.added.size); assertEquals(removes, fresh.platform.removeAttempts)
+                assertEquals(0, fresh.disableCalls + fresh.platform.routeCalls + fresh.platform.homeCalls)
+                assertTrue(Observation.connected)
+                assertFalse(gate(fresh.service).cooldownActive())
+                fresh.platform.detachOnRemove = true
+                slow.run()
+                assertNull(field(fresh.service, "gateWindows").get(fresh.service))
+                assertEquals(0, fresh.platform.routeCalls)
+                assertFalse(gate(fresh.service).cooldownActive())
+                assertEquals(snapshot, RemovalTraceStore.process.snapshot(1_000L))
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun staleCallbacksCannotCancelReplacementEpisodesPendingRemoval() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val old = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                val completion = field(fresh.service, "completion").get(fresh.service) as Runnable
+                fresh.platform.detachOnRemove = false
+                old.ui.skipToMessages.performClick()
+                val retry = pendingRetry(fresh.service, "removalLoop")
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                fresh.platform.detachOnRemove = true
+                retry.run()
+                // Reset the old session using a confirmed foreign root, then admit a new episode.
+                fresh.platform.rootBehavior = RootBehavior.FOREIGN
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.example.foreign")
+                fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val replacement = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                assertTrue(old.token != replacement.token)
+                fresh.platform.detachOnRemove = false
+                replacement.ui.leaveInstagram.performClick()
+                val pending = pendingRetry(fresh.service, "removalLoop")
+                val attempts = fresh.platform.removeAttempts
+                completion.run(); retry.run()
+                invoke(fresh.service, "attemptOverlayRemoval", old.token)
+                invoke(fresh.service, "confirmOverlayRemoved", old.token, true)
+                assertFalse(old.ui.skipToMessages.performClick())
+                assertSame(pending, pendingRetry(fresh.service, "removalLoop"))
+                assertEquals(attempts, fresh.platform.removeAttempts)
+                assertSame(replacement, field(fresh.service, "gateWindows").get(fresh.service))
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun explicitStopDefersDisableUntilAllWindowsDetach() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                fresh.platform.detachOnRemove = false
+                DoomAccessibilityService.disableObservation()
+                assertEquals(0, fresh.disableCalls)
+                assertTrue((field(fresh.service, "removalLoop").get(fresh.service) as OverlayRemovalRetryLoop).isPending)
+                fresh.platform.detachOnRemove = true
+                pendingRetry(fresh.service, "removalLoop").run()
+                assertEquals(1, fresh.disableCalls)
+                assertEquals(0, fresh.platform.routeCalls + fresh.platform.homeCalls)
+            } finally { destroyFresh(fresh) }
+            val empty = freshService(activity, 1_000L)
+            try { DoomAccessibilityService.disableObservation(); assertEquals(1, empty.disableCalls) }
+            finally { destroyFresh(empty) }
+        }
+    }
+
+    @Test fun stopOnReconnectedServiceWaitsForRetiredOwnerWithoutRetiredActionContinuation() {
+        rule.scenario.onActivity { activity ->
+            val old = freshService(activity, 1_000L)
+            var replacement: FreshService? = null
+            try {
+                sendEvent(old.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                old.platform.detachOnRemove = false
+                old.service.onUnbind(null)
+                val fresh = freshService(activity, 2_000L)
+                replacement = fresh
+                DoomAccessibilityService.disableObservation()
+                assertEquals(0, fresh.disableCalls)
+                pendingRetry(fresh.service, "removalLoop").run()
+                assertEquals(0, fresh.disableCalls)
+                old.platform.attached = false
+                RetiringOverlayCleanup.reconcile()
+                pendingRetry(fresh.service, "removalLoop").run()
+                assertEquals(1, fresh.disableCalls)
+                assertEquals(0, old.platform.routeCalls + old.platform.homeCalls)
+            } finally {
+                old.platform.attached = false
+                RetiringOverlayCleanup.reconcile()
+                replacement?.let(::destroyFresh)
+                destroyFresh(old)
+            }
+        }
+    }
+
+    @Test fun unknownGateOrTimerAttachmentCannotReleaseDeferredDisable() {
+        rule.scenario.onActivity { activity ->
+            for (timerOnly in listOf(false, true)) {
+                val fresh = freshService(activity, 1_000L)
+                try {
+                    if (timerOnly) startBubble(fresh)
+                    else sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                    fresh.platform.attachmentThrows = true
+                    DoomAccessibilityService.disableObservation()
+                    assertEquals(0, fresh.disableCalls)
+                    val loop = if (timerOnly) "timerRemovalLoop" else "removalLoop"
+                    val pending = pendingRetry(fresh.service, loop)
+                    pending.run()
+                    assertEquals(0, fresh.disableCalls)
+                    fresh.platform.attachmentThrows = false
+                    pendingRetry(fresh.service, loop).run()
+                    assertEquals(1, fresh.disableCalls)
+                } finally { fresh.platform.attachmentThrows = false; destroyFresh(fresh) }
+            }
+        }
+    }
+
+    @Test fun lifecycleRetainsOrTransfersExactlyOneRemovalOnlyChainAndBlocksReconnect() {
+        rule.scenario.onActivity { activity ->
+            for (terminal in listOf("interrupt", "unbind", "destroy")) {
+                val fresh = freshService(activity, 1_000L)
+                try {
+                    sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                    fresh.platform.detachOnRemove = false
+                    when (terminal) {
+                        "interrupt" -> fresh.service.onInterrupt()
+                        "unbind" -> fresh.service.onUnbind(null)
+                        else -> fresh.service.onDestroy()
+                    }
+                    assertEquals(0, fresh.disableCalls)
+                    val loop = field(fresh.service, "removalLoop").get(fresh.service) as OverlayRemovalRetryLoop
+                    assertEquals(terminal == "interrupt", loop.isPending)
+                    if (terminal != "interrupt") {
+                        assertTrue(RetiringOverlayCleanup.barrier.retiring)
+                        assertNull(field(fresh.service, "gateWindows").get(fresh.service))
+                        val replacement = freshService(activity, 2_000L)
+                        try {
+                            sendEvent(replacement.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                            assertEquals(0, replacement.installs)
+                            assertEquals(0, replacement.platform.currentRootCalls)
+                        } finally { destroyFresh(replacement) }
+                    }
+                    fresh.platform.attached = false
+                    RetiringOverlayCleanup.reconcile()
+                    if (terminal == "interrupt") pendingRetry(fresh.service, "removalLoop").run()
+                    assertFalse(RetiringOverlayCleanup.barrier.retiring)
+                    assertEquals(0, fresh.platform.routeCalls + fresh.platform.homeCalls)
                 } finally { destroyFresh(fresh) }
             }
         }
@@ -2320,6 +2695,7 @@ class EntryGateServiceActionTest {
         Observation.setGateConsent(activity, true)
         Observation.connected = true
         val service = DoomAccessibilityService()
+        field(service, "bound").setBoolean(service, true)
         ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
             .apply { isAccessible = true }.invoke(service, serviceContext)
         DoomAccessibilityService::class.java.getDeclaredField("instance")
@@ -2339,8 +2715,10 @@ class EntryGateServiceActionTest {
         fresh = FreshService(service, platform, now, initialMode)
         field(service, "overlayWindowInstaller").set(
             service,
-            { _: WindowManager, view: View, _: WindowManager.LayoutParams ->
-                fresh.installs++
+            { _: WindowManager, view: View, params: WindowManager.LayoutParams ->
+                fresh.added += view to WindowManager.LayoutParams().apply { copyFrom(params) }
+                // Count visible episodes (visual gate or timer), not recovery or button windows.
+                if (params.alpha != 0f && view !is android.widget.Button) fresh.installs++
                 when (fresh.installMode) {
                     InstallMode.SUCCEED -> platform.attach(view)
                     InstallMode.FAIL -> throw IllegalStateException("synthetic install failure")
@@ -2351,11 +2729,16 @@ class EntryGateServiceActionTest {
                 }
             }
         )
+        field(service, "overlayWindowUpdater").set(service,
+            { _: WindowManager, _: View, _: WindowManager.LayoutParams -> })
+        field(service, "disableService").set(service, { fresh.disableCalls++ })
         return fresh
     }
 
     private fun destroyFresh(fresh: FreshService) {
         try {
+            fresh.platform.attached = false
+            RetiringOverlayCleanup.reconcile()
             invoke(fresh.service, "cancelAndBypass")
         } finally {
             try {
@@ -2380,6 +2763,7 @@ class EntryGateServiceActionTest {
             Observation.setGateConsent(activity, true)
             Observation.connected = true
             val service = DoomAccessibilityService()
+            field(service, "bound").setBoolean(service, true)
             ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
                 .apply { isAccessible = true }.invoke(service, activity.applicationContext)
             DoomAccessibilityService::class.java.getDeclaredField("instance")
@@ -2395,7 +2779,6 @@ class EntryGateServiceActionTest {
             platform.stateReader = { entryGate.state }
             platform.revokeInsideRoot = { }
             field(service, "ticket").set(service, ticket)
-            field(service, "overlay").set(service, view)
             field(service, "windowManager").set(
                 service,
                 activity.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -2408,11 +2791,31 @@ class EntryGateServiceActionTest {
                 invoke(service, "requestDebugReport", token)
             })
             field(service, "overlayUi").set(service, ui)
+            val manager = activity.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val episode = GateOverlayWindows(token, ui).apply {
+                installing = false
+                records += OwnedOverlayWindow(view, manager, GateWindowRole.VISUAL,
+                    GateOverlayWindows.parameters(GateWindowDescriptor(GateWindowRole.VISUAL, GateWindowRect(0, 0, 100, 100))),
+                    platform, { _, root, _ -> platform.attach(root) }, { _, _, _ -> }).also { it.addAttempted = true }
+            }
+            field(service, "gateWindows").set(service, episode)
             result = Fixture(service, platform, ticket, token, view, ui, activity)
             manualFixtures += result
         }
         instrumentation.waitForIdleSync()
         return result
+    }
+
+    private fun runRemovalRetry(service: DoomAccessibilityService, token: OverlayCallbackToken) {
+        val loop = field(service, "removalLoop").get(service) as OverlayRemovalRetryLoop
+        val pending = field(loop, "pending").get(loop) as? Runnable
+        if (pending != null) pending.run() else invoke(service, "attemptOverlayRemoval", token)
+        RetiringOverlayCleanup.reconcile()
+    }
+
+    private fun pendingRetry(service: DoomAccessibilityService, name: String): Runnable {
+        val loop = field(service, name).get(service) as OverlayRemovalRetryLoop
+        return field(loop, "pending").get(loop) as Runnable
     }
 
     private fun request(
@@ -2442,7 +2845,7 @@ class EntryGateServiceActionTest {
             service,
             "requestOverlayRemoval",
             action,
-            token,
+            if (action == OverlayRemovalAction.PRESERVE_REPORT) null else token,
             cause,
             RemovalTraceEvent.NA,
             RemovalTraceOwner.NA,

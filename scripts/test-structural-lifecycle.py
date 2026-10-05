@@ -17,7 +17,7 @@ ACTIVITY = (REPO / "app/src/main/java/com/chardy/doom/MainActivity.kt").read_tex
 class StructuralLifecycleSourceTest(unittest.TestCase):
     def test_instagram_events_classify_visible_gate_but_preserve_closing_gate(self):
         event = SERVICE.split("// Suppression is checked", 1)[1].split('@Suppress', 1)[0]
-        keep = event.index("if (overlay != null) {")
+        keep = event.index("if (gateWindows != null) {")
         self.assertLess(event.index("entryGate.cooldownActive()"), keep)
         self.assertLess(event.index("!Observation.consent || !Observation.connected"), keep)
         visible = event[keep:event.index("if (timerClosing && timerTerminalReset) return")]
@@ -31,8 +31,8 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
     def test_revocation_preflight_covers_visible_overlay_and_running_timer(self):
         event = SERVICE.split("override fun onAccessibilityEvent", 1)[1].split('@Suppress', 1)[0]
         preflight = event.split("// Doom's own", 1)[0]
-        self.assertIn("if ((overlay != null || sessionTimer.running) &&", preflight)
-        self.assertNotIn("overlay != null || ticket != null", preflight)
+        self.assertIn("if ((gateWindows != null || sessionTimer.running) &&", preflight)
+        self.assertNotIn("gateWindows != null || ticket != null", preflight)
 
     def test_report_only_collection_requires_report_consent_and_connection_not_gate_consent(self):
         event = SERVICE.split("// Suppression is checked", 1)[1].split('@Suppress', 1)[0]
@@ -369,11 +369,15 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         removal = SERVICE.split("private fun requestOverlayRemoval", 1)[1].split(
             "private fun cancelAndBypass", 1
         )[0]
-        self.assertIn("overlayPlatform.removeImmediate", removal)
-        self.assertGreaterEqual(removal.count("overlayPlatform.isAttached(view)"), 2)
+        self.assertIn("OverlayWindowRemover.attempt(record", removal)
+        self.assertIn("episode.allDetached()", removal)
         self.assertIn("removalPolicy.failedAttempt()", removal)
-        self.assertIn("handler.postDelayed(it, REMOVAL_RETRY_INTERVAL_MS)", removal)
-        self.assertIn("disableSelf()", removal)
+        self.assertIn("removalLoop.schedule(", removal)
+        self.assertIn("REMOVAL_SLOW_RETRY_INTERVAL_MS", removal)
+        self.assertNotIn("disableSelf()", removal)
+        self.assertEqual(1, SERVICE.count("disableSelf()"))
+        self.assertNotIn("removeCallbacksAndMessages", SERVICE)
+        self.assertIn("RetiringOverlayCleanup.retire", SERVICE)
         self.assertIn("removalPolicy.confirmedDetached()", removal)
         self.assertLess(removal.index("confirmedDetached()"), removal.index("performHome"))
 
@@ -403,7 +407,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         )[0]
         self.assertIn("OverlayRemovalAction.PRESERVE_REPORT", own_events)
         self.assertIn("RemovalTraceMark.APP_RETURN", own_events)
-        self.assertNotIn("if (overlay != null)", own_events)
+        self.assertNotIn("if (gateWindows != null)", own_events)
         preserve = SERVICE.split("OverlayRemovalAction.PRESERVE_REPORT", 1)[1].split("OverlayRemovalAction.RESET_OUTSIDE", 1)[0]
         self.assertIn("mainActivityReturnObserved", preserve)
 
@@ -454,22 +458,31 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
 
     def test_messages_route_rechecks_token_consents_and_foreground_before_exact_query(self):
         import re
-        service = SERVICE[SERVICE.index("OverlayRemovalAction.NAVIGATE_MESSAGES", SERVICE.index("private fun confirmOverlayRemoved")):]
+        service = SERVICE.split("OverlayRemovalAction.NAVIGATE_MESSAGES ->", 1)[1].split(
+            "OverlayRemovalAction.PRESERVE_REPORT ->", 1
+        )[0]
         self.assertIn("detachedToken?.ticket", service)
         self.assertIn("ownsDetachedEpisode", service)
-        self.assertIn("Observation.gateConsent", service)
-        self.assertIn("Observation.consent", service)
-        self.assertIn("Observation.connected", service)
+        before_root = service.split("val root =", 1)[0]
+        self.assertRegex(before_root, r'if \(routeTicket == null \|\| !ownsDetachedEpisode \|\|\s*'
+                         r'!hasDetachedTerminalAuthority\(detachedToken, EntryGateState.GATING\)\s*'
+                         r'\) \{[^{}]*\breturn\s*\}')
         self.assertIn("currentRoot()", service)
         self.assertIn("safePackageToken(root.packageName) == INSTAGRAM", service)
         self.assertLess(service.index("hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)"), service.index("currentRoot()"))
-        authority = SERVICE.split("private fun hasDetachedTerminalAuthority", 1)[1]
+        authority = SERVICE.split("private fun hasDetachedTerminalAuthority", 1)[1].split(
+            "private fun cancelCurrentGatingTicket", 1
+        )[0]
         self.assertIn("token.ticket == ticket", authority)
         self.assertIn("callbackGuard.acceptsDetached(token)", authority)
-        self.assertLess(service.index("currentRoot()"), service.index("routeMessages(root)"))
-        route_only = service.split("OverlayRemovalAction.NAVIGATE_MESSAGES", 1)[1].split(
-            "OverlayRemovalAction.PRESERVE_REPORT", 1
+        self.assertRegex(authority, r'&&\s*timerConsentAllowed\(\)\s*&&')
+        consent = SERVICE.split("private fun timerConsentAllowed()", 1)[1].split(
+            "private fun timerSpecificAllowed", 1
         )[0]
+        self.assertRegex(consent, r': Boolean =\s*Observation\.consent\s*&&\s*'
+                         r'Observation\.gateConsent\s*&&\s*Observation\.connected\s*&&')
+        self.assertLess(service.index("currentRoot()"), service.index("routeMessages(root)"))
+        route_only = service
         for forbidden in ("viewIdResourceName", "contentDescription", "childCount",
                           "getChild", "findAccessibilityNodeInfosByText", "dispatchGesture"):
             self.assertNotIn(forbidden, route_only)
@@ -512,11 +525,10 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("minHeight", OVERLAY_VIEW)
         self.assertNotIn("LinearLayout.LayoutParams(-1, dp(48))", OVERLAY_VIEW)
         self.assertNotIn("LinearLayout.LayoutParams(-1, dp(52))", OVERLAY_VIEW)
-        self.assertIn("systemWindowInsetLeft", OVERLAY_VIEW)
-        self.assertIn("systemWindowInsetTop", OVERLAY_VIEW)
-        self.assertIn("systemWindowInsetRight", OVERLAY_VIEW)
-        self.assertIn("systemWindowInsetBottom", OVERLAY_VIEW)
-        self.assertIn("displayCutout", OVERLAY_VIEW)
+        self.assertIn("InstagramTimerOverlayViewFactory.safeInsets(manager, insets)", SERVICE)
+        self.assertIn("GateOverlayWindowLayout.calculate", SERVICE)
+        self.assertIn("View.MeasureSpec.UNSPECIFIED", SERVICE)
+        self.assertNotIn("ScrollView(context)", OVERLAY_VIEW)
         self.assertNotIn('contentDescription = "Diagnostic status"', OVERLAY_VIEW)
         for required in ('"Breathe in"', '"Skip to Messages"', '"Leave Instagram"', '"Capture debug"', "PixelBreathingView", "SegmentedBreathProgressView"):
             self.assertIn(required, OVERLAY_VIEW)
@@ -547,9 +559,13 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("if(lastPhase!=model.frame.label)", OVERLAY_VIEW)
 
     def test_native_overlay_restores_root_and_heading_accessibility(self):
-        self.assertIn('contentDescription="Instagram diagnostic pause"', OVERLAY_VIEW)
-        self.assertIn("isFocusable=true", OVERLAY_VIEW)
-        self.assertIn("isAccessibilityHeading=true", OVERLAY_VIEW)
+        self.assertIn("Color.TRANSPARENT", OVERLAY_VIEW)
+        self.assertIn("isFocusable=false", OVERLAY_VIEW)
+        self.assertIn("val windowRoots:List<View> = listOf(visualRoot,skipToMessages,leaveInstagram,debugReport)", OVERLAY_VIEW)
+        owner = (REPO / "app/src/main/java/com/chardy/doom/GateOverlayWindows.kt").read_text()
+        self.assertIn("FLAG_NOT_TOUCHABLE", owner)
+        self.assertIn("PixelFormat.TRANSLUCENT", owner)
+        self.assertNotIn("MATCH_PARENT", owner)
 
     def test_direct_return_closes_visible_callbacks_before_preserving_report(self):
         own_events = SERVICE.split("RemovalTraceMark.APP_RETURN", 1)[0]

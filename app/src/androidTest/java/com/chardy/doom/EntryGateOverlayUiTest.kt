@@ -7,7 +7,10 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
-import android.widget.ScrollView
+import android.widget.FrameLayout
+import android.widget.TextView
+import android.graphics.Color
+import org.junit.Assert.assertNull
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -58,10 +61,12 @@ class EntryGateOverlayUiTest {
         }
         rule.scenario.onActivity {
             val actual = requireNotNull(ui)
-            assertEquals(BreathingVisuals.INK, (actual.root.background as ColorDrawable).color)
-            assertEquals("Instagram diagnostic pause", actual.root.contentDescription)
-            assertTrue(actual.phaseLabel.isFocusable)
-            assertTrue(actual.phaseLabel.isAccessibilityHeading)
+            assertEquals(Color.TRANSPARENT, (actual.visualRoot.background as ColorDrawable).color)
+            assertNull(actual.visualRoot.contentDescription)
+            assertFalse(actual.visualRoot.isClickable)
+            assertFalse(actual.phaseLabel.isFocusable)
+            assertEquals(4, actual.windowRoots.size)
+            actual.windowRoots.drop(1).forEach { button -> assertNull(button.parent) }
             assertTrue(actual.skipToMessages.minimumHeight >= (48 * it.resources.displayMetrics.density).toInt())
             assertTrue(actual.skipToMessages.isFocusable)
             assertTrue(actual.skipToMessages.isClickable)
@@ -89,32 +94,20 @@ class EntryGateOverlayUiTest {
                 val width = (widthDp * density).toInt()
                 val height = (heightDp * density).toInt()
                 val ui = EntryGateOverlayViewFactory.create(context, {}, {}, {})
-                ui.root.measure(
-                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
-                )
-                ui.root.layout(0, 0, width, height)
-                assertTrue(ui.skipToMessages.measuredHeight >= (48 * density).toInt())
-                assertTrue(ui.leaveInstagram.measuredHeight >= (48 * density).toInt())
-                val scroll = ui.root as ScrollView
-                val body = scroll.getChildAt(0) as ViewGroup
-                if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                    assertTrue(ui.skipToMessages.bottom <= scroll.height - scroll.paddingBottom)
-                    assertTrue(ui.leaveInstagram.bottom <= scroll.height - scroll.paddingBottom)
+                val actionWidth = GateOverlayWindowLayout.actionWidth(width, GateSafeInsets(), density)
+                val heights = ui.windowRoots.drop(1).map { button ->
+                    button.measure(View.MeasureSpec.makeMeasureSpec(actionWidth, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                    assertTrue(button.measuredHeight >= (48 * density).toInt())
+                    assertNull(button.parent)
+                    button.measuredHeight
                 }
-                fun assertReachable(action: View) {
-                    val topInContent = body.top + action.top
-                    val bottomInContent = body.top + action.bottom
-                    val maxScroll = (body.height - scroll.height).coerceAtLeast(0)
-                    val targetScroll = (bottomInContent - (scroll.height - scroll.paddingBottom))
-                        .coerceIn(0, maxScroll)
-                    scroll.scrollTo(0, targetScroll)
-                    assertTrue(topInContent >= scroll.scrollY + scroll.paddingTop)
-                    assertTrue(bottomInContent <= scroll.scrollY + scroll.height - scroll.paddingBottom)
+                val layout = GateOverlayWindowLayout.calculate(width, height, GateSafeInsets(), density, heights)
+                if (orientation == Configuration.ORIENTATION_LANDSCAPE) assertNull(layout)
+                layout?.drop(1)?.forEach { (_, bounds) ->
+                    assertTrue(bounds.width > 0 && bounds.width < width)
+                    assertTrue(bounds.y >= 0 && bounds.y + bounds.height <= height)
                 }
-                assertReachable(ui.skipToMessages)
-                assertReachable(ui.leaveInstagram)
-                assertReachable(ui.debugReport)
                 ui.dispose()
                 val timerUi = InstagramTimerOverlayViewFactory.create(context, {}, {}, { _, _ -> }, {})
                 timerUi.render(InstagramTimerModel("1:23:45", "Instagram time, 1 hour, 23 minutes, 45 seconds", false, true))
@@ -237,11 +230,53 @@ class EntryGateOverlayUiTest {
         }
     }
 
+    /** Synthetic composition of the four roots; this is not WindowManager/input evidence. */
+    private fun mountSeparateRoots(activity: MainActivity, ui: EntryGateOverlayUi) {
+        val content = activity.findViewById<FrameLayout>(android.R.id.content)
+        val density = activity.resources.displayMetrics.density
+        val safe = InstagramTimerOverlayViewFactory.safeInsets(activity.windowManager, content.rootWindowInsets)
+        val insets = GateSafeInsets(safe.left, safe.top, safe.right, safe.bottom)
+        val width = content.width; val height = content.height
+        val actionWidth = GateOverlayWindowLayout.actionWidth(width, insets, density)
+        val heights = ui.windowRoots.drop(1).map { root ->
+            root.measure(View.MeasureSpec.makeMeasureSpec(actionWidth.coerceAtLeast(1), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            root.measuredHeight
+        }
+        val layout = GateOverlayWindowLayout.calculate(width, height, insets, density, heights)
+        if (layout == null) {
+            ui.dispose()
+            content.addView(TextView(activity).apply {
+                tag = "wil235-fail-open"
+                text = "Doom-owned test: reminder hidden because three accessible actions do not fit."
+            })
+            return
+        }
+        layout.zip(ui.windowRoots).forEach { (descriptor, root) ->
+            val b = descriptor.bounds
+            content.addView(root, FrameLayout.LayoutParams(b.width, b.height).apply { leftMargin=b.x; topMargin=b.y })
+        }
+    }
+
+    @Test fun closeAndDisposeRemoveAllButtonListenersAndStopRendering() {
+        rule.scenario.onActivity { activity ->
+            var taps = 0
+            val ui = EntryGateOverlayViewFactory.create(activity, { taps++ }, { taps++ }, { taps++ })
+            ui.windowRoots.drop(1).forEach { assertTrue(it.performClick()) }
+            assertEquals(3, taps)
+            ui.closeInteraction(); ui.closeInteraction()
+            ui.windowRoots.drop(1).forEach { assertFalse(it.isEnabled); assertFalse(it.performClick()) }
+            val phase = ui.phaseLabel.text.toString()
+            ui.render(EntryGateOverlayModel.from(0, 10_000, true))
+            assertEquals(phase, ui.phaseLabel.text.toString())
+            ui.dispose(); ui.dispose(); assertEquals(3, taps)
+        }
+    }
+
     private fun mount(assign: (EntryGateOverlayUi) -> Unit) {
         activeScenario.onActivity { activity ->
             val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
-            activity.findViewById<ViewGroup>(android.R.id.content)
-                .addView(ui.root, ViewGroup.LayoutParams(-1, -1))
+            mountSeparateRoots(activity, ui)
             assign(ui)
         }
         instrumentation.waitForIdleSync()
@@ -250,7 +285,9 @@ class EntryGateOverlayUiTest {
     private fun unmount(ui: EntryGateOverlayUi?) {
         activeScenario.onActivity {
             ui?.dispose()
-            ui?.root?.let { root -> (root.parent as? ViewGroup)?.removeView(root) }
+            ui?.windowRoots?.forEach { root -> (root.parent as? ViewGroup)?.removeView(root) }
+            val content = it.findViewById<ViewGroup>(android.R.id.content)
+            content.findViewWithTag<View>("wil235-fail-open")?.let(content::removeView)
         }
         instrumentation.waitForIdleSync()
     }
@@ -270,7 +307,14 @@ class EntryGateOverlayUiTest {
                 assertEquals("Breathe in", actual.phaseLabel.text)
             }
             if (name == "04-reminder-exhale") assertEquals("Breathe out", actual.phaseLabel.text)
-            assertTrue(actual.root.parent != null)
+            if (actual.visualRoot.parent == null) {
+                // Oversized/landscape synthetic capture deliberately shows the fail-open state.
+                assertTrue(actual.windowRoots.all { root -> root.parent == null })
+                assertFalse(actual.skipToMessages.isEnabled)
+                assertNotNull(it.findViewById<ViewGroup>(android.R.id.content).findViewWithTag<View>("wil235-fail-open"))
+            } else {
+                assertTrue(actual.windowRoots.all { root -> root.parent != null })
+            }
         }
         assertTopResumed()
         waitForDraw(activeScenario)
