@@ -458,22 +458,31 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
 
     def test_messages_route_rechecks_token_consents_and_foreground_before_exact_query(self):
         import re
-        service = SERVICE[SERVICE.index("OverlayRemovalAction.NAVIGATE_MESSAGES", SERVICE.index("private fun confirmOverlayRemoved")):]
+        service = SERVICE.split("OverlayRemovalAction.NAVIGATE_MESSAGES ->", 1)[1].split(
+            "OverlayRemovalAction.PRESERVE_REPORT ->", 1
+        )[0]
         self.assertIn("detachedToken?.ticket", service)
         self.assertIn("ownsDetachedEpisode", service)
-        self.assertIn("Observation.gateConsent", service)
-        self.assertIn("Observation.consent", service)
-        self.assertIn("Observation.connected", service)
+        before_root = service.split("val root =", 1)[0]
+        self.assertRegex(before_root, r'if \(routeTicket == null \|\| !ownsDetachedEpisode \|\|\s*'
+                         r'!hasDetachedTerminalAuthority\(detachedToken, EntryGateState.GATING\)\s*'
+                         r'\) \{[^{}]*\breturn\s*\}')
         self.assertIn("currentRoot()", service)
         self.assertIn("safePackageToken(root.packageName) == INSTAGRAM", service)
         self.assertLess(service.index("hasDetachedTerminalAuthority(detachedToken, EntryGateState.GATING)"), service.index("currentRoot()"))
-        authority = SERVICE.split("private fun hasDetachedTerminalAuthority", 1)[1]
+        authority = SERVICE.split("private fun hasDetachedTerminalAuthority", 1)[1].split(
+            "private fun cancelCurrentGatingTicket", 1
+        )[0]
         self.assertIn("token.ticket == ticket", authority)
         self.assertIn("callbackGuard.acceptsDetached(token)", authority)
-        self.assertLess(service.index("currentRoot()"), service.index("routeMessages(root)"))
-        route_only = service.split("OverlayRemovalAction.NAVIGATE_MESSAGES", 1)[1].split(
-            "OverlayRemovalAction.PRESERVE_REPORT", 1
+        self.assertRegex(authority, r'&&\s*timerConsentAllowed\(\)\s*&&')
+        consent = SERVICE.split("private fun timerConsentAllowed()", 1)[1].split(
+            "private fun timerSpecificAllowed", 1
         )[0]
+        self.assertRegex(consent, r': Boolean =\s*Observation\.consent\s*&&\s*'
+                         r'Observation\.gateConsent\s*&&\s*Observation\.connected\s*&&')
+        self.assertLess(service.index("currentRoot()"), service.index("routeMessages(root)"))
+        route_only = service
         for forbidden in ("viewIdResourceName", "contentDescription", "childCount",
                           "getChild", "findAccessibilityNodeInfosByText", "dispatchGesture"):
             self.assertNotIn(forbidden, route_only)
