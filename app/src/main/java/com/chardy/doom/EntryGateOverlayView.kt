@@ -3,6 +3,8 @@ package com.chardy.doom
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.InsetDrawable
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.os.Build
@@ -72,6 +74,11 @@ internal class EntryGateOverlayUi(val visualRoot:View,val phaseLabel:TextView,va
   pixel.render(presentation.bloom,false);progress.render(elapsedMs,durationMs)
  }
  internal fun snapshot()=OverlayRenderSnapshot(phaseLabel.text.toString(),pixel.renderedProgress,progress.fractions())
+ fun layoutBackdrop(left:Int,top:Int,right:Int,bottom:Int){
+  if(closed)return
+  // Cover the app area while preserving the system/keyboard/gesture escape regions.
+  visualRoot.background=InsetDrawable(ColorDrawable(BreathingVisuals.INK),left,top,right,bottom)
+ }
  fun layoutDecoration(left:Int,top:Int,width:Int,height:Int){
   if(closed)return
   val decoration=(visualRoot as FrameLayout).getChildAt(0)

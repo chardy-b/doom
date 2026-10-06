@@ -10,6 +10,8 @@ import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import org.junit.Assert.assertNull
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.rules.ActivityScenarioRule
@@ -76,6 +78,37 @@ class EntryGateOverlayUiTest {
             assertTrue(actual.debugReport.isClickable)
             actual.dispose()
             (actual.root.parent as? ViewGroup)?.removeView(actual.root)
+        }
+    }
+
+    @Test fun breathingBackdropIsOpaqueOnlyInsideSafeAppArea() {
+        rule.scenario.onActivity { activity ->
+            val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
+            val root = ui.visualRoot
+            root.measure(View.MeasureSpec.makeMeasureSpec(1_000, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(1_000, View.MeasureSpec.EXACTLY))
+            root.layout(0, 0, 1_000, 1_000)
+            fun pixelAt(x: Int, y: Int): Int {
+                val bitmap = Bitmap.createBitmap(1_000, 1_000, Bitmap.Config.ARGB_8888)
+                return try { root.draw(Canvas(bitmap)); bitmap.getPixel(x, y) } finally { bitmap.recycle() }
+            }
+            ui.layoutBackdrop(16, 32, 20, 64)
+            assertEquals(BreathingVisuals.INK, pixelAt(50, 500))
+            assertEquals(Color.TRANSPARENT, pixelAt(8, 500))
+            assertEquals(Color.TRANSPARENT, pixelAt(500, 16))
+            assertEquals(Color.TRANSPARENT, pixelAt(990, 500))
+            assertEquals(Color.TRANSPARENT, pixelAt(500, 980))
+            // A newly delivered keyboard inset must uncover that region as well.
+            ui.layoutBackdrop(16, 32, 20, 300)
+            assertEquals(Color.TRANSPARENT, pixelAt(50, 750))
+            assertEquals(BreathingVisuals.INK, pixelAt(50, 500))
+            assertFalse(root.isClickable)
+            assertFalse(root.isFocusable)
+            val backdrop = root.background
+            ui.closeInteraction()
+            ui.layoutBackdrop(0, 0, 0, 0)
+            assertTrue(backdrop === root.background)
+            ui.dispose()
         }
     }
 
@@ -252,6 +285,7 @@ class EntryGateOverlayUiTest {
             })
             return
         }
+        ui.layoutBackdrop(safe.left, safe.top, safe.right, safe.bottom)
         layout.zip(ui.windowRoots).forEach { (descriptor, root) ->
             val b = descriptor.bounds
             content.addView(root, FrameLayout.LayoutParams(b.width, b.height).apply { leftMargin=b.x; topMargin=b.y })

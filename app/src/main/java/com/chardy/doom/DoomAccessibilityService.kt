@@ -1055,6 +1055,7 @@ class DoomAccessibilityService : AccessibilityService() {
             button.measuredHeight
         }
         val layout = GateOverlayWindowLayout.calculate(frame.width(), frame.height(), margins, density, heights) ?: return null
+        ui.layoutBackdrop(safe.left, safe.top, safe.right, safe.bottom)
         val decorationWidth = minOf(240.dp(), frame.width() - safe.left - safe.right - 32.dp()).coerceAtLeast(1)
         val decorationHeight = minOf(240.dp(), layout[1].bounds.y - safe.top - 32.dp()).coerceAtLeast(1)
         ui.layoutDecoration(safe.left + (frame.width() - safe.left - safe.right - decorationWidth) / 2,
