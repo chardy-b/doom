@@ -1076,6 +1076,10 @@ class DoomAccessibilityService : AccessibilityService() {
                 if (OverlayWindowRemover.attachment(record) != OverlayAttachment.ATTACHED)
                     throw IllegalStateException("Gate window no longer attached")
                 val params = GateOverlayWindows.parameters(descriptor)
+                val unchanged = record.params?.let { current ->
+                    WindowManager.LayoutParams().apply { copyFrom(current) }.copyFrom(params) == 0
+                } ?: false
+                if (unchanged) return@forEach
                 record.params = WindowManager.LayoutParams().apply { copyFrom(params) }
                 overlayWindowUpdater(manager, record.view, params)
             }

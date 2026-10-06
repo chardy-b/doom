@@ -76,6 +76,9 @@ internal class EntryGateOverlayUi(val visualRoot:View,val phaseLabel:TextView,va
  fun layoutDecoration(left:Int,top:Int,width:Int,height:Int){
   if(closed)return
   val decoration=(visualRoot as FrameLayout).getChildAt(0)
+  val current=decoration.layoutParams as FrameLayout.LayoutParams
+  if(current.width==width&&current.height==height&&current.leftMargin==left&&current.topMargin==top&&
+     current.rightMargin==0&&current.bottomMargin==0&&current.gravity==(Gravity.TOP or Gravity.LEFT))return
   decoration.layoutParams=FrameLayout.LayoutParams(width,height,Gravity.TOP or Gravity.LEFT).apply{leftMargin=left;topMargin=top}
  }
  fun closeInteraction(){
