@@ -63,7 +63,7 @@ class EntryGateOverlayUiTest {
         }
         rule.scenario.onActivity {
             val actual = requireNotNull(ui)
-            assertEquals(Color.TRANSPARENT, (actual.visualRoot.background as ColorDrawable).color)
+            assertEquals(BreathingVisuals.INK, (actual.visualRoot.background as ColorDrawable).color)
             assertNull(actual.visualRoot.contentDescription)
             assertFalse(actual.visualRoot.isClickable)
             assertFalse(actual.phaseLabel.isFocusable)
@@ -81,7 +81,7 @@ class EntryGateOverlayUiTest {
         }
     }
 
-    @Test fun breathingBackdropIsOpaqueOnlyInsideSafeAppArea() {
+    @Test fun originalBreathingPresentationHasSolidFullWindowBackground() {
         rule.scenario.onActivity { activity ->
             val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
             val root = ui.visualRoot
@@ -92,23 +92,21 @@ class EntryGateOverlayUiTest {
                 val bitmap = Bitmap.createBitmap(1_000, 1_000, Bitmap.Config.ARGB_8888)
                 return try { root.draw(Canvas(bitmap)); bitmap.getPixel(x, y) } finally { bitmap.recycle() }
             }
-            ui.layoutBackdrop(16, 32, 20, 64)
-            assertEquals(listOf(0, 0, 0, 0), listOf(root.paddingLeft, root.paddingTop, root.paddingRight, root.paddingBottom))
             assertEquals(BreathingVisuals.INK, pixelAt(50, 500))
-            assertEquals(Color.TRANSPARENT, pixelAt(8, 500))
-            assertEquals(Color.TRANSPARENT, pixelAt(500, 16))
-            assertEquals(Color.TRANSPARENT, pixelAt(990, 500))
-            assertEquals(Color.TRANSPARENT, pixelAt(500, 980))
-            // A newly delivered keyboard inset must uncover that region as well.
-            ui.layoutBackdrop(16, 32, 20, 300)
-            assertEquals(Color.TRANSPARENT, pixelAt(50, 750))
-            assertEquals(BreathingVisuals.INK, pixelAt(50, 500))
+            assertEquals(BreathingVisuals.INK, pixelAt(8, 500))
+            assertEquals(BreathingVisuals.INK, pixelAt(500, 16))
+            assertEquals(BreathingVisuals.INK, pixelAt(990, 500))
+            assertEquals(BreathingVisuals.INK, pixelAt(500, 980))
+            assertEquals(Color.TRANSPARENT, (ui.debugReport.background as ColorDrawable).color)
+            val expectedTextSize = if (activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 24f else 32f
+            assertEquals(expectedTextSize * activity.resources.displayMetrics.scaledDensity, ui.phaseLabel.textSize, 0.01f)
             assertFalse(root.isClickable)
             assertFalse(root.isFocusable)
-            val backdrop = root.background
+            val decoration = (root as FrameLayout).getChildAt(0)
+            val positioning = decoration.layoutParams
             ui.closeInteraction()
-            ui.layoutBackdrop(0, 0, 0, 0)
-            assertTrue(backdrop === root.background)
+            ui.layoutDecoration(0, 0, 1, 1)
+            assertTrue(positioning === decoration.layoutParams)
             ui.dispose()
         }
     }
@@ -286,7 +284,10 @@ class EntryGateOverlayUiTest {
             })
             return
         }
-        ui.layoutBackdrop(safe.left, safe.top, safe.right, safe.bottom)
+        val verticalPadding = ((if (activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 8 else 20) * density).toInt()
+        ui.layoutDecoration(safe.left + (20 * density).toInt(), safe.top + verticalPadding,
+            (width - safe.left - safe.right - (40 * density).toInt()).coerceAtLeast(1),
+            (layout[1].bounds.y - safe.top - verticalPadding - (16 * density).toInt()).coerceAtLeast(1))
         layout.zip(ui.windowRoots).forEach { (descriptor, root) ->
             val b = descriptor.bounds
             content.addView(root, FrameLayout.LayoutParams(b.width, b.height).apply { leftMargin=b.x; topMargin=b.y })

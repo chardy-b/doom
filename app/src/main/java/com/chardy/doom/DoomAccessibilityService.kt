@@ -1055,11 +1055,10 @@ class DoomAccessibilityService : AccessibilityService() {
             button.measuredHeight
         }
         val layout = GateOverlayWindowLayout.calculate(frame.width(), frame.height(), margins, density, heights) ?: return null
-        ui.layoutBackdrop(safe.left, safe.top, safe.right, safe.bottom)
-        val decorationWidth = minOf(240.dp(), frame.width() - safe.left - safe.right - 32.dp()).coerceAtLeast(1)
-        val decorationHeight = minOf(240.dp(), layout[1].bounds.y - safe.top - 32.dp()).coerceAtLeast(1)
-        ui.layoutDecoration(safe.left + (frame.width() - safe.left - safe.right - decorationWidth) / 2,
-            safe.top + 16.dp(), decorationWidth, decorationHeight)
+        val verticalPadding = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) 8.dp() else 20.dp()
+        val decorationWidth = (frame.width() - safe.left - safe.right - 40.dp()).coerceAtLeast(1)
+        val decorationHeight = (layout[1].bounds.y - safe.top - verticalPadding - 16.dp()).coerceAtLeast(1)
+        ui.layoutDecoration(safe.left + 20.dp(), safe.top + verticalPadding, decorationWidth, decorationHeight)
         return layout
     }
 

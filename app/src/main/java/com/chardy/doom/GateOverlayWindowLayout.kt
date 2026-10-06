@@ -13,7 +13,7 @@ internal data class GateSafeInsets(val left: Int = 0, val top: Int = 0, val righ
 /** Scalar geometry only. Failure means remove the episode, never shrink accessible targets. */
 internal object GateOverlayWindowLayout {
     fun actionWidth(width: Int, insets: GateSafeInsets, density: Float): Int =
-        minOf((320 * density).toInt(), width - insets.left - insets.right - (32 * density).toInt())
+        width - insets.left - insets.right - (40 * density).toInt()
 
     fun calculate(width: Int, height: Int, insets: GateSafeInsets, density: Float,
                   buttonHeights: List<Int>): List<GateWindowDescriptor>? {
