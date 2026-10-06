@@ -93,6 +93,7 @@ class EntryGateOverlayUiTest {
                 return try { root.draw(Canvas(bitmap)); bitmap.getPixel(x, y) } finally { bitmap.recycle() }
             }
             ui.layoutBackdrop(16, 32, 20, 64)
+            assertEquals(listOf(0, 0, 0, 0), listOf(root.paddingLeft, root.paddingTop, root.paddingRight, root.paddingBottom))
             assertEquals(BreathingVisuals.INK, pixelAt(50, 500))
             assertEquals(Color.TRANSPARENT, pixelAt(8, 500))
             assertEquals(Color.TRANSPARENT, pixelAt(500, 16))

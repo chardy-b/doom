@@ -78,6 +78,8 @@ internal class EntryGateOverlayUi(val visualRoot:View,val phaseLabel:TextView,va
   if(closed)return
   // Cover the app area while preserving the system/keyboard/gesture escape regions.
   visualRoot.background=InsetDrawable(ColorDrawable(BreathingVisuals.INK),left,top,right,bottom)
+  // Drawable insets must not offset the separately positioned decoration.
+  visualRoot.setPadding(0,0,0,0)
  }
  fun layoutDecoration(left:Int,top:Int,width:Int,height:Int){
   if(closed)return
