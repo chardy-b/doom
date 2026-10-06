@@ -53,6 +53,7 @@ internal data class ShadowClassificationInput(
     val selectedResourceIds: Set<String>,
     val scrollableResourceIds: Set<String>,
     val truncated: Boolean,
+    val possiblyVisibleResourceIds: Set<String> = resourceIds,
 )
 
 /** One immutable, ASCII-only v2 report. It contains copied scalar metadata only. */
@@ -161,14 +162,20 @@ class SanitizedStructuralReport private constructor(
                 val id = node.resourceId?.takeIf { it in admitted } ?: return@mapNotNull null
                 node to id
             }
+            // Retained hidden fragments are not the current surface. Unknown/error
+            // visibility remains eligible, including messaging omitted from text rows.
+            val possiblyVisibleRows = shadowRows.filterNot {
+                it.first.hasKnownFalseFlag(StructuralBooleanField.VISIBLE_TO_USER)
+            }
             return SanitizedStructuralReport(
                 text,
                 reasons.isNotEmpty(),
                 ShadowClassificationInput(
                     shadowRows.map { it.second }.toSet(),
-                    shadowRows.filter { it.first.hasFlag(StructuralBooleanField.SELECTED) }.map { it.second }.toSet(),
-                    shadowRows.filter { it.first.hasFlag(StructuralBooleanField.SCROLLABLE) }.map { it.second }.toSet(),
+                    possiblyVisibleRows.filter { it.first.hasFlag(StructuralBooleanField.SELECTED) }.map { it.second }.toSet(),
+                    possiblyVisibleRows.filter { it.first.hasFlag(StructuralBooleanField.SCROLLABLE) }.map { it.second }.toSet(),
                     reasons.isNotEmpty(),
+                    possiblyVisibleRows.map { it.second }.toSet(),
                 ),
             )
         }
@@ -259,6 +266,10 @@ class SanitizedStructuralReport private constructor(
         private fun StructuralNodeMetadata.hasFlag(field: StructuralBooleanField): Boolean {
             val bit = 1L shl field.ordinal
             return flags.known and bit != 0L && flags.value and bit != 0L
+        }
+        private fun StructuralNodeMetadata.hasKnownFalseFlag(field: StructuralBooleanField): Boolean {
+            val bit = 1L shl field.ordinal
+            return flags.known and bit != 0L && flags.value and bit == 0L && flags.error and bit == 0L
         }
     }
 

@@ -50,6 +50,7 @@ class EntryGateServiceActionTest {
     private enum class RootBehavior {
         INSTAGRAM,
         MESSAGING,
+        HIDDEN_MESSAGING,
         NULL_PACKAGE,
         FOREIGN,
         SYSTEM_UI,
@@ -155,8 +156,9 @@ class EntryGateServiceActionTest {
                     RootBehavior.DOOM -> "com.chardyb.doom"
                     else -> "com.instagram.android"
                 }
-                if (rootBehavior == RootBehavior.MESSAGING) {
+                if (rootBehavior == RootBehavior.MESSAGING || rootBehavior == RootBehavior.HIDDEN_MESSAGING) {
                     viewIdResourceName = "com.instagram.android:id/message_list"
+                    isVisibleToUser = rootBehavior == RootBehavior.MESSAGING
                 }
             }
         }
@@ -700,6 +702,31 @@ class EntryGateServiceActionTest {
                 assertEquals(0, fresh.installs)
                 assertEquals(0, fresh.platform.routeCalls)
             } finally { Observation.connected = true; destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun hiddenMessagingDoesNotSuppressEntryButVisibleMessagingStillWaitsForDetach() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                fresh.platform.rootBehavior = RootBehavior.HIDDEN_MESSAGING
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertEquals(1, fresh.installs)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                fresh.platform.detachOnRemove = false
+                fresh.platform.rootBehavior = RootBehavior.MESSAGING
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android")
+                assertTrue(fresh.platform.attached)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                assertEquals(0, fresh.platform.routeCalls)
+                fresh.platform.attached = false
+                val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
+                runRemovalRetry(fresh.service, token)
+                assertEquals(EntryGateState.BYPASSED, gate(fresh.service).state)
+                assertFalse(gate(fresh.service).cooldownActive())
+                assertEquals(0, fresh.platform.routeCalls)
+                assertEquals(token.ticket, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", token.ticket, confirmedReelsCandidate()))
+            } finally { fresh.platform.detachOnRemove = true; destroyFresh(fresh) }
         }
     }
 
