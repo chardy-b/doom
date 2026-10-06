@@ -9,11 +9,16 @@ import android.view.WindowManager
 
 internal interface OverlayPhysicalPlatform {
     fun isAttached(view: View): Boolean
+    /** A WindowManager root also owns a pending first traversal, before View attachment. */
+    fun isRegistered(view: View): Boolean = isAttached(view)
     fun removeImmediate(manager: WindowManager, view: View)
 }
 
 internal object AndroidOverlayPhysicalPlatform : OverlayPhysicalPlatform {
     override fun isAttached(view: View) = view.isAttachedToWindow
+    // addView assigns the root's parent synchronously; dispatchAttachedToWindow runs later.
+    // These saved roots are standalone windows, never children of another Doom view.
+    override fun isRegistered(view: View) = view.isAttachedToWindow || view.parent != null
     override fun removeImmediate(manager: WindowManager, view: View) = manager.removeViewImmediate(view)
 }
 
@@ -39,7 +44,7 @@ internal class OwnedOverlayWindow(
     override fun attachment(): OverlayAttachment {
         lastAttachment = if (!addAttempted) OverlayAttachment.DETACHED else try {
             if (manager == null || params == null) OverlayAttachment.UNKNOWN
-            else if (platform.isAttached(view)) OverlayAttachment.ATTACHED else OverlayAttachment.DETACHED
+            else if (platform.isRegistered(view)) OverlayAttachment.ATTACHED else OverlayAttachment.DETACHED
         } catch (_: RuntimeException) { OverlayAttachment.UNKNOWN }
         return lastAttachment
     }

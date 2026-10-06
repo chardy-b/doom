@@ -95,25 +95,39 @@ class EntryGateServiceActionTest {
         var heldView: View? = null
         var removeScript: ((View) -> Unit)? = null
         private val attachments = java.util.IdentityHashMap<View, Boolean>()
+        private val pendingRegistrations = Collections.newSetFromMap(java.util.IdentityHashMap<View, Boolean>())
         private var initialAttachment = attached
         var attached: Boolean
             get() = attachments.values.any { it } || (attachments.isEmpty() && initialAttachment)
-            set(value) { initialAttachment = value; attachments.keys.toList().forEach { attachments[it] = value } }
+            set(value) {
+                initialAttachment = value
+                attachments.keys.toList().forEach { attachments[it] = value }
+                pendingRegistrations.clear()
+            }
         fun attach(view: View) {
-            check(attachments[view] != true) { "already added" }
+            check(attachments[view] != true && view !in pendingRegistrations) { "already added" }
             attachments[view] = true
+        }
+        fun registerPending(view: View) {
+            check(!isRegistered(view)) { "already added" }
+            attachments[view] = false
+            pendingRegistrations += view
         }
         fun register(view: View, attached: Boolean) { attachments[view] = attached }
         override fun isAttached(view: View): Boolean {
             if (attachmentThrows) throw IllegalStateException("unknown attachment")
             return attachments[view] ?: false
         }
+        override fun isRegistered(view: View): Boolean = isAttached(view) || view in pendingRegistrations
 
         override fun removeImmediate(manager: WindowManager, view: View) {
             platformCalls += "removeImmediate"
             removeAttempts++
             removeScript?.let { it(view); return }
-            if (detachOnRemove && view !== heldView) attachments[view] = false
+            if (detachOnRemove && view !== heldView) {
+                attachments[view] = false
+                pendingRegistrations -= view
+            }
         }
 
         override fun currentRoot(): AccessibilityNodeInfo? {
@@ -2377,6 +2391,128 @@ class EntryGateServiceActionTest {
                 assertEquals(0, fresh.platform.routeCalls + fresh.platform.homeCalls)
                 assertFalse(gate(fresh.service).cooldownActive())
             } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun registeredTimerSurvivesImmediateRenderBeforeFirstTraversal() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                Observation.setSessionTimerEnabled(activity, true)
+                field(fresh.service, "overlayWindowInstaller").set(fresh.service,
+                    { _: WindowManager, view: View, _: WindowManager.LayoutParams -> fresh.platform.registerPending(view) })
+                val timer = field(fresh.service, "sessionTimer").get(fresh.service) as InstagramSessionTimer
+                timer.observeVerifiedInstagram(true, true, true)
+                invoke(fresh.service, "attachTimerIfAllowed")
+                val view = field(fresh.service, "timerView").get(fresh.service) as View
+                assertTrue(timer.running)
+                assertFalse(fresh.platform.isAttached(view))
+                assertTrue(fresh.platform.isRegistered(view))
+                assertEquals(0, fresh.platform.removeAttempts)
+                invoke(fresh.service, "endTimerSession")
+                assertFalse(fresh.platform.isRegistered(view))
+                assertNull(field(fresh.service, "timerView").get(fresh.service))
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun registeredGateBeforeFirstTraversalRemainsVisibleUntilAnAction() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                Observation.setSessionTimerEnabled(activity, false)
+                field(fresh.service, "overlayWindowInstaller").set(fresh.service,
+                    { _: WindowManager, view: View, _: WindowManager.LayoutParams -> fresh.platform.registerPending(view) })
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                assertEquals(4, episode.records.size)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                assertFalse(episode.allDetached())
+                episode.records.forEach {
+                    assertFalse(fresh.platform.isAttached(it.view))
+                    assertTrue(fresh.platform.isRegistered(it.view))
+                }
+                assertEquals(0, fresh.platform.removeAttempts)
+                assertTrue(episode.ui.skipToMessages.performClick())
+                assertTrue(episode.allDetached())
+                assertEquals(4, fresh.platform.removeAttempts)
+                assertEquals(1, fresh.platform.routeCalls)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun messagesWaitForRegisteredButNotYetAttachedLastButton() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                Observation.setSessionTimerEnabled(activity, false)
+                field(fresh.service, "overlayWindowInstaller").set(fresh.service,
+                    { _: WindowManager, view: View, _: WindowManager.LayoutParams -> fresh.platform.registerPending(view) })
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                fresh.platform.heldView = episode.ui.leaveInstagram
+                assertTrue(episode.ui.skipToMessages.performClick())
+                assertFalse(fresh.platform.isAttached(episode.ui.leaveInstagram))
+                assertTrue(fresh.platform.isRegistered(episode.ui.leaveInstagram))
+                assertSame(episode, field(fresh.service, "gateWindows").get(fresh.service))
+                assertEquals(0, fresh.platform.routeCalls)
+                assertFalse(gate(fresh.service).cooldownActive())
+                fresh.platform.heldView = null
+                pendingRetry(fresh.service, "removalLoop").run()
+                assertTrue(episode.allDetached())
+                assertEquals(1, fresh.platform.routeCalls)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun partialPendingAddsAreRemovedBeforeOwnershipIsReleased() {
+        rule.scenario.onActivity { activity ->
+            for (position in 1..4) {
+                val fresh = freshService(activity, 1_000L)
+                try {
+                    val attempted = mutableListOf<View>()
+                    field(fresh.service, "overlayWindowInstaller").set(fresh.service,
+                        { _: WindowManager, view: View, _: WindowManager.LayoutParams ->
+                            attempted += view
+                            fresh.platform.registerPending(view)
+                            if (attempted.size == position) throw IllegalStateException("synthetic pending add failure")
+                        })
+                    sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                    assertEquals(position, attempted.size)
+                    assertEquals(position, fresh.platform.removeAttempts)
+                    attempted.forEach { assertFalse(fresh.platform.isRegistered(it)) }
+                    assertNull(field(fresh.service, "gateWindows").get(fresh.service))
+                    assertEquals(0, fresh.platform.routeCalls + fresh.platform.homeCalls)
+                    assertFalse(gate(fresh.service).cooldownActive())
+                } finally { destroyFresh(fresh) }
+            }
+        }
+    }
+
+    @Test fun realWindowManagerPendingRootIsRemovedBeforeFirstTraversal() {
+        rule.scenario.onActivity { activity ->
+            val view = View(activity)
+            val manager = activity.windowManager
+            val params = WindowManager.LayoutParams(1, 1, WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                android.graphics.PixelFormat.TRANSLUCENT).apply {
+                token = activity.window.decorView.windowToken
+                alpha = 0f
+            }
+            val record = OwnedOverlayWindow(view, manager, GateWindowRole.VISUAL, params,
+                AndroidOverlayPhysicalPlatform, { wm, root, layout -> wm.addView(root, layout) },
+                { wm, root, layout -> wm.updateViewLayout(root, layout) })
+            try {
+                record.addAttempted = true
+                manager.addView(view, params)
+                assertFalse(view.isAttachedToWindow)
+                assertTrue(view.parent != null)
+                assertEquals(OverlayAttachment.ATTACHED, record.attachment())
+                assertEquals(OverlayRemovalResult.DETACHED, OverlayWindowRemover.attempt(record, false))
+                assertNull(view.parent)
+            } finally {
+                if (AndroidOverlayPhysicalPlatform.isRegistered(view)) manager.removeViewImmediate(view)
+            }
         }
     }
 
