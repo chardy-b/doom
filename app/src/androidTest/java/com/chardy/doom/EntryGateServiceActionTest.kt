@@ -631,6 +631,78 @@ class EntryGateServiceActionTest {
         }
     }
 
+    private fun confirmedReelsCandidate(truncated: Boolean = false, messaging: Boolean = false): SanitizedStructuralReport {
+        val builder = SanitizedStructuralReport.Builder()
+        listOf("clips_tab", "clips_viewer_view_pager").forEachIndexed { index, id ->
+            builder.add(StructuralNodeMetadata(
+                position = StructuralNodePosition(index = index, bfsOrdinal = index),
+                resourceId = "com.instagram.android:id/$id", className = "View",
+                flags = StructuralBooleanMasks(
+                    known = (1L shl StructuralBooleanField.SELECTED.ordinal) or
+                        (1L shl StructuralBooleanField.SCROLLABLE.ordinal),
+                    value = 1L shl (if (index == 0) StructuralBooleanField.SELECTED else
+                        StructuralBooleanField.SCROLLABLE).ordinal,
+                ),
+            ))
+        }
+        if (messaging) builder.add(StructuralNodeMetadata(
+            position = StructuralNodePosition(index = 2, bfsOrdinal = 2),
+            resourceId = "com.instagram.android:id/message_list", className = "View",
+        ))
+        if (truncated) builder.markTruncated()
+        return requireNotNull(builder.build())
+    }
+
+    @Test fun messagingAdmissionResumesOnConfirmedReelsWithFreshTicketBeforeNewInstall() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                fresh.platform.rootBehavior = RootBehavior.MESSAGING
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val inbox = field(fresh.service, "ticket").get(fresh.service) as GateTicket
+                assertEquals(0, fresh.installs)
+                val resumed = invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", inbox, confirmedReelsCandidate())
+                assertTrue(resumed.generation > inbox.generation)
+                assertEquals(resumed, field(fresh.service, "ticket").get(fresh.service))
+                assertEquals(EntryGateState.AWAITING, gate(fresh.service).state)
+                fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android")
+                assertEquals(1, fresh.installs)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                assertEquals(0, fresh.platform.routeCalls)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun messagingReadmissionRejectsTruncatedMixedStaleAndRevokedCandidates() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                fresh.platform.rootBehavior = RootBehavior.MESSAGING
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val inbox = field(fresh.service, "ticket").get(fresh.service) as GateTicket
+                listOf(confirmedReelsCandidate(truncated = true), confirmedReelsCandidate(messaging = true)).forEach {
+                    assertEquals(inbox, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", inbox, it))
+                }
+                val stale = GateTicket(inbox.generation - 1)
+                assertEquals(stale, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", stale, confirmedReelsCandidate()))
+                assertEquals(inbox, field(fresh.service, "ticket").get(fresh.service))
+                listOf("timerClosing", "behaviorStopped", "disableWhenDetached").forEach { flag ->
+                    field(fresh.service, flag).setBoolean(fresh.service, true)
+                    assertEquals(inbox, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", inbox, confirmedReelsCandidate()))
+                    field(fresh.service, flag).setBoolean(fresh.service, false)
+                }
+                Observation.connected = false
+                assertEquals(inbox, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", inbox, confirmedReelsCandidate()))
+                Observation.connected = true
+                Observation.setGateConsent(activity, false)
+                assertEquals(inbox, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", inbox, confirmedReelsCandidate()))
+                assertEquals(0, fresh.installs)
+                assertEquals(0, fresh.platform.routeCalls)
+            } finally { Observation.connected = true; destroyFresh(fresh) }
+        }
+    }
+
     @Test fun preAdmissionMessagingNeverInstallsOrArmsOrReleasesActions() {
         rule.scenario.onActivity { activity ->
             val fresh = freshService(activity, 10_000L)

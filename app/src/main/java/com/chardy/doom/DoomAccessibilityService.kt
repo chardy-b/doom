@@ -468,18 +468,19 @@ class DoomAccessibilityService : AccessibilityService() {
                 else Observation.entryGateState = EntryGateState.OUTSIDE
                 return
             }
+            val observedTicket = resumeMessagingAdmission(activeTicket, candidate)
             if (entryGate.state != EntryGateState.AWAITING &&
                 entryGate.state != EntryGateState.GATING
             ) return
 
             val shouldShow = entryGate.observeInstagram(
-                monotonicClock(), activeTicket, InstagramSurfaceShadowClassifier.classify(candidate)
+                monotonicClock(), observedTicket, InstagramSurfaceShadowClassifier.classify(candidate)
             )
             publishGateState()
             if (shouldShow) {
-                if (timerView != null || timerClosing) suspendTimerForGate(activeTicket)
-                else if (gateWindows == null) installOverlay(activeTicket)
-                else overlayToken?.let { renderOverlay(activeTicket, it) }
+                if (timerView != null || timerClosing) suspendTimerForGate(observedTicket)
+                else if (gateWindows == null) installOverlay(observedTicket)
+                else overlayToken?.let { renderOverlay(observedTicket, it) }
             } else if (entryGate.state != EntryGateState.BYPASSED) {
                 requestOverlayRemoval(
                     OverlayRemovalAction.BYPASS,
@@ -492,6 +493,21 @@ class DoomAccessibilityService : AccessibilityService() {
         } catch (_: RuntimeException) {
             failOpen(RemovalTraceMark.EVENT_FAILURE)
         }
+    }
+
+    private fun resumeMessagingAdmission(activeTicket: GateTicket, candidate: SanitizedStructuralReport): GateTicket {
+        if (entryGate.state != EntryGateState.BYPASSED || !bound || behaviorStopped || disableWhenDetached || !timerConsentAllowed() ||
+            ticket != activeTicket || gateWindows != null || overlayToken != null || timerClosing ||
+            !RetiringOverlayCleanup.barrier.canAdmit()
+        ) return activeTicket
+        val resumed = entryGate.resumeMessagingAdmission(
+            monotonicClock(), activeTicket, InstagramSurfaceShadowClassifier.classify(candidate)
+        ) ?: return activeTicket
+        ticket = resumed
+        terminalGateSucceeded = false
+        traceBeginEpisode()
+        publishGateState()
+        return resumed
     }
 
     @Suppress("DEPRECATION") // Release transient nodes on older supported Android versions too.
