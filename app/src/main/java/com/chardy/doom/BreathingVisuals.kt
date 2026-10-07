@@ -45,6 +45,19 @@ internal object BreathingVisuals {
     const val AUBERGINE = 0xFF6E294D.toInt()
     const val GRID_CELLS = 32
 
+    /** Precomputed sqrt(logicalX² + logicalY²) for every (gridX, gridY) — eliminates 1024
+     *  sqrt calls per animation frame. logicalX/Y are grid coordinates centered at origin. */
+    private val LOGICAL_DISTANCE: Array<FloatArray> = run {
+        val half = GRID_CELLS / 2
+        Array(GRID_CELLS) { gridY ->
+            val logicalY = (gridY - half).toFloat()
+            FloatArray(GRID_CELLS) { gridX ->
+                val logicalX = (gridX - half).toFloat()
+                sqrt(logicalX * logicalX + logicalY * logicalY)
+            }
+        }
+    }
+
     /** Quintic smootherstep with a bounded input and zero first/second endpoint slopes. */
     fun smootherstep(value: Float): Float {
         val t = value.coerceIn(0f, 1f)
@@ -129,9 +142,7 @@ internal object BreathingVisuals {
             val clippedBottom = if (rawBottom >= bottomEdge) min(rawBottom, bottomEdge) else rawBottom - gapHalf
             if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) continue
 
-            val deltaX = cellCenterX - centerX
-            val deltaY = cellCenterY - centerY
-            val radial = sqrt(deltaX * deltaX + deltaY * deltaY) / radius
+            val radial = LOGICAL_DISTANCE[gridY][gridX] * pitch / radius
             val delay = if (logicalX == 0 && logicalY == 0) 0f else 0.04f * radial.coerceIn(0f, 1f)
             val delayed = if (delay == 0f) bloom else ((bloom - delay) / (1f - delay)).coerceIn(0f, 1f)
             val edge = smootherstep(((1.08f - radial) / 0.16f).coerceIn(0f, 1f))
