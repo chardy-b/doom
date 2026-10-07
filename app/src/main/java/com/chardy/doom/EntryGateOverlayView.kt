@@ -2,6 +2,7 @@ package com.chardy.doom
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.drawable.GradientDrawable
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -75,6 +76,9 @@ internal class EntryGateOverlayUi(val visualRoot:View,val phaseLabel:TextView,va
  fun layoutDecoration(left:Int,top:Int,width:Int,height:Int){
   if(closed)return
   val decoration=(visualRoot as FrameLayout).getChildAt(0)
+  val current=decoration.layoutParams as FrameLayout.LayoutParams
+  if(current.width==width&&current.height==height&&current.leftMargin==left&&current.topMargin==top&&
+     current.rightMargin==0&&current.bottomMargin==0&&current.gravity==(Gravity.TOP or Gravity.LEFT))return
   decoration.layoutParams=FrameLayout.LayoutParams(width,height,Gravity.TOP or Gravity.LEFT).apply{leftMargin=left;topMargin=top}
  }
  fun closeInteraction(){
@@ -89,21 +93,26 @@ internal class EntryGateOverlayUi(val visualRoot:View,val phaseLabel:TextView,va
 internal object EntryGateOverlayViewFactory{
  fun create(context:Context,onSkipToMessages:()->Unit,onLeaveInstagram:()->Unit,onDebugReport:()->Unit,frameScheduler:OverlayFrameScheduler?=null):EntryGateOverlayUi{
   fun dp(v:Int)=(v*context.resources.displayMetrics.density).toInt()
-  val root=FrameLayout(context).apply{setBackgroundColor(android.graphics.Color.TRANSPARENT);isClickable=false;isFocusable=false}
-  val body=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;isClickable=false}
-  root.addView(body,FrameLayout.LayoutParams(dp(240),dp(240),Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(48)})
+  val compactLandscape=context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE
+  val verticalPadding=dp(if(compactLandscape)8 else 20)
+  val root=FrameLayout(context).apply{setBackgroundColor(BreathingVisuals.INK);isClickable=false;isFocusable=false}
+  val body=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;isClickable=false}
+  root.addView(body,FrameLayout.LayoutParams(-1,-1).apply{leftMargin=dp(20);rightMargin=dp(20);topMargin=verticalPadding;bottomMargin=verticalPadding})
   val phase=TextView(context).apply{
-   text="Breathe in";textSize=24f;setTextColor(BreathingVisuals.PAPER);gravity=Gravity.CENTER;isFocusable=false
+   text="Breathe in";textSize=if(compactLandscape)24f else 32f;minHeight=dp(if(compactLandscape)40 else 48)
+   setTextColor(BreathingVisuals.PAPER);gravity=Gravity.CENTER;isFocusable=false
    if(Build.VERSION.SDK_INT>=28)isAccessibilityHeading=true
   }
   body.addView(phase,LinearLayout.LayoutParams(-1,-2))
   val pixel=PixelBreathingView(context).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO}
   body.addView(pixel,LinearLayout.LayoutParams(-1,0,1f))
   val progress=SegmentedBreathProgressView(context).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO}
-  body.addView(progress,LinearLayout.LayoutParams(-1,dp(8)))
+  body.addView(progress,LinearLayout.LayoutParams(-1,dp(if(compactLandscape)8 else 10)))
   val skip=button(context,"Skip to Messages",BreathingVisuals.INK,BreathingVisuals.GOLD,dp(52)).apply{setOnClickListener{onSkipToMessages()}}
   val leave=button(context,"Leave Instagram",BreathingVisuals.PAPER,BreathingVisuals.PANEL,dp(48)).apply{setOnClickListener{onLeaveInstagram()}}
-  val debug=button(context,"Capture debug",BreathingVisuals.GOLD,BreathingVisuals.INK,dp(48)).apply{setOnClickListener{onDebugReport()}}
+  val debug=button(context,"Capture debug",BreathingVisuals.GOLD,BreathingVisuals.INK,dp(48)).apply{
+   setOnClickListener{onDebugReport()};setBackgroundColor(android.graphics.Color.TRANSPARENT)
+  }
   return EntryGateOverlayUi(root,phase,skip,leave,debug,pixel,progress,frameScheduler)
  }
  private fun button(c:Context,label:String,text:Int,fill:Int,height:Int)=Button(c).apply{this.text=label;textSize=16f;minHeight=height;minimumHeight=height;isAllCaps=false;setTextColor(ColorStateList.valueOf(text));background=GradientDrawable().apply{setColor(fill);setStroke(2,BreathingVisuals.GOLD);cornerRadius=4f};stateListAnimator=null}

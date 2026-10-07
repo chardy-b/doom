@@ -17,10 +17,10 @@ object InstagramSurfaceShadowClassifier {
     private val storyControls = setOf("reel_viewer_header", "reel_viewer_close_button", "reel_viewer_progress_bar")
 
     internal fun classify(input: ShadowClassificationInput): InstagramSurface {
-        // Messaging precedence is deliberate, including mixed messaging/surface reports.
-        if (input.resourceIds.any { it.substringAfterLast('/') in messaging }) return InstagramSurface.MESSAGING
+        // Visible or uncertain messaging retains precedence, including truncated reports.
+        if (input.possiblyVisibleResourceIds.any { it.substringAfterLast('/') in messaging }) return InstagramSurface.MESSAGING
         if (input.truncated) return InstagramSurface.UNKNOWN
-        val ids = input.resourceIds.map { it.substringAfterLast('/') }.toSet()
+        val ids = input.possiblyVisibleResourceIds.map { it.substringAfterLast('/') }.toSet()
         val selected = input.selectedResourceIds.map { it.substringAfterLast('/') }.toSet()
         val candidates = buildList {
             if (feedTab in selected && ids.any { it.startsWith("row_feed_") }) add(InstagramSurface.FEED)
