@@ -58,6 +58,26 @@ class EntryGateOverlayAnimationTest {
         }
     }
 
+    @Test fun closingBeforePhysicalDetachStopsAnimationAndKeepsButtonsSeparate() {
+        rule.scenario.onActivity { activity ->
+            val scheduler = ManualScheduler()
+            val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {}, scheduler)
+            activity.findViewById<ViewGroup>(android.R.id.content).addView(ui.visualRoot)
+            assertEquals(4, ui.windowRoots.size)
+            ui.windowRoots.drop(1).forEach { assertTrue(it.parent == null) }
+            ui.render(EntryGateOverlayModel.from(10_000, 10_000, false))
+            val pending = scheduler.take()
+            ui.closeInteraction()
+            assertTrue(ui.visualRoot.isAttachedToWindow)
+            ui.windowRoots.forEach { assertTrue(!it.isEnabled) }
+            scheduler.runEvenIfRemoved(pending)
+            assertEquals(1, scheduler.posts)
+            assertTrue(scheduler.pending == null)
+            ui.dispose()
+            (ui.visualRoot.parent as ViewGroup).removeView(ui.visualRoot)
+        }
+    }
+
     @Test fun completionAndDisposeWhileCallbackExecutesLeaveNoContinuingCallback() {
         rule.scenario.onActivity { activity ->
             val scheduler = ManualScheduler()
