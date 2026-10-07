@@ -90,7 +90,12 @@ internal object EntryGateOverlayViewFactory{
  fun create(context:Context,onSkipToMessages:()->Unit,onLeaveInstagram:()->Unit,onDebugReport:()->Unit,frameScheduler:OverlayFrameScheduler?=null):EntryGateOverlayUi{
   fun dp(v:Int)=(v*context.resources.displayMetrics.density).toInt()
   val root=FrameLayout(context).apply{setBackgroundColor(android.graphics.Color.TRANSPARENT);isClickable=false;isFocusable=false}
-  val body=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;isClickable=false}
+  // Keep the backdrop inside the measured decoration, leaving device controls visible.
+  val body=LinearLayout(context).apply{
+   orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;isClickable=false
+   setPadding(dp(12),dp(12),dp(12),dp(12))
+   background=GradientDrawable().apply{setColor(BreathingVisuals.INK);setStroke(dp(1),BreathingVisuals.GOLD);cornerRadius=dp(8).toFloat()}
+  }
   root.addView(body,FrameLayout.LayoutParams(dp(240),dp(240),Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(48)})
   val phase=TextView(context).apply{
    text="Breathe in";textSize=24f;setTextColor(BreathingVisuals.PAPER);gravity=Gravity.CENTER;isFocusable=false
