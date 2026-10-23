@@ -468,18 +468,19 @@ class DoomAccessibilityService : AccessibilityService() {
                 else Observation.entryGateState = EntryGateState.OUTSIDE
                 return
             }
+            val observedTicket = resumeMessagingAdmission(activeTicket, candidate)
             if (entryGate.state != EntryGateState.AWAITING &&
                 entryGate.state != EntryGateState.GATING
             ) return
 
             val shouldShow = entryGate.observeInstagram(
-                monotonicClock(), activeTicket, InstagramSurfaceShadowClassifier.classify(candidate)
+                monotonicClock(), observedTicket, InstagramSurfaceShadowClassifier.classify(candidate)
             )
             publishGateState()
             if (shouldShow) {
-                if (timerView != null || timerClosing) suspendTimerForGate(activeTicket)
-                else if (gateWindows == null) installOverlay(activeTicket)
-                else overlayToken?.let { renderOverlay(activeTicket, it) }
+                if (timerView != null || timerClosing) suspendTimerForGate(observedTicket)
+                else if (gateWindows == null) installOverlay(observedTicket)
+                else overlayToken?.let { renderOverlay(observedTicket, it) }
             } else if (entryGate.state != EntryGateState.BYPASSED) {
                 requestOverlayRemoval(
                     OverlayRemovalAction.BYPASS,
@@ -492,6 +493,21 @@ class DoomAccessibilityService : AccessibilityService() {
         } catch (_: RuntimeException) {
             failOpen(RemovalTraceMark.EVENT_FAILURE)
         }
+    }
+
+    private fun resumeMessagingAdmission(activeTicket: GateTicket, candidate: SanitizedStructuralReport): GateTicket {
+        if (entryGate.state != EntryGateState.BYPASSED || !bound || behaviorStopped || disableWhenDetached || !timerConsentAllowed() ||
+            ticket != activeTicket || gateWindows != null || overlayToken != null || timerClosing ||
+            !RetiringOverlayCleanup.barrier.canAdmit()
+        ) return activeTicket
+        val resumed = entryGate.resumeMessagingAdmission(
+            monotonicClock(), activeTicket, InstagramSurfaceShadowClassifier.classify(candidate)
+        ) ?: return activeTicket
+        ticket = resumed
+        terminalGateSucceeded = false
+        traceBeginEpisode()
+        publishGateState()
+        return resumed
     }
 
     @Suppress("DEPRECATION") // Release transient nodes on older supported Android versions too.
@@ -1039,10 +1055,10 @@ class DoomAccessibilityService : AccessibilityService() {
             button.measuredHeight
         }
         val layout = GateOverlayWindowLayout.calculate(frame.width(), frame.height(), margins, density, heights) ?: return null
-        val decorationWidth = minOf(240.dp(), frame.width() - safe.left - safe.right - 32.dp()).coerceAtLeast(1)
-        val decorationHeight = minOf(240.dp(), layout[1].bounds.y - safe.top - 32.dp()).coerceAtLeast(1)
-        ui.layoutDecoration(safe.left + (frame.width() - safe.left - safe.right - decorationWidth) / 2,
-            safe.top + 16.dp(), decorationWidth, decorationHeight)
+        val verticalPadding = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) 8.dp() else 20.dp()
+        val decorationWidth = (frame.width() - safe.left - safe.right - 40.dp()).coerceAtLeast(1)
+        val decorationHeight = (layout[1].bounds.y - safe.top - verticalPadding - 16.dp()).coerceAtLeast(1)
+        ui.layoutDecoration(safe.left + 20.dp(), safe.top + verticalPadding, decorationWidth, decorationHeight)
         return layout
     }
 
@@ -1060,6 +1076,10 @@ class DoomAccessibilityService : AccessibilityService() {
                 if (OverlayWindowRemover.attachment(record) != OverlayAttachment.ATTACHED)
                     throw IllegalStateException("Gate window no longer attached")
                 val params = GateOverlayWindows.parameters(descriptor)
+                val unchanged = record.params?.let { current ->
+                    WindowManager.LayoutParams().apply { copyFrom(current) }.copyFrom(params) == 0
+                } ?: false
+                if (unchanged) return@forEach
                 record.params = WindowManager.LayoutParams().apply { copyFrom(params) }
                 overlayWindowUpdater(manager, record.view, params)
             }

@@ -10,7 +10,7 @@ class GateOverlayWindowLayoutTest {
         val windows = requireNotNull(layout())
         assertEquals(4, windows.size)
         assertEquals(3, windows.count { it.touchable })
-        windows.filter { it.touchable }.forEach { assertTrue(it.bounds.width in 1..320); assertTrue(it.bounds.height in 48..52) }
+        windows.filter { it.touchable }.forEach { assertEquals(360, it.bounds.width); assertTrue(it.bounds.height in 48..52) }
     }
     @Test fun visualRoleAlwaysPassesInput() {
         val visual = requireNotNull(layout()).first()

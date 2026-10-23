@@ -50,6 +50,7 @@ class EntryGateServiceActionTest {
     private enum class RootBehavior {
         INSTAGRAM,
         MESSAGING,
+        HIDDEN_MESSAGING,
         NULL_PACKAGE,
         FOREIGN,
         SYSTEM_UI,
@@ -155,8 +156,9 @@ class EntryGateServiceActionTest {
                     RootBehavior.DOOM -> "com.chardyb.doom"
                     else -> "com.instagram.android"
                 }
-                if (rootBehavior == RootBehavior.MESSAGING) {
+                if (rootBehavior == RootBehavior.MESSAGING || rootBehavior == RootBehavior.HIDDEN_MESSAGING) {
                     viewIdResourceName = "com.instagram.android:id/message_list"
+                    isVisibleToUser = rootBehavior == RootBehavior.MESSAGING
                 }
             }
         }
@@ -628,6 +630,103 @@ class EntryGateServiceActionTest {
                 assertEquals(EntryGateState.GATING, gate(fresh.service).state)
                 assertFalse(gate(fresh.service).cooldownActive())
             } finally { destroyFresh(fresh) }
+        }
+    }
+
+    private fun confirmedReelsCandidate(truncated: Boolean = false, messaging: Boolean = false): SanitizedStructuralReport {
+        val builder = SanitizedStructuralReport.Builder()
+        listOf("clips_tab", "clips_viewer_view_pager").forEachIndexed { index, id ->
+            builder.add(StructuralNodeMetadata(
+                position = StructuralNodePosition(index = index, bfsOrdinal = index),
+                resourceId = "com.instagram.android:id/$id", className = "View",
+                flags = StructuralBooleanMasks(
+                    known = (1L shl StructuralBooleanField.SELECTED.ordinal) or
+                        (1L shl StructuralBooleanField.SCROLLABLE.ordinal),
+                    value = 1L shl (if (index == 0) StructuralBooleanField.SELECTED else
+                        StructuralBooleanField.SCROLLABLE).ordinal,
+                ),
+            ))
+        }
+        if (messaging) builder.add(StructuralNodeMetadata(
+            position = StructuralNodePosition(index = 2, bfsOrdinal = 2),
+            resourceId = "com.instagram.android:id/message_list", className = "View",
+        ))
+        if (truncated) builder.markTruncated()
+        return requireNotNull(builder.build())
+    }
+
+    @Test fun messagingAdmissionResumesOnConfirmedReelsWithFreshTicketBeforeNewInstall() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                fresh.platform.rootBehavior = RootBehavior.MESSAGING
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val inbox = field(fresh.service, "ticket").get(fresh.service) as GateTicket
+                assertEquals(0, fresh.installs)
+                val resumed = invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", inbox, confirmedReelsCandidate())
+                assertTrue(resumed.generation > inbox.generation)
+                assertEquals(resumed, field(fresh.service, "ticket").get(fresh.service))
+                assertEquals(EntryGateState.AWAITING, gate(fresh.service).state)
+                fresh.platform.rootBehavior = RootBehavior.INSTAGRAM
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android")
+                assertEquals(1, fresh.installs)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                assertEquals(0, fresh.platform.routeCalls)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun messagingReadmissionRejectsTruncatedMixedStaleAndRevokedCandidates() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                fresh.platform.rootBehavior = RootBehavior.MESSAGING
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val inbox = field(fresh.service, "ticket").get(fresh.service) as GateTicket
+                listOf(confirmedReelsCandidate(truncated = true), confirmedReelsCandidate(messaging = true)).forEach {
+                    assertEquals(inbox, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", inbox, it))
+                }
+                val stale = GateTicket(inbox.generation - 1)
+                assertEquals(stale, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", stale, confirmedReelsCandidate()))
+                assertEquals(inbox, field(fresh.service, "ticket").get(fresh.service))
+                listOf("timerClosing", "behaviorStopped", "disableWhenDetached").forEach { flag ->
+                    field(fresh.service, flag).setBoolean(fresh.service, true)
+                    assertEquals(inbox, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", inbox, confirmedReelsCandidate()))
+                    field(fresh.service, flag).setBoolean(fresh.service, false)
+                }
+                Observation.connected = false
+                assertEquals(inbox, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", inbox, confirmedReelsCandidate()))
+                Observation.connected = true
+                Observation.setGateConsent(activity, false)
+                assertEquals(inbox, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", inbox, confirmedReelsCandidate()))
+                assertEquals(0, fresh.installs)
+                assertEquals(0, fresh.platform.routeCalls)
+            } finally { Observation.connected = true; destroyFresh(fresh) }
+        }
+    }
+
+    @Test fun hiddenMessagingDoesNotSuppressEntryButVisibleMessagingStillWaitsForDetach() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 10_000L)
+            try {
+                fresh.platform.rootBehavior = RootBehavior.HIDDEN_MESSAGING
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                assertEquals(1, fresh.installs)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                fresh.platform.detachOnRemove = false
+                fresh.platform.rootBehavior = RootBehavior.MESSAGING
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, "com.instagram.android")
+                assertTrue(fresh.platform.attached)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                assertEquals(0, fresh.platform.routeCalls)
+                fresh.platform.attached = false
+                val token = field(fresh.service, "overlayToken").get(fresh.service) as OverlayCallbackToken
+                runRemovalRetry(fresh.service, token)
+                assertEquals(EntryGateState.BYPASSED, gate(fresh.service).state)
+                assertFalse(gate(fresh.service).cooldownActive())
+                assertEquals(0, fresh.platform.routeCalls)
+                assertEquals(token.ticket, invokeResult<GateTicket>(fresh.service, "resumeMessagingAdmission", token.ticket, confirmedReelsCandidate()))
+            } finally { fresh.platform.detachOnRemove = true; destroyFresh(fresh) }
         }
     }
 
@@ -2368,7 +2467,63 @@ class EntryGateServiceActionTest {
         }
     }
 
+    @Test fun repeatedUnchangedInsetsDoNotResizeWindowsOrRelayoutDecoration() {
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                var updates = 0
+                field(fresh.service, "overlayWindowUpdater").set(fresh.service,
+                    { _: WindowManager, _: View, _: WindowManager.LayoutParams -> updates++ })
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                val decoration = (episode.ui.visualRoot as android.widget.FrameLayout).getChildAt(0)
+                val positioning = decoration.layoutParams
+                val generation = gate(fresh.service).generation
+                repeat(5) { invoke(fresh.service, "updateGateLayout", episode, null) }
+                assertEquals(0, updates)
+                assertSame(positioning, decoration.layoutParams)
+                assertEquals(generation, gate(fresh.service).generation)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+                assertEquals(1, fresh.installs)
+                assertEquals(0, fresh.platform.routeCalls + fresh.platform.homeCalls)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
+    @android.annotation.TargetApi(30)
+    private fun largerGateIme(episode: GateOverlayWindows, activity: MainActivity, extra: Int): android.view.WindowInsets {
+        val last = requireNotNull(episode.records.last().params)
+        val frame = requireNotNull(episode.records.first().params)
+        val margin = maxOf(1, (16 * activity.resources.displayMetrics.density).toInt())
+        val currentBottom = frame.height - last.y - last.height - margin
+        return android.view.WindowInsets.Builder().setInsets(android.view.WindowInsets.Type.ime(),
+            android.graphics.Insets.of(0, 0, 0, currentBottom + extra)).build()
+    }
+
+    @Test fun changedImeMovesActionsOnceAndIdenticalDeliveryDoesNotRepeatIt() {
+        org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 30)
+        rule.scenario.onActivity { activity ->
+            val fresh = freshService(activity, 1_000L)
+            try {
+                var updates = 0
+                field(fresh.service, "overlayWindowUpdater").set(fresh.service,
+                    { _: WindowManager, _: View, _: WindowManager.LayoutParams -> updates++ })
+                sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
+                val episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
+                val oldY = episode.records.drop(1).map { requireNotNull(it.params).y }
+                val insets = largerGateIme(episode, activity, 100)
+                invoke(fresh.service, "updateGateLayout", episode, insets)
+                assertEquals(3, updates)
+                assertEquals(oldY.map { it - 100 }, episode.records.drop(1).map { requireNotNull(it.params).y })
+                repeat(3) { invoke(fresh.service, "updateGateLayout", episode, insets) }
+                assertEquals(3, updates)
+                assertEquals(EntryGateState.GATING, gate(fresh.service).state)
+            } finally { destroyFresh(fresh) }
+        }
+    }
+
     @Test fun layoutUpdateFailureClosesAllWindowsWithoutNewAdmission() {
+        org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 30)
         rule.scenario.onActivity { activity ->
             val fresh = freshService(activity, 1_000L)
             try {
@@ -2381,10 +2536,10 @@ class EntryGateServiceActionTest {
                     })
                 sendEvent(fresh.service, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, "com.instagram.android")
                 val episode = field(fresh.service, "gateWindows").get(fresh.service) as GateOverlayWindows
-                invoke(fresh.service, "updateGateLayout", episode, null)
-                assertEquals(4, updates)
+                invoke(fresh.service, "updateGateLayout", episode, largerGateIme(episode, activity, 100))
+                assertEquals(3, updates)
                 fail = true
-                invoke(fresh.service, "updateGateLayout", episode, null)
+                invoke(fresh.service, "updateGateLayout", episode, largerGateIme(episode, activity, 100))
                 assertTrue(episode.allDetached())
                 assertNull(field(fresh.service, "gateWindows").get(fresh.service))
                 assertEquals(1, fresh.installs)

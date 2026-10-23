@@ -8,7 +8,7 @@ The current candidate adds a default-off Breathing reminders product setting, co
 
 ## WIL-235 overlay recovery candidate
 
-The reminder now owns one transparent, non-touchable visual window and three measured button-sized touchable windows. Touches outside those buttons pass through, including during a healthy reminder. Actions keep their accessible minimum sizes; if all three cannot fit within half the safe height, the entire reminder fails open. Insets, cutouts, gestures and the keyboard constrain placement. This is a visual reminder, not an input lock.
+The reminder preserves the original full-window Ink background, large circular breathing bloom, portrait/landscape typography and button styling. It owns one non-touchable visual window and three measured button-sized touchable windows. Touches outside those buttons pass through, including during a healthy reminder. Actions keep their accessible minimum sizes; if all three cannot fit within half the safe height, the entire reminder fails open. Insets, cutouts, gestures and the keyboard constrain action and animation placement. Closing makes every owned window invisible before removal or recovery. This is a visual reminder, not an input lock.
 
 Gate and timer removal confirm attachment after each attempt, with at most one invisible, inert same-view recovery add while bound. After 20 unsuccessful window-set passes, 50 ms retries become 1,000 ms retries and the original external action stays vetoed. Explicit Stop defers voluntary service disable until all owned windows detach. Unbind/destroy transfer unresolved handles to one process-local removal-only owner; admission remains blocked until it detaches. Neither this Handler cleanup nor the bounded RAM trace survives process death.
 

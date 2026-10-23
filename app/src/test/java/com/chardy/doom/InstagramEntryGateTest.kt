@@ -9,6 +9,65 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class InstagramEntryGateTest {
+    @Test fun messagesAfterSuccessfulSkipCanResumeOnReelsAfterCooldownWithFreshTicket() {
+        var now = 0L
+        val gate = InstagramEntryGate(enabled = { true }, monotonicNowMs = { now })
+        val skipped = gate.beginInstagramSession()
+        assertTrue(gate.observeInstagram(now, skipped))
+        assertTrue(gate.overlayShown(now, skipped))
+        assertTrue(gate.beginMessagesRoute(skipped))
+        assertTrue(gate.finishMessagesRoute(now, skipped, MessagesRouteResult.CLICKED))
+        now = 59_999L
+        assertNull(gate.beginInstagramSessionIfEligible())
+        now = 60_000L
+        val inbox = requireNotNull(gate.beginInstagramSessionIfEligible())
+        assertFalse(gate.observeInstagram(now, inbox, InstagramSurface.MESSAGING))
+        val reels = requireNotNull(gate.resumeMessagingAdmission(now, inbox, InstagramSurface.REELS))
+        assertTrue(reels.generation > inbox.generation)
+        assertFalse(gate.observeInstagram(now, inbox, InstagramSurface.REELS))
+        assertTrue(gate.observeInstagram(now, reels, InstagramSurface.REELS))
+        assertFalse(gate.complete(now + 5_000L, reels))
+        assertTrue(gate.overlayShown(now, reels))
+        assertFalse(gate.complete(now + 4_999L, reels))
+        assertTrue(gate.complete(now + 5_000L, reels))
+    }
+
+    @Test fun unknownAndMessagingKeepMessagingBypassUntilConfirmedSurface() {
+        val gate = InstagramEntryGate(enabled = { true })
+        val inbox = gate.beginInstagramSession()
+        assertFalse(gate.observeInstagram(0L, inbox, InstagramSurface.MESSAGING))
+        listOf(InstagramSurface.UNKNOWN, InstagramSurface.MESSAGING).forEach {
+            assertNull(gate.resumeMessagingAdmission(1L, inbox, it))
+            assertEquals(EntryGateState.BYPASSED, gate.state)
+        }
+        assertNotNull(gate.resumeMessagingAdmission(1L, inbox, InstagramSurface.FEED))
+    }
+
+    @Test fun safetyBypassAndCancellationCannotResumeAsMessagingAdmission() {
+        repeat(3) { mode ->
+            val gate = InstagramEntryGate(enabled = { true })
+            val ticket = gate.beginInstagramSession()
+            if (mode == 0) gate.observeInstagram(0L, ticket) else
+                gate.observeInstagram(0L, ticket, InstagramSurface.MESSAGING)
+            if (mode == 2) gate.cancel() else gate.bypass(ticket)
+            assertNull(gate.resumeMessagingAdmission(1L, ticket, InstagramSurface.REELS))
+            assertEquals(EntryGateState.BYPASSED, gate.state)
+        }
+    }
+
+    @Test fun staleRevokedAndInvalidClockCannotResumeMessagingAdmission() {
+        var enabled = true
+        val gate = InstagramEntryGate(enabled = { enabled })
+        val stale = gate.beginInstagramSession()
+        val current = gate.beginInstagramSession()
+        gate.observeInstagram(0L, current, InstagramSurface.MESSAGING)
+        assertNull(gate.resumeMessagingAdmission(1L, stale, InstagramSurface.REELS))
+        assertNull(gate.resumeMessagingAdmission(-1L, current, InstagramSurface.REELS))
+        enabled = false
+        assertNull(gate.resumeMessagingAdmission(1L, current, InstagramSurface.REELS))
+        assertEquals(EntryGateState.BYPASSED, gate.state)
+    }
+
     @Test fun defaultOffFailsOpen() {
         val gate = InstagramEntryGate()
         val ticket = gate.beginInstagramSession()

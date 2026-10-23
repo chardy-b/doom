@@ -10,6 +10,8 @@ import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import org.junit.Assert.assertNull
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.rules.ActivityScenarioRule
@@ -61,7 +63,7 @@ class EntryGateOverlayUiTest {
         }
         rule.scenario.onActivity {
             val actual = requireNotNull(ui)
-            assertEquals(Color.TRANSPARENT, (actual.visualRoot.background as ColorDrawable).color)
+            assertEquals(BreathingVisuals.INK, (actual.visualRoot.background as ColorDrawable).color)
             assertNull(actual.visualRoot.contentDescription)
             assertFalse(actual.visualRoot.isClickable)
             assertFalse(actual.phaseLabel.isFocusable)
@@ -76,6 +78,96 @@ class EntryGateOverlayUiTest {
             assertTrue(actual.debugReport.isClickable)
             actual.dispose()
             (actual.root.parent as? ViewGroup)?.removeView(actual.root)
+        }
+    }
+
+    @Test fun originalBreathingPresentationHasSolidFullWindowBackground() {
+        rule.scenario.onActivity { activity ->
+            val ui = EntryGateOverlayViewFactory.create(activity, {}, {}, {})
+            val root = ui.visualRoot
+            root.measure(View.MeasureSpec.makeMeasureSpec(1_000, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(1_000, View.MeasureSpec.EXACTLY))
+            root.layout(0, 0, 1_000, 1_000)
+            fun pixelAt(x: Int, y: Int): Int {
+                val bitmap = Bitmap.createBitmap(1_000, 1_000, Bitmap.Config.ARGB_8888)
+                return try { root.draw(Canvas(bitmap)); bitmap.getPixel(x, y) } finally { bitmap.recycle() }
+            }
+            assertEquals(BreathingVisuals.INK, pixelAt(50, 500))
+            assertEquals(BreathingVisuals.INK, pixelAt(8, 500))
+            assertEquals(BreathingVisuals.INK, pixelAt(500, 16))
+            assertEquals(BreathingVisuals.INK, pixelAt(990, 500))
+            assertEquals(BreathingVisuals.INK, pixelAt(500, 980))
+            assertEquals(Color.TRANSPARENT, (ui.debugReport.background as ColorDrawable).color)
+            val expectedTextSize = if (activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 24f else 32f
+            assertEquals(expectedTextSize * activity.resources.displayMetrics.scaledDensity, ui.phaseLabel.textSize, 0.01f)
+            assertFalse(root.isClickable)
+            assertFalse(root.isFocusable)
+            val decoration = (root as FrameLayout).getChildAt(0)
+            val positioning = decoration.layoutParams
+            ui.closeInteraction()
+            ui.layoutDecoration(0, 0, 1, 1)
+            assertTrue(positioning === decoration.layoutParams)
+            ui.dispose()
+        }
+    }
+
+    @Test fun progressStaysWithHeadingAboveMessagesAcrossFontSizesAndResizes() {
+        rule.scenario.onActivity { activity ->
+            var checkedLayouts = 0
+            listOf(1f, 1.5f, 2f).forEach { scale ->
+                listOf(
+                    Triple(320, 640, Configuration.ORIENTATION_PORTRAIT),
+                    Triple(400, 800, Configuration.ORIENTATION_PORTRAIT),
+                    Triple(800, 400, Configuration.ORIENTATION_LANDSCAPE),
+                ).forEach { (widthDp, heightDp, orientation) ->
+                    val configuration = Configuration(activity.resources.configuration).apply {
+                        fontScale = scale
+                        this.orientation = orientation
+                    }
+                    val context = activity.createConfigurationContext(configuration)
+                    val density = context.resources.displayMetrics.density
+                    fun dp(value: Int) = (value * density).toInt()
+                    val ui = EntryGateOverlayViewFactory.create(context, {}, {}, {})
+                    try {
+                        val width = dp(widthDp)
+                        val insets = GateSafeInsets(dp(8), dp(24), dp(12), dp(32))
+                        val actionWidth = GateOverlayWindowLayout.actionWidth(width, insets, density)
+                        val heights = ui.windowRoots.drop(1).map { button ->
+                            button.measure(View.MeasureSpec.makeMeasureSpec(actionWidth, View.MeasureSpec.EXACTLY),
+                                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                            button.measuredHeight
+                        }
+                        // Reuse the same view through shrinking and restoring the safe viewport.
+                        listOf(heightDp, heightDp - 80, heightDp).forEach viewport@ { currentHeightDp ->
+                            val height = dp(currentHeightDp)
+                            val layout = GateOverlayWindowLayout.calculate(width, height, insets, density, heights)
+                                ?: return@viewport // Existing fail-open policy when the actions cannot fit.
+                            val messages = layout[1].bounds
+                            val padding = dp(if (orientation == Configuration.ORIENTATION_LANDSCAPE) 8 else 20)
+                            ui.layoutDecoration(insets.left + dp(20), insets.top + padding, actionWidth,
+                                messages.y - insets.top - padding - dp(16))
+                            val root = ui.visualRoot as FrameLayout
+                            root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                                View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
+                            root.layout(0, 0, width, height)
+                            val body = root.getChildAt(0) as ViewGroup
+                            val progress = (0 until body.childCount).map { body.getChildAt(it) }
+                                .filterIsInstance<SegmentedBreathProgressView>().single()
+                            val bloom = (0 until body.childCount).map { body.getChildAt(it) }
+                                .filterIsInstance<PixelBreathingView>().single()
+                            val bounds = android.graphics.Rect()
+                            progress.getDrawingRect(bounds)
+                            root.offsetDescendantRectToMyCoords(progress, bounds)
+                            assertEquals(ui.phaseLabel.bottom + dp(12), progress.top)
+                            assertTrue(progress.height > 0)
+                            assertTrue(progress.bottom <= bloom.top)
+                            assertTrue(bounds.bottom + dp(16) <= messages.y)
+                            checkedLayouts++
+                        }
+                    } finally { ui.dispose() }
+                }
+            }
+            assertTrue(checkedLayouts >= 18) // All portrait/font combinations, before and after resizing.
         }
     }
 
@@ -252,6 +344,10 @@ class EntryGateOverlayUiTest {
             })
             return
         }
+        val verticalPadding = ((if (activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 8 else 20) * density).toInt()
+        ui.layoutDecoration(safe.left + (20 * density).toInt(), safe.top + verticalPadding,
+            (width - safe.left - safe.right - (40 * density).toInt()).coerceAtLeast(1),
+            (layout[1].bounds.y - safe.top - verticalPadding - (16 * density).toInt()).coerceAtLeast(1))
         layout.zip(ui.windowRoots).forEach { (descriptor, root) ->
             val b = descriptor.bounds
             content.addView(root, FrameLayout.LayoutParams(b.width, b.height).apply { leftMargin=b.x; topMargin=b.y })

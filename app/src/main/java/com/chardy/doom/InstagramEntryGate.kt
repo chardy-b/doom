@@ -60,6 +60,7 @@ class InstagramEntryGate(
     private var activeDurationMs = durationMs
     private var activeCooldownDurationMs = INSTAGRAM_ENTRY_COOLDOWN_MS
     private var pendingMessagesAttempt: Pair<GateTicket, Long>? = null
+    private var messagingAdmissionBypassed = false
     private val cooldown = InstagramGateCooldown(monotonicNowMs)
 
     init {
@@ -74,6 +75,7 @@ class InstagramEntryGate(
             ?: INSTAGRAM_ENTRY_COOLDOWN_MS
         visibleStartedAtMs = null
         pendingMessagesAttempt = null
+        messagingAdmissionBypassed = false
         state = if (enabled()) EntryGateState.AWAITING else EntryGateState.BYPASSED
         return GateTicket(generation)
     }
@@ -97,6 +99,7 @@ class InstagramEntryGate(
         if (surface == InstagramSurface.MESSAGING && state == EntryGateState.AWAITING) {
             visibleStartedAtMs = null
             pendingMessagesAttempt = null
+            messagingAdmissionBypassed = true
             state = EntryGateState.BYPASSED
             return false
         }
@@ -105,6 +108,15 @@ class InstagramEntryGate(
             else -> state
         }
         return state == EntryGateState.GATING
+    }
+
+    /** Only a messaging admission bypass can resume on a confirmed non-messaging sample. */
+    internal fun resumeMessagingAdmission(nowMs: Long, ticket: GateTicket, surface: InstagramSurface): GateTicket? {
+        if (!enabled() || nowMs < 0L || !valid(ticket) || state != EntryGateState.BYPASSED ||
+            !messagingAdmissionBypassed || cooldown.isSuppressed(nowMs) ||
+            surface !in setOf(InstagramSurface.FEED, InstagramSurface.REELS, InstagramSurface.STORIES)
+        ) return null
+        return beginInstagramSession()
     }
 
     /** Starts the five visible seconds only after WindowManager accepted the overlay. */
@@ -152,6 +164,7 @@ class InstagramEntryGate(
 
     fun bypass(ticket: GateTicket): Boolean {
         if (!valid(ticket)) return false
+        messagingAdmissionBypassed = false
         if (state == EntryGateState.BYPASSED) {
             pendingMessagesAttempt = null
             return false
@@ -167,6 +180,7 @@ class InstagramEntryGate(
         generation++
         visibleStartedAtMs = null
         pendingMessagesAttempt = null
+        messagingAdmissionBypassed = false
         state = EntryGateState.OUTSIDE
     }
 
@@ -174,6 +188,7 @@ class InstagramEntryGate(
         generation++
         visibleStartedAtMs = null
         pendingMessagesAttempt = null
+        messagingAdmissionBypassed = false
         if (state != EntryGateState.OUTSIDE) state = EntryGateState.BYPASSED
     }
 
