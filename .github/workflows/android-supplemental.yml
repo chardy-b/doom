@@ -42,8 +42,8 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: ''
-      - name: Install API 35 packages
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Install compile SDK 37 packages
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Deterministic supplemental preparation
         id: preparation
         run: |

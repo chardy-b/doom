@@ -275,7 +275,11 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIsNone(config.get(ns + "packageNames"))
         self.assertEqual("typeWindowStateChanged|typeWindowContentChanged", config.get(ns + "accessibilityEventTypes"))
         self.assertEqual("flagReportViewIds", config.get(ns + "accessibilityFlags"))
-        self.assertEqual("false", config.get(ns + "isAccessibilityTool"))
+        self.assertIsNone(config.get(ns + "isAccessibilityTool"))
+        config31 = ET.parse(REPO / "app/src/main/res/xml-v31/accessibility_service_config.xml").getroot()
+        attributes31 = dict(config31.attrib)
+        self.assertEqual("false", attributes31.pop(ns + "isAccessibilityTool"))
+        self.assertEqual(dict(config.attrib), attributes31)
 
 
     def test_traversal_bounds_cover_enqueued_nodes_depth_and_missing_children(self):
@@ -541,8 +545,12 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
         self.assertIn("View.MeasureSpec.UNSPECIFIED", SERVICE)
         self.assertNotIn("ScrollView(context)", OVERLAY_VIEW)
         self.assertNotIn('contentDescription = "Diagnostic status"', OVERLAY_VIEW)
-        for required in ('"Breathe in"', '"Skip to Messages"', '"Leave Instagram"', '"Capture debug"', "PixelBreathingView", "SegmentedBreathProgressView"):
+        for required in ('R.string.breathing_phase_in', 'R.string.breathing_phase_out', '"Skip to Messages"', '"Leave Instagram"', '"Capture debug"', "PixelBreathingView", "SegmentedBreathProgressView"):
             self.assertIn(required, OVERLAY_VIEW)
+        import xml.etree.ElementTree as ET
+        strings = {node.get("name"): node.text for node in ET.parse(REPO / "app/src/main/res/values/strings.xml").getroot()}
+        self.assertEqual("Breathe in", strings["breathing_phase_in"])
+        self.assertEqual("Breathe out", strings["breathing_phase_out"])
         for forbidden in ("countdown", "copyCurrentReport", "status", "REPORT CAPTURED", "Take a breath"):
             self.assertNotIn(forbidden, OVERLAY_VIEW)
         self.assertIn("pixel.visibility=View.INVISIBLE", OVERLAY_VIEW)
@@ -569,7 +577,7 @@ class StructuralLifecycleSourceTest(unittest.TestCase):
     def test_phase_label_changes_only_with_the_breathing_phase(self):
         self.assertIn("private var lastPhase:String?=null", OVERLAY_VIEW)
         self.assertIn("if(lastPhase!=presentation.label)", OVERLAY_VIEW)
-        self.assertIn("phaseLabel.text=presentation.label", OVERLAY_VIEW)
+        self.assertIn("phaseLabel.setText(if(frame.phase==BreathPhase.IN)R.string.breathing_phase_in else R.string.breathing_phase_out)", OVERLAY_VIEW)
 
     def test_native_overlay_restores_root_and_heading_accessibility(self):
         self.assertIn("Color.TRANSPARENT", OVERLAY_VIEW)

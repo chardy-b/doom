@@ -69,7 +69,7 @@ internal class EntryGateOverlayUi(val visualRoot:View,val phaseLabel:TextView,va
  private fun draw(frame:BreathingFrame,reduced:Boolean,elapsedMs:Long,durationMs:Long){
   if(closed)return
   val presentation=BreathingVisuals.presentation(frame,reduced)
-  if(lastPhase!=presentation.label){phaseLabel.text=presentation.label;lastPhase=presentation.label}
+  if(lastPhase!=presentation.label){phaseLabel.setText(if(frame.phase==BreathPhase.IN)R.string.breathing_phase_in else R.string.breathing_phase_out);lastPhase=presentation.label}
   pixel.render(presentation.bloom,false);progress.render(elapsedMs,durationMs)
  }
  internal fun snapshot()=OverlayRenderSnapshot(phaseLabel.text.toString(),pixel.renderedProgress,progress.fractions())
@@ -77,9 +77,10 @@ internal class EntryGateOverlayUi(val visualRoot:View,val phaseLabel:TextView,va
   if(closed)return
   val decoration=(visualRoot as FrameLayout).getChildAt(0)
   val current=decoration.layoutParams as FrameLayout.LayoutParams
+  val gravity=overlayScreenOriginGravity(visualRoot.resources.configuration.layoutDirection)
   if(current.width==width&&current.height==height&&current.leftMargin==left&&current.topMargin==top&&
-     current.rightMargin==0&&current.bottomMargin==0&&current.gravity==(Gravity.TOP or Gravity.LEFT))return
-  decoration.layoutParams=FrameLayout.LayoutParams(width,height,Gravity.TOP or Gravity.LEFT).apply{leftMargin=left;topMargin=top}
+     current.rightMargin==0&&current.bottomMargin==0&&current.gravity==gravity)return
+  decoration.layoutParams=FrameLayout.LayoutParams(width,height,gravity).apply{leftMargin=left;topMargin=top}
  }
  fun closeInteraction(){
   if(closed)return
@@ -95,11 +96,11 @@ internal object EntryGateOverlayViewFactory{
   fun dp(v:Int)=(v*context.resources.displayMetrics.density).toInt()
   val compactLandscape=context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE
   val verticalPadding=dp(if(compactLandscape)8 else 20)
-  val root=FrameLayout(context).apply{setBackgroundColor(BreathingVisuals.INK);isClickable=false;isFocusable=false}
+  val root=FrameLayout(context).apply{layoutDirection=context.resources.configuration.layoutDirection;setBackgroundColor(BreathingVisuals.INK);isClickable=false;isFocusable=false}
   val body=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;isClickable=false}
   root.addView(body,FrameLayout.LayoutParams(-1,-1).apply{leftMargin=dp(20);rightMargin=dp(20);topMargin=verticalPadding;bottomMargin=verticalPadding})
   val phase=TextView(context).apply{
-   text="Breathe in";textSize=if(compactLandscape)24f else 32f;minHeight=dp(if(compactLandscape)40 else 48)
+   setText(R.string.breathing_phase_in);textSize=if(compactLandscape)24f else 32f;minHeight=dp(if(compactLandscape)40 else 48)
    setTextColor(BreathingVisuals.PAPER);gravity=Gravity.CENTER;isFocusable=false
    if(Build.VERSION.SDK_INT>=28)isAccessibilityHeading=true
   }

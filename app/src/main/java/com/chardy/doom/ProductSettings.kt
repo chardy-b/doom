@@ -3,6 +3,7 @@ package com.chardy.doom
 import android.content.ComponentName
 import android.content.Context
 import android.provider.Settings
+import androidx.core.content.edit
 
 
 data class ReminderSettings(
@@ -30,11 +31,11 @@ internal object ReminderSettingsStore {
     }
 
     fun write(context: Context, settings: ReminderSettings) {
-        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
-            .putBoolean(ENABLED, settings.enabled)
-            .putString(DURATION, settings.durationSeconds.toString())
-            .putString(SUPPRESSION, settings.suppressionMinutes.toString())
-            .apply()
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit {
+            putBoolean(ENABLED, settings.enabled)
+            putString(DURATION, settings.durationSeconds.toString())
+            putString(SUPPRESSION, settings.suppressionMinutes.toString())
+        }
     }
 
     fun normalizeDuration(raw: String): Int? {

@@ -1,10 +1,11 @@
 package com.chardy.doom
 
-import android.annotation.TargetApi
+import androidx.annotation.RequiresApi
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -30,19 +31,26 @@ internal data class TimerBounds(val left: Int, val top: Int, val right: Int, val
 /** A font-independent, app-drawn assistant/chat mark. */
 internal class TimerAssistantIcon(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(183, 244, 216) }
+    private val tail = Path()
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val u = minOf(width, height) / 56f
         paint.style = Paint.Style.STROKE; paint.strokeWidth = 3f * u
         canvas.drawRoundRect(12f*u, 13f*u, 44f*u, 39f*u, 9f*u, 9f*u, paint)
         paint.style = Paint.Style.FILL
-        val tail = android.graphics.Path().apply {
+        tail.apply {
+            reset()
             moveTo(19f*u, 38f*u); lineTo(15f*u, 47f*u); lineTo(28f*u, 39f*u); close()
         }
         canvas.drawPath(tail, paint)
         canvas.drawCircle(22f*u, 26f*u, 2f*u, paint)
         canvas.drawCircle(34f*u, 26f*u, 2f*u, paint)
     }
+}
+
+/** Touch and accessibility clicks share View's normal click dispatch. */
+internal class TimerOverlayRoot(context: Context) : FrameLayout(context) {
+    override fun performClick(): Boolean = super.performClick()
 }
 
 internal class InstagramTimerOverlayUi(
@@ -84,7 +92,7 @@ internal object InstagramTimerOverlayViewFactory {
         return TimerBounds(left, top, right, bottom)
     }
 
-    @TargetApi(Build.VERSION_CODES.P)
+    @RequiresApi(Build.VERSION_CODES.P)
     private fun cutoutInsets(insets: WindowInsets): Rect = insets.displayCutout?.let {
         Rect(it.safeInsetLeft, it.safeInsetTop, it.safeInsetRight, it.safeInsetBottom)
     } ?: Rect()
@@ -124,7 +132,7 @@ internal object InstagramTimerOverlayViewFactory {
         }
         val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             addView(icon); addView(label); addView(dismiss) }
-        val root = FrameLayout(context).apply {
+        val root = TimerOverlayRoot(context).apply {
             minimumWidth = dp(context,56); minimumHeight = dp(context,56); addView(row)
             background = GradientDrawable().apply { setColor(Color.rgb(18,34,58)); cornerRadius=28*density; setStroke(dp(context,2),Color.rgb(183,244,216)) }
             isClickable = true; isFocusable = true

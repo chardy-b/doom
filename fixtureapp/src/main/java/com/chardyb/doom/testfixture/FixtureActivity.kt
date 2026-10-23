@@ -1,6 +1,7 @@
 package com.chardyb.doom.testfixture
 
-import android.app.Activity
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -8,11 +9,14 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /** An original public-UI fixture. Intents cannot select surfaces or grant access. */
-class FixtureActivity : Activity() {
+class FixtureActivity : ComponentActivity() {
     private var surface = "feed"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { surface = "unknown"; render() }
+        })
         surface = savedInstanceState?.getString("surface") ?: "feed"
         render()
     }
@@ -21,9 +25,6 @@ class FixtureActivity : Activity() {
         outState.putString("surface", surface)
         super.onSaveInstanceState(outState)
     }
-
-    @Deprecated("The test fixture deliberately makes Back a public Unknown transition")
-    override fun onBackPressed() { surface = "unknown"; render() }
 
     private fun render() {
         val layout = LinearLayout(this).apply {

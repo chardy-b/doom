@@ -111,6 +111,45 @@ class EntryGateOverlayUiTest {
         }
     }
 
+    @Test fun screenOriginPlacementIsStableInBothTextDirections() {
+        rule.scenario.onActivity { activity ->
+            listOf(java.util.Locale.ENGLISH, java.util.Locale.forLanguageTag("ar")).forEach { locale ->
+                val configuration = Configuration(activity.resources.configuration).apply { setLayoutDirection(locale) }
+                val context = activity.createConfigurationContext(configuration)
+                val direction = configuration.layoutDirection
+                val descriptor = GateWindowDescriptor(GateWindowRole.MESSAGES, GateWindowRect(20, 400, 360, 52))
+                val params = GateOverlayWindows.parameters(descriptor, direction)
+                val expected = android.view.Gravity.getAbsoluteGravity(
+                    android.view.Gravity.TOP or android.view.Gravity.START, View.LAYOUT_DIRECTION_LTR)
+                assertEquals(expected, android.view.Gravity.getAbsoluteGravity(params.gravity, direction))
+                assertEquals(20, params.x)
+                val ui = EntryGateOverlayViewFactory.create(context, {}, {}, {})
+                try {
+                    ui.layoutDecoration(20, 24, 360, 300)
+                    ui.visualRoot.measure(View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY))
+                    ui.visualRoot.layout(0, 0, 400, 800)
+                    val body = (ui.visualRoot as FrameLayout).getChildAt(0)
+                    assertEquals(20, body.left)
+                    assertEquals(24, body.top)
+                } finally { ui.dispose() }
+            }
+        }
+    }
+
+    @Test fun timerAccessibilityClickUsesTheSameToggleAsTouchClick() {
+        rule.scenario.onActivity { activity ->
+            var toggles = 0
+            val ui = InstagramTimerOverlayViewFactory.create(activity, { toggles++ }, {}, { _, _ -> }, {})
+            try {
+                assertTrue(ui.root.performClick())
+                assertEquals(1, toggles)
+                assertTrue(ui.root.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null))
+                assertEquals(2, toggles)
+            } finally { ui.dispose() }
+        }
+    }
+
     @Test fun progressStaysWithHeadingAboveMessagesAcrossFontSizesAndResizes() {
         rule.scenario.onActivity { activity ->
             var checkedLayouts = 0
@@ -277,16 +316,25 @@ class EntryGateOverlayUiTest {
         val original = activeScenario.let { var value=true; it.onActivity { value=Observation.sessionTimerEnabled }; value }
         try {
             assertTrue(swipeUntilVisible("Instagram session timer"))
-            val switch = device.findObject(By.desc("Instagram session timer"))
-            assertNotNull("actual timer Switch must have stable semantics", switch)
+            // Compose exposes the spoken label on a child; checked state belongs to its switch parent.
+            val switch = requireNotNull(device.wait(Until.findObject(
+                By.pkg("com.chardyb.doom").checkable(true)
+                    .hasDescendant(By.desc("Instagram session timer"))), 5_000)) {
+                "actual timer Switch must have stable semantics"
+            }
+            assertTrue("timer Switch must expose its current checked state",
+                switch.wait(Until.checked(original), 5_000))
             if (!switch.isChecked) switch.click()
+            assertTrue(switch.wait(Until.checked(true), 5_000))
             assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000))
             assertTrue(switch.isChecked)
             switch.click()
+            assertTrue(switch.wait(Until.checked(false), 5_000))
             assertTrue(device.wait(Until.hasObject(By.text("Disabled")), 5_000))
             assertFalse(switch.isChecked)
             capture("09-dashboard-timer-disabled")
             switch.click()
+            assertTrue(switch.wait(Until.checked(true), 5_000))
             assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000)); assertTrue(switch.isChecked)
             capture("10-dashboard-timer-reenabled")
         } finally { activeScenario.onActivity { Observation.setSessionTimerEnabled(it, original) } }

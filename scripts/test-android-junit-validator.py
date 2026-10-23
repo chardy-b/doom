@@ -56,6 +56,13 @@ class ValidatorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE.validate("supplemental", self.write(cases + [self.canonical_cases()[0]]))
 
+    def test_canonical_rejects_zero_tests_or_only_the_first_requested_class(self):
+        cases = [case for case in self.canonical_cases() if case[0] == "com.chardy.doom.EntryGateOverlayUiTest"]
+        self.assertTrue(cases)
+        for rejected in ([], cases):
+            with self.assertRaises(ValueError):
+                MODULE.validate("canonical", self.write(rejected))
+
     def test_supported_annotation_ordering_is_enumerated(self):
         source_root = Path(self.temp.name) / "source"
         source_root.mkdir()

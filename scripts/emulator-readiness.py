@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded, output-sanitized API 35 emulator readiness gate."""
+"""Bounded, output-sanitized readiness; canonical API 35 unless explicitly API 37."""
 import os
 import pathlib
 import re
@@ -82,8 +82,9 @@ def main(argv: list[str]) -> int:
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise NotReady("GitHub Actions is required")
     serial = emulator_serial(os.environ.get("EMULATOR_PORT", ""))
-    if len(argv) != 2:
-        raise NotReady("one prebuilt APK path is required")
+    if len(argv) not in (2, 3) or (len(argv) == 3 and argv[2] not in {"35", "37"}):
+        raise NotReady("one prebuilt APK path and optional API 35 or 37 are required")
+    expected_sdk = argv[2] if len(argv) == 3 else "35"
     apk = pathlib.Path(argv[1])
     expected = pathlib.Path("app/build/outputs/apk/debug/app-debug.apk")
     if apk != expected or apk.is_symlink() or not apk.is_file() or apk.stat().st_size == 0:
@@ -127,7 +128,7 @@ def main(argv: list[str]) -> int:
 
     poll("online", lambda: (adb("get-state") or "").strip() == "device")
     poll("boot", lambda: (adb("shell", "getprop", "sys.boot_completed") or "").strip() == "1")
-    poll("API", lambda: (adb("shell", "getprop", "ro.build.version.sdk") or "").strip() == "35")
+    poll("API", lambda: (adb("shell", "getprop", "ro.build.version.sdk") or "").strip() == expected_sdk)
 
     def is_emulator():
         boot = adb("shell", "getprop", "ro.boot.qemu")
@@ -158,7 +159,7 @@ def main(argv: list[str]) -> int:
     # Instrumentation must start from a fresh package after the launch proof.
     poll("clear", lambda: adb("shell", "pm", "clear", PACKAGE) is not None)
     poll("stop", lambda: adb("shell", "am", "force-stop", PACKAGE) is not None)
-    print("Emulator readiness passed (API 35, unlocked, Doom top-resumed, app data cleared).")
+    print(f"Emulator readiness passed (API {expected_sdk}, unlocked, Doom top-resumed, app data cleared).")
     return 0
 
 
