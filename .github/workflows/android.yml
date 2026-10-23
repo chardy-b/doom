@@ -43,7 +43,7 @@ jobs:
         with:
           packages: ''
       - name: Install compile SDK 37 packages
-        run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0'
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Host source and evidence checks
         run: |
           python3 -B scripts/test-ci-isolation.py
@@ -103,7 +103,7 @@ jobs:
         with:
           packages: ''
       - name: Install compile SDK 37 packages
-        run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0'
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Compile canonical APK and Android tests before emulator
         run: |
           set -o pipefail

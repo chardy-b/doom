@@ -43,7 +43,7 @@ jobs:
         with:
           packages: ''
       - name: Install compile SDK 37 packages
-        run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0'
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Deterministic supplemental preparation
         id: preparation
         run: |

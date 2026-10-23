@@ -43,14 +43,14 @@ jobs:
           packages: ''
       - name: Compile compatibility candidate
         run: |
-          sdkmanager 'platforms;android-37' 'build-tools;36.0.0'
+          sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
           ./gradlew --no-daemon --stacktrace :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Enable runner-group KVM access
         run: sudo chgrp "$(id -gn)" /dev/kvm && sudo chmod 660 /dev/kvm
       - name: Run production overlay and UI regressions on API 37
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
-          api-level: 37
+          api-level: '37.0'
           target: google_apis
           arch: x86_64
           profile: pixel_2
