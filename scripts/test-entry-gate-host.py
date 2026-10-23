@@ -10,6 +10,7 @@ import tempfile
 
 REPO = Path(__file__).resolve().parents[1]
 MAIN = [
+    "YouTubeShorts.kt",
     "OverlayWindowRemover.kt",
     "OverlayRemovalRetryLoop.kt",
     "GateOverlayWindowLayout.kt",
@@ -29,6 +30,7 @@ MAIN = [
     "RemovalTraceStore.kt",
 ]
 TESTS = [
+    "YouTubeShortsTest.kt",
     "OverlayWindowRemoverTest.kt",
     "OverlayRemovalRetryLoopTest.kt",
     "GateOverlayWindowLayoutTest.kt",
@@ -47,6 +49,7 @@ TESTS = [
     "OverlayRemovalTraceTest.kt",
 ]
 TEST_CLASSES = [
+    "com.chardy.doom.YouTubeShortsTest",
     "com.chardy.doom.OverlayWindowRemoverTest",
     "com.chardy.doom.OverlayRemovalRetryLoopTest",
     "com.chardy.doom.GateOverlayWindowLayoutTest",

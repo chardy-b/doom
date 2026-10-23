@@ -8,11 +8,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
-/** Main-thread state. Only two consents and the timer-enabled preference are persisted. */
+/** Main-thread state. Persist only explicit consent/preferences, never observations or clocks. */
 object Observation {
     private const val CONSENT_KEY = "sanitized_structural_report_v2"
     private const val ENTRY_GATE_CONSENT_KEY = "instagram_diagnostic_entry_gate_v1"
     internal const val SESSION_TIMER_ENABLED_KEY = "instagram_session_timer_enabled_v1"
+    internal const val YOUTUBE_SHORTS_ENABLED_KEY = "youtube_shorts_reminders_v1"
+    var youtubeShortsEnabled by mutableStateOf(false)
+        private set
     var gateConsent by mutableStateOf(false)
         private set
     var sessionTimerEnabled by mutableStateOf(true)
@@ -58,6 +61,7 @@ object Observation {
         consent = prefs.getBoolean(CONSENT_KEY, false)
         gateConsent = prefs.getBoolean(ENTRY_GATE_CONSENT_KEY, false)
         sessionTimerEnabled = prefs.getBoolean(SESSION_TIMER_ENABLED_KEY, true)
+        youtubeShortsEnabled = prefs.getBoolean(YOUTUBE_SHORTS_ENABLED_KEY, false)
         if (!consent) clear()
     }
 
@@ -72,7 +76,17 @@ object Observation {
         val disableLiveReminder = reminderSettings.enabled && !settings.enabled
         ReminderSettingsStore.write(context, settings)
         reminderSettings = settings
-        if (disableLiveReminder) DoomAccessibilityService.cancelEntryGate()
+        if (disableLiveReminder) {
+            DoomAccessibilityService.cancelEntryGate()
+            DoomAccessibilityService.cancelYouTubeReminder()
+        }
+    }
+
+    fun setYouTubeShortsEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
+            .putBoolean(YOUTUBE_SHORTS_ENABLED_KEY, enabled).apply()
+        youtubeShortsEnabled = enabled
+        if (!enabled) DoomAccessibilityService.cancelYouTubeReminder()
     }
 
     fun setGateConsent(context: Context, accepted: Boolean) {

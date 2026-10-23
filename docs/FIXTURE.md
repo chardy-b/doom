@@ -1,4 +1,8 @@
 
+## WIL-223 scope
+
+The YouTube Shorts candidate uses new synthetic production-controller/service tests in canonical instrumentation. This independent fixture remains unchanged and cannot establish real YouTube compatibility. Existing screenshot manifests, artifact SHA binding and signing eligibility remain unchanged. See [WIL-223 validation](WIL-223-VALIDATION.md) for the pending actual-phone matrix.
+
 ## Current WIL-181 CI boundary (2026-09-13)
 
 This document includes historical WIL-149 evidence below; those records are not WIL-181 validation. The signer-compatible `Android diagnostic CI` workflow now owns canonical baseline and API 35 instrumentation. `Android supplemental CI` independently runs the five explicitly marked synthetic UI methods and the independent fixture on one emulator. Supplemental failure remains visible and requires manual severity classification, but cannot by itself change the canonical workflow conclusion or authorize signing. Privacy, safety, core-action, and provenance findings remain blockers regardless of lane.

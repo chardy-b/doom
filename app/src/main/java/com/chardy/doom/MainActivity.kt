@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
+import androidx.compose.ui.res.stringResource
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -268,6 +269,18 @@ private fun Home(
         Text(if (accessibilityEnabled) "Accessibility: Enabled" else "Accessibility: Not enabled", color = Paper)
         Action("Open Accessibility Settings") {
             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+    }
+    Frame {
+        Text(stringResource(R.string.youtube_disclosure), color = Paper)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(
+                checked = Observation.youtubeShortsEnabled,
+                onCheckedChange = { Observation.setYouTubeShortsEnabled(context, it) },
+                modifier = Modifier.testTag("youtube_shorts_switch")
+                    .semantics { contentDescription = "YouTube Shorts reminders" },
+            )
+            Text(stringResource(R.string.youtube_toggle), Modifier.padding(start = 12.dp), color = Paper)
         }
     }
     DurationSettings(settings, save)
