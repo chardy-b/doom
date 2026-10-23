@@ -13,6 +13,9 @@ image='system-images;android-37.0;google_apis;x86_64'
 timeout 300s sdkmanager emulator "$image" > "$report/sdk-setup.log" 2>&1
 printf 'no\n' | avdmanager create avd --force --name doom-api37 --path "$ANDROID_AVD_HOME/doom-api37.avd" --package "$image" --device pixel_2 > "$report/avd-setup.log" 2>&1
 test -s "$ANDROID_AVD_HOME/doom-api37.ini"
+cp "$ANDROID_AVD_HOME/doom-api37.ini" "$report/avd.ini"
+cp "$ANDROID_AVD_HOME/doom-api37.avd/config.ini" "$report/avd-config.ini"
+grep -Fxq 'target=android-37.0' "$report/avd.ini"
 timeout 10s adb start-server
 "$ANDROID_HOME/emulator/emulator" -avd doom-api37 -port "$EMULATOR_PORT" -memory 4096 \
   -no-window -gpu software -noaudio -no-boot-anim -camera-back none -no-snapshot \
