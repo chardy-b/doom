@@ -520,7 +520,7 @@ class DoomAccessibilityService : AccessibilityService() {
             failOpen(RemovalTraceMark.EVENT_FAILURE)
         } finally {
             // Instagram has already performed its unchanged foreign-event cleanup here.
-            youtube.onEvent(event?.packageName, applicationContext.packageName)
+            youtube.onEvent(event?.packageName, BuildConfig.APPLICATION_ID)
         }
     }
 

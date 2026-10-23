@@ -40,6 +40,8 @@ Required before review/acceptance: all host gates including CI isolation/invento
 
 ## Consenting phone matrix — unexecuted
 
+Canonical run `39921817981` at `16886fc5679298494d3c4e65d08711b888931ea9` passed baseline (173 unit tests; zero lint errors, 18 warnings) but failed two of 166 device tests. The preserved JUnit identifies `StructuralDiagnosticUiTest.interruptionDisconnectAndDestructionClearEverythingAndRejectDelayedCallbacks` and `delayedInstagramEventWithNullActiveRootInvalidatesReport`: both throw at `DoomAccessibilityService.kt:523` because the new `finally` dispatch dereferenced `applicationContext` on an intentionally unbound service. All nine new YouTube device tests passed. The repair uses the existing compile-time application ID for own-event attribution, eliminating this unnecessary context read without changing observation authority. A fresh-SHA CI result is required; the failed run is not acceptance. Supplemental run `39921818053` at that head passed five UI/six fixture tests; downloaded reports, 14 UI/13 fixture captures and all manifest hashes were inspected/verified independently.
+
 Record only signed artifact SHA/version, device/Android/YouTube versions, broad surface category, timing and pass/fail. Never collect media, titles, captions, accounts, descriptions, private screenshots or trees.
 
 - New explicit opt-in, independent revoke, global disable and explicit service Stop.
