@@ -316,8 +316,12 @@ class EntryGateOverlayUiTest {
         val original = activeScenario.let { var value=true; it.onActivity { value=Observation.sessionTimerEnabled }; value }
         try {
             assertTrue(swipeUntilVisible("Instagram session timer"))
-            val switch = device.findObject(By.desc("Instagram session timer").checkable(true))
-            assertNotNull("actual timer Switch must have stable semantics", switch)
+            // Compose exposes the spoken label on a child; checked state belongs to its switch parent.
+            val switch = requireNotNull(device.wait(Until.findObject(
+                By.pkg("com.chardyb.doom").checkable(true)
+                    .hasDescendant(By.desc("Instagram session timer"))), 5_000)) {
+                "actual timer Switch must have stable semantics"
+            }
             assertTrue("timer Switch must expose its current checked state",
                 switch.wait(Until.checked(original), 5_000))
             if (!switch.isChecked) switch.click()

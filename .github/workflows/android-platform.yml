@@ -49,20 +49,7 @@ jobs:
       - name: Enable runner-group KVM access
         run: sudo chgrp "$(id -gn)" /dev/kvm && sudo chmod 660 /dev/kvm
       - name: Run production overlay and UI regressions on API 37
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
-        with:
-          api-level: '37.0'
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          ram-size: 4096M
-          emulator-port: 5554
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
-          disable-animations: true
-          script: |
-            python3 scripts/emulator-readiness.py app/build/outputs/apk/debug/app-debug.apk 37 > app/build/reports/api37-compatibility/readiness.log
-            ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.notAnnotation=com.chardy.doom.SupplementalEvidence -Pandroid.testInstrumentationRunnerArguments.class=com.chardy.doom.EntryGateOverlayUiTest,com.chardy.doom.EntryGateServiceActionTest,com.chardy.doom.StructuralDiagnosticUiTest
-            python3 scripts/validate-android-junit.py platform app/build/outputs/androidTest-results/connected
+        run: bash scripts/ci-api37.sh
       - name: Preserve API 37 test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
