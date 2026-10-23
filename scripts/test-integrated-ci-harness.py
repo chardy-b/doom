@@ -90,7 +90,7 @@ class ReadinessTests(unittest.TestCase):
 """
 
     def run_gate(self, policy=None, activities="topResumedActivity=ActivityRecord{x com.chardyb.doom/com.chardy.doom.MainActivity t1}\n",
-                 boot=None, qemu=("1\n", "\n"), _sleep=None):
+                 boot=None, qemu=("1\n", "\n"), _sleep=None, expected_sdk=None):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             apk = root / "app/build/outputs/apk/debug/app-debug.apk"
@@ -108,7 +108,7 @@ class ReadinessTests(unittest.TestCase):
                 if args == ["get-state"]: return Completed("device\n")
                 if args == ["shell", "getprop", "sys.boot_completed"]:
                     value = boot[min(state["boot"], len(boot) - 1)]; state["boot"] += 1; return Completed(value)
-                if args == ["shell", "getprop", "ro.build.version.sdk"]: return Completed("35\n")
+                if args == ["shell", "getprop", "ro.build.version.sdk"]: return Completed((expected_sdk or "35") + "\n")
                 if args == ["shell", "getprop", "ro.boot.qemu"]: return Completed(qemu[0])
                 if args == ["shell", "getprop", "ro.kernel.qemu"]: return Completed(qemu[1])
                 if args == ["shell", "cmd", "package", "path", "android"]: return Completed("package:android\n")
@@ -125,10 +125,21 @@ class ReadinessTests(unittest.TestCase):
                 old = Path.cwd()
                 os.chdir(root)
                 try:
-                    result = readiness.main(["emulator-readiness.py", str(Path("app/build/outputs/apk/debug/app-debug.apk"))])
+                    args = ["emulator-readiness.py", str(Path("app/build/outputs/apk/debug/app-debug.apk"))]
+                    if expected_sdk is not None:
+                        args.append(expected_sdk)
+                    result = readiness.main(args)
                 finally:
                     os.chdir(old)
             return result, calls
+
+    def test_platform_api37_is_explicit_and_other_versions_are_rejected(self):
+        self.assertEqual(0, self.run_gate(expected_sdk="37")[0])
+        env = {"GITHUB_ACTIONS": "true", "EMULATOR_PORT": "5554"}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(readiness.subprocess, "run") as run:
+            with self.assertRaisesRegex(readiness.NotReady, "API 35 or 37"):
+                readiness.main(["emulator-readiness.py", "app/build/outputs/apk/debug/app-debug.apk", "36"])
+            run.assert_not_called()
 
     def test_each_known_unlocked_format_and_command_contract(self):
         formats = ("WindowManagerPolicy\n  mShowingLockscreen=false\n",

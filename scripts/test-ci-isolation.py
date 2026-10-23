@@ -29,6 +29,8 @@ class SourceContracts(unittest.TestCase):
   self.assertEqual(2,(can+sup).count('android-emulator-runner@'))
   platform=(ROOT/'.github/workflows/android-platform.yml').read_text()
   self.assertIn("api-level: '37.0'",platform)
+  self.assertIn('emulator-readiness.py app/build/outputs/apk/debug/app-debug.apk 37',platform)
+  self.assertIn('validate-android-junit.py platform',platform)
   self.assertNotIn('ci-device.sh',platform)
   self.assertNotIn('doom-device-evidence-',platform)
   self.assertIn('api-level: 35',can)

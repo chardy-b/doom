@@ -43,6 +43,7 @@ jobs:
           packages: ''
       - name: Compile compatibility candidate
         run: |
+          mkdir -p app/build/reports/api37-compatibility
           sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
           ./gradlew --no-daemon --stacktrace :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Enable runner-group KVM access
@@ -54,16 +55,21 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
+          ram-size: 4096M
           emulator-port: 5554
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
           disable-animations: true
-          script: ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.notAnnotation=com.chardy.doom.SupplementalEvidence -Pandroid.testInstrumentationRunnerArguments.class=com.chardy.doom.EntryGateOverlayUiTest,com.chardy.doom.EntryGateServiceActionTest,com.chardy.doom.StructuralDiagnosticUiTest
+          script: |
+            python3 scripts/emulator-readiness.py app/build/outputs/apk/debug/app-debug.apk 37 > app/build/reports/api37-compatibility/readiness.log
+            ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.notAnnotation=com.chardy.doom.SupplementalEvidence -Pandroid.testInstrumentationRunnerArguments.class=com.chardy.doom.EntryGateOverlayUiTest,com.chardy.doom.EntryGateServiceActionTest,com.chardy.doom.StructuralDiagnosticUiTest
+            python3 scripts/validate-android-junit.py platform app/build/outputs/androidTest-results/connected
       - name: Preserve API 37 test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: doom-api37-reports-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}
           path: |
+            app/build/reports/api37-compatibility/
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
           if-no-files-found: warn

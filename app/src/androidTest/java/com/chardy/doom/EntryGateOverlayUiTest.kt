@@ -316,16 +316,21 @@ class EntryGateOverlayUiTest {
         val original = activeScenario.let { var value=true; it.onActivity { value=Observation.sessionTimerEnabled }; value }
         try {
             assertTrue(swipeUntilVisible("Instagram session timer"))
-            val switch = device.findObject(By.desc("Instagram session timer"))
+            val switch = device.findObject(By.desc("Instagram session timer").checkable(true))
             assertNotNull("actual timer Switch must have stable semantics", switch)
+            assertTrue("timer Switch must expose its current checked state",
+                switch.wait(Until.checked(original), 5_000))
             if (!switch.isChecked) switch.click()
+            assertTrue(switch.wait(Until.checked(true), 5_000))
             assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000))
             assertTrue(switch.isChecked)
             switch.click()
+            assertTrue(switch.wait(Until.checked(false), 5_000))
             assertTrue(device.wait(Until.hasObject(By.text("Disabled")), 5_000))
             assertFalse(switch.isChecked)
             capture("09-dashboard-timer-disabled")
             switch.click()
+            assertTrue(switch.wait(Until.checked(true), 5_000))
             assertTrue(device.wait(Until.hasObject(By.text("Enabled")), 5_000)); assertTrue(switch.isChecked)
             capture("10-dashboard-timer-reenabled")
         } finally { activeScenario.onActivity { Observation.setSessionTimerEnabled(it, original) } }
