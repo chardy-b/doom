@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.PersistableBundle
+import androidx.core.content.edit
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -53,8 +54,11 @@ object Observation {
     fun load(context: Context) {
         reminderSettings = ReminderSettingsStore.read(context)
         val prefs = context.getSharedPreferences("consent", Context.MODE_PRIVATE)
-        prefs.edit().remove("accepted").remove("structural_fingerprints_v1")
-            .remove("sanitized_structural_report_v1").apply()
+        prefs.edit {
+            remove("accepted")
+            remove("structural_fingerprints_v1")
+            remove("sanitized_structural_report_v1")
+        }
         consent = prefs.getBoolean(CONSENT_KEY, false)
         gateConsent = prefs.getBoolean(ENTRY_GATE_CONSENT_KEY, false)
         sessionTimerEnabled = prefs.getBoolean(SESSION_TIMER_ENABLED_KEY, true)
@@ -62,8 +66,9 @@ object Observation {
     }
 
     fun setSessionTimerEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
-            .putBoolean(SESSION_TIMER_ENABLED_KEY, enabled).apply()
+        context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit {
+            putBoolean(SESSION_TIMER_ENABLED_KEY, enabled)
+        }
         sessionTimerEnabled = enabled
         DoomAccessibilityService.sessionTimerPreferenceChanged(enabled)
     }
@@ -76,8 +81,9 @@ object Observation {
     }
 
     fun setGateConsent(context: Context, accepted: Boolean) {
-        context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
-            .putBoolean(ENTRY_GATE_CONSENT_KEY, accepted).apply()
+        context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit {
+            putBoolean(ENTRY_GATE_CONSENT_KEY, accepted)
+        }
         gateConsent = accepted
         if (!accepted) {
             RemovalTraceStore.process.clear()
@@ -86,9 +92,12 @@ object Observation {
     }
 
     fun accept(context: Context, accepted: Boolean) {
-        context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit()
-            .remove("accepted").remove("structural_fingerprints_v1")
-            .remove("sanitized_structural_report_v1").putBoolean(CONSENT_KEY, accepted).apply()
+        context.getSharedPreferences("consent", Context.MODE_PRIVATE).edit {
+            remove("accepted")
+            remove("structural_fingerprints_v1")
+            remove("sanitized_structural_report_v1")
+            putBoolean(CONSENT_KEY, accepted)
+        }
         if (consent != accepted) clear()
         consent = accepted
         if (!accepted) {

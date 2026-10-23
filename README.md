@@ -27,7 +27,7 @@ Implementation follows [the approved WIL-235 plan](docs/plans/2026-10-04-wil-235
 
 ## Build and test
 
-The lint-cleanup migration requires Java 17 and Android SDK 37 to compile. It uses AGP 9.4.1, Gradle 9.6.0 (with a pinned distribution checksum), Kotlin 2.4.21, and updated stable AndroidX libraries. GitHub Actions provisions SDK 37 while preserving the canonical API 35 instrumentation/evidence gate and separate supplemental UI/fixture lane; an additional API 37 compatibility workflow tests overlay and UI regressions without producing signer evidence. The existing SDK-35-only Codex Cloud image cannot build this candidate until its environment is reconfigured; do not install SDK packages during the agent phase. GitHub Actions alone owns emulator instrumentation, signing, and release. Migration validation is pending; no new passing build or device result is implied here.
+The lint-cleanup migration requires Java 17 and Android SDK 37.0 to compile. It uses AGP 9.4.1, Gradle 9.8.2 (with a pinned distribution checksum), Kotlin 2.4.21, and updated stable AndroidX libraries. GitHub Actions provisions SDK 37.0 while preserving the canonical API 35 instrumentation/evidence gate and separate supplemental UI/fixture lane; an additional API 37 compatibility workflow tests overlay and UI regressions without producing signer evidence. The existing SDK-35-only Codex Cloud image cannot build this candidate until its environment is reconfigured; do not install SDK packages during the agent phase. GitHub Actions alone owns emulator instrumentation, signing, and release. See exact-head CI for build and device validation.
 
 ```text
 :app:assembleDebug

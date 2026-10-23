@@ -1,6 +1,6 @@
 package com.chardy.doom
 
-import android.annotation.TargetApi
+import androidx.annotation.RequiresApi
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -92,7 +92,7 @@ internal object InstagramTimerOverlayViewFactory {
         return TimerBounds(left, top, right, bottom)
     }
 
-    @TargetApi(Build.VERSION_CODES.P)
+    @RequiresApi(Build.VERSION_CODES.P)
     private fun cutoutInsets(insets: WindowInsets): Rect = insets.displayCutout?.let {
         Rect(it.safeInsetLeft, it.safeInsetTop, it.safeInsetRight, it.safeInsetBottom)
     } ?: Rect()
