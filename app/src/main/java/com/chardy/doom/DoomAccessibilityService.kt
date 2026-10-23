@@ -791,7 +791,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             ).apply {
-                gravity = Gravity.TOP or Gravity.LEFT
+                gravity = overlayScreenOriginGravity(resources.configuration.layoutDirection)
                 val b = timerBounds(manager, null, created.root.measuredWidth.coerceAtLeast(56.dp()),
                     created.root.measuredHeight.coerceAtLeast(56.dp()))
                 x = b.snapX(timerEdge); y = b.top + ((b.bottom - b.top) * .42f).toInt()
@@ -1075,7 +1075,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 if (gateWindows !== episode || !callbackGuard.acceptsVisible(episode.token)) return
                 if (OverlayWindowRemover.attachment(record) != OverlayAttachment.ATTACHED)
                     throw IllegalStateException("Gate window no longer attached")
-                val params = GateOverlayWindows.parameters(descriptor)
+                val params = GateOverlayWindows.parameters(descriptor, resources.configuration.layoutDirection)
                 val unchanged = record.params?.let { current ->
                     WindowManager.LayoutParams().apply { copyFrom(current) }.copyFrom(params) == 0
                 } ?: false
@@ -1130,7 +1130,7 @@ class DoomAccessibilityService : AccessibilityService() {
                 val layout = gateLayout(manager, ui) ?: throw IllegalStateException("Gate does not fit")
                 layout.zip(ui.windowRoots).forEach { (descriptor, root) ->
                     if (!gateInstallAuthorized(episode, activeTicket)) throw IllegalStateException("Stale gate install")
-                    val parameters = GateOverlayWindows.parameters(descriptor)
+                    val parameters = GateOverlayWindows.parameters(descriptor, resources.configuration.layoutDirection)
                     val record = ownedWindow(root, manager, descriptor.role, parameters)
                     episode.records += record
                     record.addAttempted = true

@@ -393,7 +393,8 @@ private fun Debug(
                 Text("Take a breath.", color = Paper, fontSize = 30.sp)
                 PixelBloom(
                     if (reduceMotion || systemStatic) BreathingVisuals.staticProgress()
-                    else 1f - remaining / 5_000f
+                    else 1f - remaining / 5_000f,
+                    Modifier.height(180.dp),
                 )
                 Text("Breathe naturally. No need to hold.", color = Paper)
                 Text("${(remaining + 999L) / 1_000L}s remaining", color = Gold)
@@ -562,7 +563,7 @@ private fun SegmentedProgress(segments: List<Float>) {
 }
 
 @Composable
-private fun PixelBloom(progress: Float, modifier: Modifier = Modifier.height(180.dp)) {
+private fun PixelBloom(progress: Float, modifier: Modifier = Modifier) {
     Canvas(modifier.fillMaxWidth().semantics { contentDescription = "A quiet pixel bloom" }) {
         BreathingVisuals.visitGeometry(progress, size.width, size.height) { left, top, right, bottom, alpha, _, color, _, _ ->
             drawRect(

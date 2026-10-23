@@ -7,6 +7,10 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 
+/** Geometry is measured from the physical screen origin, independently of text direction. */
+internal fun overlayScreenOriginGravity(layoutDirection: Int): Int =
+    Gravity.TOP or if (layoutDirection == View.LAYOUT_DIRECTION_RTL) Gravity.END else Gravity.START
+
 internal interface OverlayPhysicalPlatform {
     fun isAttached(view: View): Boolean
     /** A WindowManager root also owns a pending first traversal, before View attachment. */
@@ -89,7 +93,7 @@ internal class GateOverlayWindows(val token: OverlayCallbackToken, val ui: Entry
     fun dispose() { ui.dispose(); records.forEach { it.release() } }
 
     companion object {
-        fun parameters(descriptor: GateWindowDescriptor): WindowManager.LayoutParams = WindowManager.LayoutParams(
+        fun parameters(descriptor: GateWindowDescriptor, layoutDirection: Int = View.LAYOUT_DIRECTION_LTR): WindowManager.LayoutParams = WindowManager.LayoutParams(
             descriptor.bounds.width, descriptor.bounds.height,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -97,7 +101,7 @@ internal class GateOverlayWindows(val token: OverlayCallbackToken, val ui: Entry
                 (if (!descriptor.touchable) WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else 0),
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.TOP or Gravity.LEFT
+            gravity = overlayScreenOriginGravity(layoutDirection)
             x = descriptor.bounds.x; y = descriptor.bounds.y; alpha = descriptor.alpha
         }
     }
