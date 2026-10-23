@@ -104,10 +104,11 @@ internal object EntryGateOverlayViewFactory{
    if(Build.VERSION.SDK_INT>=28)isAccessibilityHeading=true
   }
   body.addView(phase,LinearLayout.LayoutParams(-1,-2))
+  val progress=SegmentedBreathProgressView(context).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO}
+  // Keep progress with the heading, away from the independently positioned action windows.
+  body.addView(progress,LinearLayout.LayoutParams(-1,dp(if(compactLandscape)8 else 10)).apply{topMargin=dp(12)})
   val pixel=PixelBreathingView(context).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO}
   body.addView(pixel,LinearLayout.LayoutParams(-1,0,1f))
-  val progress=SegmentedBreathProgressView(context).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO}
-  body.addView(progress,LinearLayout.LayoutParams(-1,dp(if(compactLandscape)8 else 10)))
   val skip=button(context,"Skip to Messages",BreathingVisuals.INK,BreathingVisuals.GOLD,dp(52)).apply{setOnClickListener{onSkipToMessages()}}
   val leave=button(context,"Leave Instagram",BreathingVisuals.PAPER,BreathingVisuals.PANEL,dp(48)).apply{setOnClickListener{onLeaveInstagram()}}
   val debug=button(context,"Capture debug",BreathingVisuals.GOLD,BreathingVisuals.INK,dp(48)).apply{
