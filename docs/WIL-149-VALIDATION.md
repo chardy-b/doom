@@ -1,3 +1,7 @@
+## WIL-223 YouTube boundary
+
+The [WIL-223 candidate](WIL-223-VALIDATION.md) adds an independently consented, default-off, ID-only native YouTube path. It does not use Instagram reports or share gate/cooldown state. All existing Instagram consent, classification, routing, timer and physical-detachment contracts below remain applicable. Real YouTube compatibility and the consenting phone matrix remain unverified; historical Instagram evidence does not validate YouTube.
+
 ## WIL-235 candidate — unexecuted validation
 
 The approved [WIL-235 plan](plans/2026-10-04-wil-235-overlay-wedge-fix-plan.md) supersedes the historical single-window/disable-on-exhaustion behavior below. The production reminder is one transparent non-touchable visual plus three button windows, all under one token and an all-window detach barrier. No new permissions, foreground service, selectors, report persistence or signing changes are included. WIL-222 admission/visible-messaging policy and routing remain in place.

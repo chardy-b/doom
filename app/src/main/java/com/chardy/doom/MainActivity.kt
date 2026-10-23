@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
+import androidx.compose.ui.res.stringResource
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -275,6 +276,18 @@ private fun Home(
     Frame {
         Text("Preview", color = Gold, fontFamily = FontFamily.Monospace)
         Action("Preview breathing reminder", onClick = preview)
+    }
+    Frame {
+        Text(stringResource(R.string.youtube_disclosure), color = Paper)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(
+                checked = Observation.youtubeShortsEnabled,
+                onCheckedChange = { Observation.setYouTubeShortsEnabled(context, it) },
+                modifier = Modifier.testTag("youtube_shorts_switch")
+                    .semantics { contentDescription = "YouTube Shorts reminders" },
+            )
+            Text(stringResource(R.string.youtube_toggle), Modifier.padding(start = 12.dp), color = Paper)
+        }
     }
 }
 

@@ -91,6 +91,12 @@ internal class EntryGateOverlayUi(val visualRoot:View,val phaseLabel:TextView,va
  fun dispose(){if(disposed)return;closeInteraction();disposed=true;windowRoots.forEach{it.setOnApplyWindowInsetsListener(null)}}
 }
 internal object EntryGateOverlayViewFactory{
+ fun createYouTube(context:Context,onLeave:()->Unit):EntryGateOverlayUi =
+  create(context,{},onLeave,{}).also{ui->
+   // Only the visual and Leave root are ever installed by the YouTube owner.
+   listOf(ui.skipToMessages,ui.debugReport).forEach{it.visibility=View.GONE;it.isEnabled=false;it.setOnClickListener(null)}
+   ui.leaveInstagram.setText(R.string.youtube_leave)
+  }
  fun create(context:Context,onSkipToMessages:()->Unit,onLeaveInstagram:()->Unit,onDebugReport:()->Unit,frameScheduler:OverlayFrameScheduler?=null):EntryGateOverlayUi{
   fun dp(v:Int)=(v*context.resources.displayMetrics.density).toInt()
   val compactLandscape=context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE

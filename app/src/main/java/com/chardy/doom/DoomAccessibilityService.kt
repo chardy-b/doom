@@ -63,6 +63,8 @@ class DoomAccessibilityService : AccessibilityService() {
             instance?.onTimerPreferenceChanged(enabled)
         }
 
+        fun cancelYouTubeReminder() { instance?.youtube?.cancel() }
+
         fun disableObservation() {
             instance?.requestDisable()
             Observation.connected = false
@@ -72,6 +74,22 @@ class DoomAccessibilityService : AccessibilityService() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private val youtube by lazy {
+        YouTubeShortsController(
+            this, handler,
+            authority = { bound && !behaviorStopped && !disableWhenDetached && Observation.connected &&
+                Observation.reminderSettings.enabled && Observation.youtubeShortsEnabled },
+            canAdmit = { gateWindows == null && timerView == null && !timerClosing &&
+                RetiringOverlayCleanup.barrier.canAdmit() },
+            root = { overlayPlatform.eventRoot()?.let(::AndroidYouTubeIdNode) },
+            home = { overlayPlatform.performHome() },
+            detached = { maybeDisableAfterDetach() },
+            physical = { overlayPlatform.physical },
+            installer = { manager, view, params -> overlayWindowInstaller(manager, view, params) },
+            updater = { manager, view, params -> overlayWindowUpdater(manager, view, params) },
+            now = { monotonicClock() },
+        )
+    }
     private var monotonicClock: () -> Long = { SystemClock.elapsedRealtime() }
     private val entryGate = InstagramEntryGate(
         durationMs = 10_000L,
@@ -180,6 +198,14 @@ class DoomAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         try {
             if (behaviorStopped || !RetiringOverlayCleanup.barrier.canAdmit()) return
+            // A YouTube owner must detach before Instagram can install any replacement windows.
+            if (youtube.ownsWindows && !YouTubeIdSanitizer.exact(event?.packageName, YOUTUBE_PACKAGE) &&
+                !YouTubeIdSanitizer.exact(event?.packageName, applicationContext.packageName)) {
+                youtube.cancel()
+                if (youtube.ownsWindows) return
+            }
+            if (YouTubeIdSanitizer.exact(event?.packageName, applicationContext.packageName) && isMainActivityReturn(event))
+                youtube.cancel()
             val packageName = safePackageToken(event?.packageName, applicationContext.packageName)
             val traceCapturing = RemovalTraceStore.process.isCapturing()
             val eventKind = if (traceCapturing) traceEventKind(event) else RemovalTraceEvent.NA
@@ -492,6 +518,9 @@ class DoomAccessibilityService : AccessibilityService() {
             }
         } catch (_: RuntimeException) {
             failOpen(RemovalTraceMark.EVENT_FAILURE)
+        } finally {
+            // Instagram has already performed its unchanged foreign-event cleanup here.
+            youtube.onEvent(event?.packageName, BuildConfig.APPLICATION_ID)
         }
     }
 
@@ -640,7 +669,7 @@ class DoomAccessibilityService : AccessibilityService() {
     /** Shared gate authority: deliberately independent of timer preference/dismissal/veto. */
     private fun timerConsentAllowed(): Boolean =
         Observation.consent && Observation.gateConsent && Observation.connected &&
-            !behaviorStopped && !disableWhenDetached && RetiringOverlayCleanup.barrier.canAdmit()
+            !behaviorStopped && !disableWhenDetached && RetiringOverlayCleanup.barrier.canAdmit() && !youtube.ownsWindows
 
     private fun timerSpecificAllowed(): Boolean = timerConsentAllowed() &&
         Observation.sessionTimerEnabled && !timerDismissedThisVisit && !timerSafetyVeto
@@ -837,6 +866,7 @@ class DoomAccessibilityService : AccessibilityService() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        youtube.configurationChanged()
         updateTimerLayout(timerEpoch)
         gateWindows?.let { updateGateLayout(it) }
     }
@@ -1752,6 +1782,7 @@ class DoomAccessibilityService : AccessibilityService() {
             StructuralSanitizer.isExactAscii(event.className, MainActivity::class.java.name)
 
     override fun onInterrupt() {
+        youtube.cancel()
         endTimerSession()
         timerSafetyVeto = true
         stopTimerCallbacks()
@@ -1777,12 +1808,13 @@ class DoomAccessibilityService : AccessibilityService() {
     private fun requestDisable() {
         disableWhenDetached = true
         behaviorStopped = true
+        youtube.cancel()
         cancelAndBypass()
         maybeDisableAfterDetach()
     }
 
     private fun maybeDisableAfterDetach() {
-        if (!disableWhenDetached || !bound || gateWindows != null || timerView != null) return
+        if (!disableWhenDetached || !bound || gateWindows != null || timerView != null || youtube.ownsWindows) return
         if (!RetiringOverlayCleanup.barrier.canDisable(false, false)) {
             // This current service owns the explicit Stop request. The retired owner never
             // retains a service continuation; this queue only waits for its physical barrier.
@@ -1804,7 +1836,7 @@ class DoomAccessibilityService : AccessibilityService() {
         timerSafetyVeto = true
         stopTimerCallbacks()
         cancelAndBypass()
-        val records = gateWindows?.removalOrder().orEmpty() + listOfNotNull(timerWindow)
+        val records = gateWindows?.removalOrder().orEmpty() + listOfNotNull(timerWindow) + youtube.disconnect()
         // Transfer exactly once. Retirement owns only physical handles, never action continuations.
         gateWindows?.dispose()
         timerUi?.dispose()

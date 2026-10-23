@@ -1,5 +1,9 @@
 # Doom Wave 0 diagnostic
 
+## WIL-223 YouTube Shorts candidate
+
+An independent, default-off **YouTube Shorts reminders** setting opts into a bounded ID-only scan of the native YouTube app. Only a complete supported Shorts-player sample without shelf markers can show the existing breathing visual and **Leave YouTube**. Shared duration/spacing settings are snapshotted per ticket; YouTube cooldown stays separate and starts only after a completed breath and confirmed physical detachment. No YouTube content, report export, timer bubble, Messages, Debug, routing or new permission is added. Unknown/non-player observations cancel conservatively. The recovered acceptance criteria and evidence status are in [WIL-223 validation](docs/WIL-223-VALIDATION.md). Real YouTube compatibility is not yet established.
+
 Native Kotlin/Compose diagnostic for WIL-149. With fresh explicit v2 consent, it builds one bounded sanitized structural report from Instagram accessibility metadata, with local reveal and a separate reviewed clipboard copy. The Doom-owned breathing demo and immediate demo messages/leave action remain available.
 
 ## WIL-150 product candidate
