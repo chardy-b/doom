@@ -6,8 +6,8 @@ cd "$(dirname "$0")/.."
 report=app/build/reports/api37-compatibility
 mkdir -p "$report"
 export EMULATOR_PORT=5554 ANDROID_SERIAL=emulator-5554
-export ANDROID_USER_HOME="${RUNNER_TEMP:?}/doom-api37-user"
-export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+# Keep Android's user directory (and debug keystore) identical to the compile step.
+export ANDROID_AVD_HOME="${RUNNER_TEMP:?}/doom-api37-avd"
 mkdir -p "$ANDROID_AVD_HOME"
 image='system-images;android-37.0;google_apis;x86_64'
 timeout 300s sdkmanager emulator "$image" > "$report/sdk-setup.log" 2>&1
