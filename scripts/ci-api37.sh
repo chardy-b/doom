@@ -6,9 +6,13 @@ cd "$(dirname "$0")/.."
 report=app/build/reports/api37-compatibility
 mkdir -p "$report"
 export EMULATOR_PORT=5554 ANDROID_SERIAL=emulator-5554
+export ANDROID_USER_HOME="${RUNNER_TEMP:?}/doom-api37-user"
+export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+mkdir -p "$ANDROID_AVD_HOME"
 image='system-images;android-37.0;google_apis;x86_64'
 timeout 300s sdkmanager emulator "$image" > "$report/sdk-setup.log" 2>&1
-printf 'no\n' | avdmanager create avd --force --name doom-api37 --package "$image" --device pixel_2 > "$report/avd-setup.log" 2>&1
+printf 'no\n' | avdmanager create avd --force --name doom-api37 --path "$ANDROID_AVD_HOME/doom-api37.avd" --package "$image" --device pixel_2 > "$report/avd-setup.log" 2>&1
+test -s "$ANDROID_AVD_HOME/doom-api37.ini"
 timeout 10s adb start-server
 "$ANDROID_HOME/emulator/emulator" -avd doom-api37 -port "$EMULATOR_PORT" -memory 4096 \
   -no-window -gpu software -noaudio -no-boot-anim -camera-back none -no-snapshot \
