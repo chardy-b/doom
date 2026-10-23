@@ -27,6 +27,12 @@ class SourceContracts(unittest.TestCase):
   self.assertNotIn('\n  fixture:',can); self.assertNotIn('ci-fixture.sh',can); self.assertNotIn('ci-overlay.sh',can)
   self.assertNotIn('continue-on-error',can+sup); self.assertNotIn('test-entry-gate-host.py',can)
   self.assertEqual(2,(can+sup).count('android-emulator-runner@'))
+  platform=(ROOT/'.github/workflows/android-platform.yml').read_text()
+  self.assertIn('api-level: 37',platform)
+  self.assertNotIn('ci-device.sh',platform)
+  self.assertNotIn('doom-device-evidence-',platform)
+  self.assertIn('api-level: 35',can)
+  self.assertIn('api-level: 35',sup)
   for task in (':app:assembleDebugAndroidTest',':fixturegate:assembleDebugAndroidTest',':fixtureapp:lintDebug'):
    self.assertIn(task,sup)
   self.assertLess(sup.index(':app:assembleDebugAndroidTest'),sup.index('android-emulator-runner@'))
