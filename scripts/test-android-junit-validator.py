@@ -56,15 +56,12 @@ class ValidatorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE.validate("supplemental", self.write(cases + [self.canonical_cases()[0]]))
 
-    def test_platform_requires_every_selected_test_and_rejects_zero_or_other_classes(self):
-        classes = {"com.chardy.doom.EntryGateOverlayUiTest", "com.chardy.doom.EntryGateServiceActionTest",
-                   "com.chardy.doom.StructuralDiagnosticUiTest"}
-        cases = [case for case in self.canonical_cases() if case[0] in classes]
-        expected = {f"{c}#{n}" for c, n in cases}
-        self.assertEqual(expected, MODULE.validate("platform", self.write(cases)))
-        for rejected in ([], cases[:-1], cases + [("unrelated.Test", "extra")]):
+    def test_canonical_rejects_zero_tests_or_only_the_first_requested_class(self):
+        cases = [case for case in self.canonical_cases() if case[0] == "com.chardy.doom.EntryGateOverlayUiTest"]
+        self.assertTrue(cases)
+        for rejected in ([], cases):
             with self.assertRaises(ValueError):
-                MODULE.validate("platform", self.write(rejected))
+                MODULE.validate("canonical", self.write(rejected))
 
     def test_supported_annotation_ordering_is_enumerated(self):
         source_root = Path(self.temp.name) / "source"

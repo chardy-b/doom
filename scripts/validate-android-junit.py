@@ -137,8 +137,8 @@ def source_test_inventory(source_root: Path = SOURCE_ROOT) -> set[str]:
 
 
 def validate(mode: str, report_root: Path) -> set[str]:
-    if mode not in {"canonical", "supplemental", "platform"}:
-        raise ValueError("mode must be canonical, supplemental or platform")
+    if mode not in {"canonical", "supplemental"}:
+        raise ValueError("mode must be canonical or supplemental")
     reports = sorted(report_root.rglob("TEST-*.xml")) if report_root.is_dir() else []
     if not reports:
         raise ValueError("no Android JUnit XML reports found")
@@ -174,12 +174,6 @@ def validate(mode: str, report_root: Path) -> set[str]:
     if mode == "canonical" and found != source_tests - SUPPLEMENTAL:
         expected = len(source_tests - SUPPLEMENTAL)
         raise ValueError(f"canonical inventory mismatch: expected {expected}, found {len(found)}")
-    if mode == "platform":
-        classes = {"com.chardy.doom.EntryGateOverlayUiTest", "com.chardy.doom.EntryGateServiceActionTest",
-                   "com.chardy.doom.StructuralDiagnosticUiTest"}
-        expected = {name for name in source_tests - SUPPLEMENTAL if name.split("#", 1)[0] in classes}
-        if found != expected:
-            raise ValueError(f"platform inventory mismatch: expected {len(expected)}, found {len(found)}")
     return found
 
 

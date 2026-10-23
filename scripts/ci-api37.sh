@@ -38,6 +38,5 @@ for setting in window_animation_scale transition_animation_scale animator_durati
 done
 ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.notAnnotation=com.chardy.doom.SupplementalEvidence \
-  -Pandroid.testInstrumentationRunnerArguments.class=com.chardy.doom.EntryGateOverlayUiTest,com.chardy.doom.EntryGateServiceActionTest,com.chardy.doom.StructuralDiagnosticUiTest \
   2>&1 | tee "$report/instrumentation.log"
-python3 scripts/validate-android-junit.py platform app/build/outputs/androidTest-results/connected
+python3 scripts/validate-android-junit.py canonical app/build/outputs/androidTest-results/connected
