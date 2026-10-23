@@ -95,6 +95,30 @@ class YouTubeShortsTest {
         assertNotNull(gate.begin(70_100, 20_000, 300_000))
     }
 
+    @Test fun exceptionalReadsReleaseCurrentAndEveryQueuedNode() {
+        val queued = Node()
+        var releases = 0
+        val broken = object : YouTubeIdNode {
+            override fun packageName(): CharSequence = YOUTUBE_PACKAGE
+            override fun resourceId(): CharSequence = error("synthetic read failure")
+            override fun childCount() = error("must not descend after failed ID read")
+            override fun child(index: Int): YouTubeIdNode? = error("must not descend")
+            override fun recycle() { releases++ }
+        }
+        var rootReleases = 0
+        val root = object : YouTubeIdNode {
+            override fun packageName(): CharSequence = YOUTUBE_PACKAGE
+            override fun resourceId(): CharSequence? = null
+            override fun childCount() = 2
+            override fun child(index: Int): YouTubeIdNode = if (index == 0) broken else queued
+            override fun recycle() { rootReleases++ }
+        }
+        assertFalse(YouTubeIdCollector.collect(root, { 0L }).complete)
+        assertEquals(1, rootReleases)
+        assertEquals(1, releases)
+        assertEquals(1, queued.releases)
+    }
+
     @Test fun cancellationStaleAndOtherOwnerTicketsCannotEarnCooldown() {
         val gate = YouTubeShortsGate()
         val other = YouTubeShortsGate()

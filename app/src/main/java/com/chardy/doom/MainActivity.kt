@@ -271,6 +271,12 @@ private fun Home(
             context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
     }
+    DurationSettings(settings, save)
+    SuppressionSettings(settings, save)
+    Frame {
+        Text("Preview", color = Gold, fontFamily = FontFamily.Monospace)
+        Action("Preview breathing reminder", onClick = preview)
+    }
     Frame {
         Text(stringResource(R.string.youtube_disclosure), color = Paper)
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -282,12 +288,6 @@ private fun Home(
             )
             Text(stringResource(R.string.youtube_toggle), Modifier.padding(start = 12.dp), color = Paper)
         }
-    }
-    DurationSettings(settings, save)
-    SuppressionSettings(settings, save)
-    Frame {
-        Text("Preview", color = Gold, fontFamily = FontFamily.Monospace)
-        Action("Preview breathing reminder", onClick = preview)
     }
 }
 

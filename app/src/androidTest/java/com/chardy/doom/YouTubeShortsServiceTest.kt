@@ -200,6 +200,21 @@ class YouTubeShortsServiceTest {
         }
     }
 
+    @Test fun exhaustedRemovalVetoesActionsAndFurtherAdmissionButKeepsCleaning() {
+        rule.scenario.onActivity { activity ->
+            val f = fixture(activity)
+            f.observe(); f.removeEnabled = false; f.leave()
+            repeat(20) { f.retry().run() }
+            assertTrue(f.controller.ownsWindows)
+            assertEquals(0, f.homes)
+            f.removeEnabled = true; f.retry().run()
+            assertFalse(f.controller.ownsWindows)
+            assertEquals(0, f.homes)
+            f.observe()
+            assertFalse(f.controller.ownsWindows)
+        }
+    }
+
     @Test fun separateOptInPersistsDefaultsOffAndDoesNotDeriveFromInstagramConsent() {
         rule.scenario.onActivity { activity ->
             val prefs = activity.getSharedPreferences("consent", Context.MODE_PRIVATE)
@@ -246,6 +261,8 @@ class YouTubeShortsServiceTest {
             Observation.updateReminderSettings(activity, ReminderSettings(true, 10, 1))
             Observation.setYouTubeShortsEnabled(activity, true)
             Observation.connected = true
+            DoomAccessibilityService::class.java.getDeclaredField("instance")
+                .apply { isAccessible = true }.set(null, service)
             fun event() {
                 val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
                 try { event.packageName = owner; service.onAccessibilityEvent(event) } finally { event.recycle() }
@@ -255,6 +272,11 @@ class YouTubeShortsServiceTest {
                 assertTrue(attachments.values.any { it })
                 assertEquals(2, attachments.size)
                 assertNull(Observation.report)
+                Observation.setYouTubeShortsEnabled(activity, false)
+                assertFalse(attachments.values.any { it })
+                Observation.setYouTubeShortsEnabled(activity, true)
+                event()
+                assertTrue(attachments.values.any { it })
                 owner = "com.example.foreign"; event()
                 assertFalse(attachments.values.any { it })
                 assertEquals(0, homes)
